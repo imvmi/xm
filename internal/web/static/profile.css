@@ -193,8 +193,62 @@
   line-height:1.6;
 }
 @media(max-width:760px) {
+  /* The profile header replaces the management masthead on small screens.
+     Keep the existing navigation destinations and accessible text labels. */
+  .app:has(#view-user:not([hidden])) {
+    padding-bottom:calc(58px + env(safe-area-inset-bottom,0px));
+  }
+  .app:has(#view-user:not([hidden]))>.sidebar {
+    height:0;
+    padding:0;
+    position:static;
+    border:0;
+  }
+  .app:has(#view-user:not([hidden]))>.sidebar :is(.brand,.sidebar-bottom) {
+    display:none;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar nav {
+    padding:0 8px env(safe-area-inset-bottom,0px);
+    border-color:#eff3f4;
+    box-shadow:none;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar nav a {
+    min-height:56px;
+    color:#536471;
+    background:transparent;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar nav a.active {
+    color:#0f1419;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar nav a.active svg {
+    stroke-width:2.5;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar nav svg {
+    width:24px;
+    height:24px;
+  }
+  .app:has(#view-user:not([hidden])) .sidebar .nav-text {
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    overflow:hidden;
+    clip-path:inset(50%);
+    white-space:nowrap;
+  }
   #view-user .profile-top {
-    top:62px;
+    top:0;
+    height:54px;
+    gap:20px;
+    padding:5px 12px;
+  }
+  #view-user .profile-top :is(.back-link,.icon-button) {
+    width:44px;
+    height:44px;
+    min-width:44px;
+  }
+  #view-user .profile-top h1 {
+    font-size:18px;
   }
   #view-user .profile-actions {
     margin-top:-48px;
@@ -206,17 +260,160 @@
   }
   #view-user .profile-actions>.button {
     margin-bottom:0;
+    padding:7px 15px;
+  }
+  #view-user .profile-bio {
+    font-size:15px;
   }
   #view-user .profile-numbers {
     gap:8px 16px;
     font-size:13px;
   }
+  #view-user .timeline-tabs button {
+    min-height:48px;
+    padding:12px;
+  }
+  #view-user .timeline-filters {
+    flex-wrap:nowrap;
+    gap:8px;
+    padding:12px 12px 4px;
+  }
+  #view-user .timeline-filters .search-box {
+    flex:1 1 0;
+    min-width:0;
+    min-height:44px;
+    padding:0 10px;
+    gap:6px;
+  }
+  #view-user .timeline-filters input {
+    min-width:0;
+    font-size:16px;
+  }
+  #view-user .timeline-filters select {
+    flex:0 0 100px;
+    width:100px;
+    min-height:44px;
+    padding:6px 8px;
+    font-size:13px;
+  }
+  #view-user .timeline-result {
+    padding:4px 14px 10px;
+  }
   #view-user .post-body {
-    padding:14px 12px 0;
+    padding:12px 12px 0;
     gap:10px;
+  }
+  #view-user .post-header {
+    gap:0;
+  }
+  #view-user .timeline-author {
+    width:100%;
+    flex-wrap:nowrap;
+    align-items:baseline;
+  }
+  #view-user .timeline-author strong {
+    min-width:0;
+    max-width:48%;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+  }
+  #view-user .timeline-author>.timeline-meta {
+    display:flex;
+    flex:1;
+    min-width:0;
+    font-size:13px;
+    white-space:nowrap;
+  }
+  #view-user .timeline-handle {
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  #view-user .timeline-date {
+    flex-shrink:0;
+  }
+  #view-user .post-header>.badge {
+    margin:2px 0;
+    width:100%;
+    font-size:12px;
+  }
+  #view-user .post-text {
+    line-height:1.5;
+    max-height:none;
+  }
+  #view-user .expand-text {
+    min-height:44px;
+    padding:8px 0;
+    font-size:14px;
+  }
+  #view-user .quote-content {
+    padding:10px;
+  }
+  #view-user .quote-author {
+    gap:3px 5px;
+    margin-bottom:5px;
+  }
+  #view-user .quote-author strong {
+    max-width:calc(100% - 28px);
+  }
+  #view-user .quote-source {
+    min-height:44px;
+    padding:8px 10px;
+  }
+  #view-user .media-grid {
+    margin-top:10px;
+    gap:2px;
+    border-radius:14px;
+  }
+  #view-user .media-grid:not(.single):not(:has(video)) {
+    aspect-ratio:16 / 9;
+    grid-auto-rows:1fr;
+  }
+  #view-user .media-grid:not(.single):not(:has(video)) .media-button {
+    min-height:0;
+  }
+  #view-user .media-grid:not(.single):not(:has(video)) img {
+    height:100%;
+    min-height:0;
+  }
+  #view-user .media-grid:not(:has(video)):has(>:nth-child(3):last-child)>:first-child {
+    grid-row:span 2;
   }
   #view-user .post-footer {
     margin-left:62px;
     padding-right:12px;
+  }
+  #view-user .post-footer a {
+    min-height:44px;
+  }
+  body:has(#view-user:not([hidden])) .image-dialog {
+    inset:0;
+    margin:0;
+    width:100%;
+    max-width:none;
+    height:100dvh;
+    max-height:none;
+    padding:0;
+    border-radius:0;
+    background:#000;
+  }
+  body:has(#view-user:not([hidden])) .image-dialog[open] {
+    display:grid;
+    place-items:center;
+  }
+  body:has(#view-user:not([hidden])) .image-dialog img {
+    width:100%;
+    max-width:100%;
+    max-height:100dvh;
+    border-radius:0;
+  }
+  body:has(#view-user:not([hidden])) .image-close {
+    top:calc(8px + env(safe-area-inset-top,0px));
+    right:12px;
+    width:44px;
+    height:44px;
+    background:#0f1419cc;
+    color:#fff;
   }
 }
