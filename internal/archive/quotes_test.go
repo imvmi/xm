@@ -61,7 +61,7 @@ func TestQuotedTextMediaStorage(t *testing.T) {
 		t.Fatal("quote media leaked into unrelated target")
 	}
 	// Failure on a nested quote rolls back the parent and its target relation.
-	_, err = s.DB.Exec(`CREATE TRIGGER reject_quote BEFORE INSERT ON posts WHEN NEW.id='102' BEGIN SELECT RAISE(ABORT,'fixture failure'); END`)
+	_, err = s.DB.Exec(`CREATE TRIGGER reject_quote BEFORE UPDATE ON posts WHEN OLD.id='102' BEGIN SELECT RAISE(ABORT,'fixture failure'); END`)
 	if err != nil {
 		t.Fatal(err)
 	}

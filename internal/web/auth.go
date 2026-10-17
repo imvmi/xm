@@ -26,8 +26,8 @@ func makePasswordRecord(username, password string) (passwordRecord, error) {
 	if !adminUsername.MatchString(username) {
 		return passwordRecord{}, errors.New("用户名需为 3～32 位字母、数字、下划线、点或短横线，首位为字母、数字或下划线")
 	}
-	if len(password) < 12 || len(password) > 1024 {
-		return passwordRecord{}, errors.New("管理员密码需为 12～1024 字节")
+	if len(password) < 8 || len(password) > 1024 {
+		return passwordRecord{}, errors.New("管理员密码需为 8～1024 字节")
 	}
 	r := passwordRecord{Username: username, Salt: randomBytes(32), ConfigurationLocked: true}
 	var err error

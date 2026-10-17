@@ -18,6 +18,8 @@ import (
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,15}$`)
 
+const knownBoundaryPosts = 8
+
 func Username(input string) (string, error) {
 	s := strings.TrimSpace(input)
 	if strings.Contains(s, "://") {
@@ -51,6 +53,82 @@ type captured struct {
 	err  error
 }
 
+// BrowserSession owns one Chrome process that can collect several targets in
+// sequence. Each target still gets an isolated tab and timeout, while cookies,
+// the temporary browser profile and the proxy bridge are shared for the batch.
+type BrowserSession struct {
+	cfg          Config
+	cookies      Cookies
+	root         context.Context
+	closeBrowser context.CancelFunc
+	closeAlloc   context.CancelFunc
+	bridge       *BrowserProxy
+	profile      string
+}
+
+func NewBrowserSession(parent context.Context, cfg Config, cookies Cookies) (*BrowserSession, error) {
+	profile, err := os.MkdirTemp("", "xm-chrome-*")
+	if err != nil {
+		return nil, err
+	}
+	s := &BrowserSession{cfg: cfg, cookies: cookies, profile: profile}
+	fail := func(err error) (*BrowserSession, error) {
+		s.Close()
+		return nil, err
+	}
+	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	opts = append(opts, chromedp.UserDataDir(profile), chromedp.Flag("headless", cfg.Headless), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("disable-quic", true))
+	if cfg.ChromePath != "" {
+		opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
+	}
+	if cfg.Proxy != "" {
+		s.bridge, err = StartBrowserProxy(cfg.Proxy)
+		if err != nil {
+			return fail(err)
+		}
+		opts = append(opts, chromedp.ProxyServer(s.bridge.URL()))
+	} else {
+		opts = append(opts, chromedp.Flag("no-proxy-server", true))
+	}
+	alloc, closeAlloc := chromedp.NewExecAllocator(parent, opts...)
+	s.closeAlloc = closeAlloc
+	s.root, s.closeBrowser = chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
+	if err = chromedp.Do(s.root, chromedp.Navigate("about:blank")); err != nil {
+		return fail(errors.New("无法启动 Chrome；请检查 chrome_path 和 Chrome 运行环境"))
+	}
+	return s, nil
+}
+
+func (s *BrowserSession) Close() {
+	if s == nil {
+		return
+	}
+	if s.closeBrowser != nil {
+		s.closeBrowser()
+		s.closeBrowser = nil
+	}
+	if s.closeAlloc != nil {
+		s.closeAlloc()
+		s.closeAlloc = nil
+	}
+	if s.bridge != nil {
+		s.bridge.Close()
+		s.bridge = nil
+	}
+	if s.profile != "" {
+		_ = os.RemoveAll(s.profile)
+		s.profile = ""
+	}
+}
+
+func (s *BrowserSession) CollectBound(parent context.Context, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error) (Collection, error) {
+	return s.collectBound(parent, target, identity, limit, replies, save, nil)
+}
+
+func (s *BrowserSession) collectBound(parent context.Context, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
+	return collectIdentityWithBrowser(parent, s.cfg, s.cookies, target, identity, limit, replies, save, setup, s.root)
+}
+
 func operation(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() != "x.com" || !strings.HasPrefix(u.Path, "/i/api/graphql/") {
@@ -78,6 +156,10 @@ func CollectBound(parent context.Context, cfg Config, cookies Cookies, target st
 // Try the last verified handle first. Only an empty, unsuccessful collection
 // may fall back to a stable reference; auth and rate failures are not retried.
 func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
+	return collectIdentityWithBrowser(parent, cfg, cookies, target, identity, limit, replies, save, setup, nil)
+}
+
+func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.CollectionTimeout)*time.Second)
 	defer cancel()
 	saveFailed := false
@@ -88,18 +170,22 @@ func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target
 		}
 		return err
 	}
-	result, err := collectBound(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup)
+	result, err := collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
 	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" {
 		return result, err
 	}
 	identity.CurrentUsername = ""
-	return collectBound(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup)
+	return collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
 }
 
 func collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
 	return collectBound(parent, cfg, cookies, target, TargetIdentity{}, limit, replies, save, setup)
 }
 func collectBound(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
+	return collectBoundWithBrowser(parent, cfg, cookies, target, identity, limit, replies, save, setup, nil)
+}
+
+func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
 	var result Collection
 	expectedID := identity.UserID
 	if expectedID != "" && !userIDPattern.MatchString(expectedID) {
@@ -110,30 +196,41 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.CollectionTimeout)*time.Second)
 	defer cancel()
-	profile, err := os.MkdirTemp("", "xm-chrome-*")
-	if err != nil {
-		return result, err
-	}
-	defer os.RemoveAll(profile)
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.UserDataDir(profile), chromedp.Flag("headless", cfg.Headless), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("disable-quic", true))
-	if cfg.ChromePath != "" {
-		opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
-	}
-	if cfg.Proxy != "" {
-		bridge, e := StartBrowserProxy(cfg.Proxy)
-		if e != nil {
-			return result, e
+	var browser context.Context
+	var err error
+	if root == nil {
+		profile, err := os.MkdirTemp("", "xm-chrome-*")
+		if err != nil {
+			return result, err
 		}
-		defer bridge.Close()
-		opts = append(opts, chromedp.ProxyServer(bridge.URL()))
+		defer os.RemoveAll(profile)
+		opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+		opts = append(opts, chromedp.UserDataDir(profile), chromedp.Flag("headless", cfg.Headless), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("disable-quic", true))
+		if cfg.ChromePath != "" {
+			opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
+		}
+		if cfg.Proxy != "" {
+			bridge, e := StartBrowserProxy(cfg.Proxy)
+			if e != nil {
+				return result, e
+			}
+			defer bridge.Close()
+			opts = append(opts, chromedp.ProxyServer(bridge.URL()))
+		} else {
+			opts = append(opts, chromedp.Flag("no-proxy-server", true))
+		}
+		alloc, closeAlloc := chromedp.NewExecAllocator(ctx, opts...)
+		defer closeAlloc()
+		var closeBrowser context.CancelFunc
+		browser, closeBrowser = chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
+		defer closeBrowser()
 	} else {
-		opts = append(opts, chromedp.Flag("no-proxy-server", true))
+		var closeBrowser context.CancelFunc
+		browser, closeBrowser = chromedp.NewContext(root)
+		stop := context.AfterFunc(ctx, closeBrowser)
+		defer stop()
+		defer closeBrowser()
 	}
-	alloc, closeAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer closeAlloc()
-	browser, closeBrowser := chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
-	defer closeBrowser()
 	events := make(chan captured, 128)
 	var overflow atomic.Bool
 	send := func(c captured) {
@@ -235,11 +332,24 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 	}
 	seen := make(map[string]bool)
 	verifiedID := ""
+	verifiedUsername := ""
 	var pending []Page
 	replyNavigation := expectedID != "" && identity.CurrentUsername != "" && replies
-	scrolls, idle, lastCount := 0, 0, 0
+	scrolls, idle, lastCount, lastPages := 0, 0, 0, 0
+	phaseStartPages := 0
+	hitScrollLimit := false
+	knownStreak := 0
+	lastTop, lastHeight := -1.0, -1.0
 	ticker := time.NewTicker(time.Duration(cfg.ScrollDelay) * time.Second)
 	defer ticker.Stop()
+	startOriginalTimeline := func() error {
+		replies = false
+		pending = nil
+		phaseStartPages = result.Pages
+		scrolls, idle, knownStreak = 0, 0, 0
+		lastTop, lastHeight = -1, -1
+		return chromedp.Do(browser, chromedp.Navigate("https://x.com/"+verifiedUsername))
+	}
 	for {
 		if overflow.Load() {
 			return result, errors.New("浏览器响应队列溢出，本次采集不完整，请降低采集量")
@@ -289,6 +399,9 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 			if replies && c.meta.operation != "UserByScreenName" && c.meta.operation != "UserByRestId" && c.meta.operation != "UserTweetsAndReplies" && c.meta.operation != "UserRepliesTimeline" {
 				continue
 			}
+			if !replies && (c.meta.operation == "UserTweetsAndReplies" || c.meta.operation == "UserRepliesTimeline") {
+				continue
+			}
 			page, e := ParsePage(c.data, c.meta.operation)
 			if e != nil {
 				return result, e
@@ -308,6 +421,7 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 					return result, fail("identity", "采集中账号身份发生变化，已停止采集")
 				}
 				verifiedID = p.ID
+				verifiedUsername = p.Username
 				protected := p.Protected
 				result.Protected = &protected
 				if err = save(page); err != nil {
@@ -341,6 +455,13 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 					if p.AuthorID != verifiedID || seen[p.ID] || len(seen) >= limit {
 						continue
 					}
+					if len(identity.KnownPostIDs) > 0 {
+						if identity.KnownPostIDs[p.ID] {
+							knownStreak++
+						} else {
+							knownStreak = 0
+						}
+					}
 					seen[p.ID] = true
 					filtered = append(filtered, p)
 				}
@@ -358,12 +479,28 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 					return result, nil
 				}
 			}
+			// A run still starts at the top so new posts cannot be skipped. Once
+			// eight consecutive timeline entries are already archived, older pages
+			// are outside the incremental window and need not be fetched again.
+			if len(identity.KnownPostIDs) > 0 && knownStreak >= knownBoundaryPosts {
+				if replies {
+					if err = startOriginalTimeline(); err != nil {
+						return result, errors.New("回复增量边界已到达，但无法打开普通推文时间线")
+					}
+					continue
+				}
+				result.Stop = "known_boundary_reached"
+				return result, nil
+			}
 		case <-ticker.C:
 			type pageState struct {
-				Path   string `json:"path"`
-				Denied bool   `json:"denied"`
+				Path   string  `json:"path"`
+				Denied bool    `json:"denied"`
+				Top    float64 `json:"top"`
+				Height float64 `json:"height"`
+				Bottom bool    `json:"bottom"`
 			}
-			state, e := chromedp.Run(browser, chromedp.Evaluate[pageState](`({path:location.pathname,denied:/These posts are protected|These Tweets are protected|Only approved followers|这些帖子受到保护|这些推文受到保护/.test(document.body.innerText)})`))
+			state, e := chromedp.Run(browser, chromedp.Evaluate[pageState](`(()=>{const s=document.scrollingElement||document.documentElement;return {path:location.pathname,denied:/These posts are protected|These Tweets are protected|Only approved followers|这些帖子受到保护|这些推文受到保护/.test(document.body.innerText),top:s.scrollTop,height:s.scrollHeight,bottom:s.scrollTop+s.clientHeight>=s.scrollHeight-32}})()`))
 			if e != nil {
 				return result, errors.New("无法读取浏览器状态，浏览器可能已关闭")
 			}
@@ -373,29 +510,48 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 			if state.Denied {
 				return result, fail("access", "当前账号无权查看此锁推账号，请确认关注请求已经获准")
 			}
-			if result.Posts == lastCount {
+			// Lack of responses while traversing an already loaded, tall timeline
+			// is not exhaustion. Only count idle checks at a stable bottom, after
+			// both scrolling and timeline responses have stopped making progress.
+			if state.Bottom && state.Top == lastTop && state.Height == lastHeight && result.Posts == lastCount && result.Pages == lastPages {
 				idle++
 			} else {
 				idle = 0
 			}
 			lastCount = result.Posts
+			lastPages = result.Pages
+			lastTop, lastHeight = state.Top, state.Height
 			if scrolls >= cfg.MaxScrolls || idle >= 8 {
 				if verifiedID == "" {
 					return result, fail("identity", "未能确认目标用户 ID，未保存推文")
 				}
-				if result.Pages == 0 {
+				if result.Pages == phaseStartPages {
 					return result, errors.New("未收到可读取的用户时间线，不能认定为没有推文；请检查登录态、权限、代理或页面变化")
 				}
 				if result.Posts == 0 && result.Unavailable > 0 {
 					return result, errors.New("时间线仅返回不可访问的内容，无法归档")
 				}
-				result.Stop = "no_new_posts_observed"
 				if scrolls >= cfg.MaxScrolls {
+					hitScrollLimit = true
+				}
+				if replies {
+					// Modern reply timelines do not contain all original posts.
+					// Spend the remaining shared budget on the verified user's main
+					// timeline, retaining seen IDs to deduplicate overlapping posts.
+					if err = startOriginalTimeline(); err != nil {
+						return result, errors.New("回复已保存，但无法打开普通推文时间线；本轮采集不完整")
+					}
+					continue
+				}
+				result.Stop = "no_new_posts_observed"
+				if hitScrollLimit {
 					result.Stop = "max_scrolls_reached"
 				}
 				return result, nil
 			}
-			_, err = chromedp.Run(browser, chromedp.Evaluate[any](`window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))`))
+			// Reach the loaded timeline's end to trigger its next page. Small fixed
+			// scrolls can consume the entire budget inside a single media-heavy page.
+			_, err = chromedp.Run(browser, chromedp.Evaluate[any](`(()=>{const s=document.scrollingElement||document.documentElement;s.scrollTo({top:s.scrollHeight,behavior:'instant'})})()`))
 			if err != nil {
 				return result, errors.New("页面滚动失败")
 			}

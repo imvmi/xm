@@ -14,9 +14,36 @@ var userIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 
 // TargetIdentity keeps the archive key stable when the public handle changes.
 type TargetIdentity struct {
-	UserID          string `json:"user_id"`
-	CurrentUsername string `json:"current_username"`
-	ReferencePostID string `json:"-"`
+	UserID          string          `json:"user_id"`
+	CurrentUsername string          `json:"current_username"`
+	ReferencePostID string          `json:"-"`
+	KnownPostIDs    map[string]bool `json:"-"`
+}
+
+// KnownTargetPosts returns a bounded set of the target's newest archived IDs.
+// Incremental collectors use it only as an early-stop boundary; missing IDs
+// make a run less efficient, never less complete.
+func (s *Store) KnownTargetPosts(target string, limit int) (map[string]bool, error) {
+	if limit < 1 {
+		return map[string]bool{}, nil
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	rows, err := s.DB.Query(`SELECT t.post_id FROM target_posts t JOIN posts p ON p.id=t.post_id WHERE t.target=? ORDER BY length(p.id) DESC,p.id DESC LIMIT ?`, target, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	known := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		known[id] = true
+	}
+	return known, rows.Err()
 }
 
 func (s *Store) TargetIdentity(target string) (TargetIdentity, error) {

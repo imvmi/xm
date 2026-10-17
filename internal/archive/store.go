@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"xm/internal/database"
 
@@ -98,6 +99,50 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 		return err
 	}
 	defer tx.Rollback()
+	type storedPost struct{ authorID, username, text, createdAt, postURL, replyTo, quoteID, repostID, raw string }
+	existing := map[string]storedPost{}
+	ids := []string{}
+	indexed := map[string]bool{}
+	var index func(Post, int)
+	index = func(p Post, depth int) {
+		if p.ID == "" || indexed[p.ID] || depth > MaxQuoteDepth {
+			return
+		}
+		indexed[p.ID] = true
+		ids = append(ids, p.ID)
+		if p.Quote != nil {
+			index(*p.Quote, depth+1)
+		}
+	}
+	for _, p := range posts {
+		index(p, 0)
+	}
+	for start := 0; start < len(ids); start += 500 {
+		end := min(start+500, len(ids))
+		args := make([]any, end-start)
+		for i, id := range ids[start:end] {
+			args[i] = id
+		}
+		rows, queryErr := tx.Query(`SELECT id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json FROM posts WHERE id IN (`+strings.TrimRight(strings.Repeat("?,", len(args)), ",")+`)`, args...)
+		if queryErr != nil {
+			return queryErr
+		}
+		for rows.Next() {
+			var id string
+			var old storedPost
+			if queryErr = rows.Scan(&id, &old.authorID, &old.username, &old.text, &old.createdAt, &old.postURL, &old.replyTo, &old.quoteID, &old.repostID, &old.raw); queryErr != nil {
+				break
+			}
+			existing[id] = old
+		}
+		if queryErr == nil {
+			queryErr = rows.Err()
+		}
+		rows.Close()
+		if queryErr != nil {
+			return queryErr
+		}
+	}
 	seen := map[string]bool{}
 	var save func(Post, int) error
 	save = func(p Post, depth int) error {
@@ -109,14 +154,25 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 			p.QuoteID = p.Quote.ID
 		}
 		t := now()
-		_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"author_id", "username", "text", "created_at", "url", "reply_to", "quote_id", "repost_id", "raw_json", "last_seen"}), p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, string(p.Raw), t, t)
+		raw := string(p.Raw)
+		old, exists := existing[p.ID]
+		unchanged := exists && old.authorID == p.AuthorID && old.username == p.Username && old.text == p.Text && old.createdAt == p.CreatedAt && old.postURL == p.URL && old.replyTo == p.ReplyTo && old.quoteID == p.QuoteID && old.repostID == p.RepostID && old.raw == raw
+		if unchanged {
+			// Preserve last_seen semantics without rewriting the large raw payload or
+			// touching already indexed media rows.
+			_, err = tx.Exec("UPDATE posts SET last_seen=? WHERE id=?", t, p.ID)
+		} else {
+			_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"author_id", "username", "text", "created_at", "url", "reply_to", "quote_id", "repost_id", "raw_json", "last_seen"}), p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, raw, t, t)
+		}
 		if err != nil {
 			return err
 		}
-		for _, a := range p.Assets {
-			_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)`, []string{"post_id", "media_id"}, []string{"source_url", "kind", "updated_at"}), p.ID, a.ID, a.Kind, a.URL, t)
-			if err != nil {
-				return err
+		if !unchanged {
+			for _, a := range p.Assets {
+				_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)`, []string{"post_id", "media_id"}, []string{"source_url", "kind", "updated_at"}), p.ID, a.ID, a.Kind, a.URL, t)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if p.Quote != nil {

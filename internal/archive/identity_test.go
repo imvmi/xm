@@ -53,6 +53,27 @@ func TestTargetIdentityRecoversHistoryAndRejectsAmbiguity(t *testing.T) {
 		}
 	}
 }
+
+func TestKnownTargetPostsAreBoundedAndTargetScoped(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"100", "101", "102", "103"} {
+		if err = s.SavePosts("alice", []Post{{ID: id, AuthorID: "42", Username: "alice"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.SavePosts("bob", []Post{{ID: "999", AuthorID: "99", Username: "bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	known, err := s.KnownTargetPosts("alice", 2)
+	if err != nil || len(known) != 2 || !known["103"] || !known["102"] || known["999"] {
+		t.Fatal("incorrect incremental boundary", known, err)
+	}
+}
+
 func TestIdentityFromKnownPostOnly(t *testing.T) {
 	data := []byte(`{"data":{"items":[{"rest_id":"88","core":{"user_results":{"result":{"rest_id":"99","legacy":{"screen_name":"other"}}}}},{"rest_id":"123","core":{"user_results":{"result":{"rest_id":"42","core":{"screen_name":"newalice"}}}}}]}}`)
 	p, err := IdentityFromPost(data, "123")

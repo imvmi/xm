@@ -58,7 +58,7 @@ func TestBrowserCollectionOffline(t *testing.T) {
 						case strings.HasSuffix(e.Request.URL, "/"+test.operation):
 							ct = "application/json"
 							body = test.body
-						case strings.HasSuffix(e.Request.URL, "/alice"):
+						case strings.HasSuffix(e.Request.URL, "/alice") || strings.HasSuffix(e.Request.URL, "/alice/with_replies"):
 							body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{await fetch('/i/api/graphql/fixture/UserByScreenName');await new Promise(r=>setTimeout(r,300));await fetch('/i/api/graphql/fixture/` + test.operation + `');})()</script></body></html>`
 						}
 						_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
@@ -69,7 +69,7 @@ func TestBrowserCollectionOffline(t *testing.T) {
 				}()
 				return nil
 			}
-			result, err := collect(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", 2, false, func(p Page) error {
+			result, err := collect(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", 2, test.operation == "UserRepliesTimeline", func(p Page) error {
 				if p.Profile != nil {
 					if err := s.SaveProfile(*p.Profile); err != nil {
 						return err
@@ -100,5 +100,54 @@ func TestBrowserCollectionOffline(t *testing.T) {
 				t.Fatal("browser data not saved")
 			}
 		})
+	}
+}
+
+func TestBrowserSessionCollectsMultipleTargetsOffline(t *testing.T) {
+	if os.Getenv("XM_BROWSER_TEST") != "1" {
+		t.Skip("set XM_BROWSER_TEST=1 to run real-Chrome fixture integration")
+	}
+	cfg := Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 3}
+	session, err := NewBrowserSession(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	timeline := string(fixture(t, "timeline.json"))
+	for _, username := range []string{"alice", "bob"} {
+		setup := func(ctx context.Context) error {
+			if err := chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
+				_, e := cdp.Call(c, target, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{{URLPattern: "*"}}})
+				return e
+			})); err != nil {
+				return err
+			}
+			events := chromedp.Events(ctx, fetch.RequestPaused)
+			go func() {
+				for e, eventErr := range events {
+					if eventErr != nil {
+						return
+					}
+					body, contentType := "", "text/html"
+					switch {
+					case strings.Contains(e.Request.URL, "/UserByScreenName"):
+						body, contentType = `{"data":{"user":{"result":{"rest_id":"42","core":{"screen_name":"`+username+`"}}}}}`, "application/json"
+					case strings.Contains(e.Request.URL, "/UserTweets"):
+						body, contentType = timeline, "application/json"
+					case strings.HasSuffix(e.Request.URL, "/"+username):
+						body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{await fetch('/i/api/graphql/fixture/UserByScreenName');await fetch('/i/api/graphql/fixture/UserTweets')})()</script></body></html>`
+					}
+					_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
+						_, callErr := cdp.Call(c, target, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: 200, ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: contentType}}, Body: []byte(body)})
+						return callErr
+					}))
+				}
+			}()
+			return nil
+		}
+		result, collectErr := session.collectBound(context.Background(), username, TargetIdentity{}, 2, false, func(Page) error { return nil }, setup)
+		if collectErr != nil || result.Posts != 2 || result.Stop != "limit_reached" {
+			t.Fatalf("shared session failed for %s: %+v err=%v", username, result, collectErr)
+		}
 	}
 }

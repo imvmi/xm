@@ -36,6 +36,7 @@ type Profile struct {
 	ID        string `json:"id"`
 	Username  string `json:"username"`
 	Protected bool   `json:"protected"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 }
 
 type Page struct {
@@ -94,7 +95,12 @@ func ParsePage(data []byte, operation string) (Page, error) {
 		return page, fail("access", "目标账号不可用或当前账号无权访问")
 	}
 	if operation == "UserByScreenName" || operation == "UserByRestId" {
-		p := &Profile{ID: str(at(u, "rest_id")), Username: first(str(at(u, "core", "screen_name")), str(at(u, "legacy", "screen_name"))), Protected: boolean(at(u, "legacy", "protected")) || boolean(at(u, "privacy", "protected"))}
+		p := &Profile{
+			ID:        str(at(u, "rest_id")),
+			Username:  first(str(at(u, "core", "screen_name")), str(at(u, "legacy", "screen_name"))),
+			Protected: boolean(at(u, "legacy", "protected")) || boolean(at(u, "privacy", "protected")),
+			AvatarURL: first(str(at(u, "avatar", "image_url")), str(at(u, "core", "avatar_image_url")), str(at(u, "legacy", "profile_image_url_https"))),
+		}
 		if p.ID == "" {
 			return page, errors.New("用户资料缺少 ID，响应结构可能已变化")
 		}

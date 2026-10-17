@@ -41,7 +41,7 @@ func setupRequest(t *testing.T, s *setupWizard, route string, v any, origin stri
 	return w
 }
 func setupValid() setupInput {
-	return setupInput{Username: "owner", Password: "setup-password-2026", Database: archive.DatabaseConfig{Driver: "sqlite"}, StorageKind: "local"}
+	return setupInput{Username: "owner", Password: "setup888", Database: archive.DatabaseConfig{Driver: "sqlite"}, StorageKind: "local"}
 }
 func TestSetupCompletionLoginAndLockedStorage(t *testing.T) {
 	s := setupFixture(t)
@@ -129,7 +129,7 @@ func TestSetupCompletionLoginAndLockedStorage(t *testing.T) {
 func TestSetupFailureRetryAndExistingArchive(t *testing.T) {
 	s := setupFixture(t)
 	v := setupValid()
-	v.Password = "short"
+	v.Password = "1234567"
 	ok(t, setupRequest(t, s, "complete", v, "http://localhost"), 400)
 	v = setupValid()
 	v.Database = archive.DatabaseConfig{Driver: "mysql", Host: "127.0.0.1", Port: 1, Name: "xm", User: "xm", TLSMode: "disabled"}

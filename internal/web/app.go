@@ -26,14 +26,15 @@ import (
 var static embed.FS
 
 type App struct {
-	store      *archive.Store
-	configPath string
-	configMu   sync.RWMutex
-	config     archive.Config
-	changeMu   sync.Mutex
-	auth       *auth
-	scheduler  *Scheduler
-	notifier   *Notifier
+	store       *archive.Store
+	configPath  string
+	configMu    sync.RWMutex
+	config      archive.Config
+	changeMu    sync.Mutex
+	auth        *auth
+	scheduler   *Scheduler
+	notifier    *Notifier
+	checkChrome func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
 }
 
 func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, error) {
@@ -48,7 +49,21 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err != nil {
 		return nil, err
 	}
-	a := &App{store: s, configPath: path, config: cfg, auth: auth}
+	// Upgrade existing per-account schedules to one shared automatic batch
+	// without postponing the earliest collection that was already planned.
+	var earliest sql.NullInt64
+	if err = s.DB.QueryRow("SELECT MIN(next_run) FROM monitors WHERE enabled=1").Scan(&earliest); err != nil {
+		return nil, err
+	}
+	if _, err = s.DB.Exec("UPDATE monitors SET interval_seconds=?", cfg.DefaultInterval); err != nil {
+		return nil, err
+	}
+	if earliest.Valid {
+		if _, err = s.DB.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", earliest.Int64); err != nil {
+			return nil, err
+		}
+	}
+	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
 	a.scheduler = newScheduler(a)
 	a.notifier = newNotifier(a)
 	return a, nil
@@ -159,6 +174,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
 	mux.HandleFunc("POST /api/proxy-test", a.testProxy)
+	mux.HandleFunc("POST /api/chrome-test", a.testChrome)
 	mux.HandleFunc("GET /api/monitors", func(w http.ResponseWriter, r *http.Request) {
 		v, err := monitors(a.store.DB)
 		if err != nil {
@@ -180,6 +196,12 @@ func (a *App) Handler() http.Handler {
 			problem(w, 500, "读取用户归档失败")
 			return
 		}
+		dataDir := a.Config().DataDir
+		for i := range users {
+			if archive.AvatarExists(dataDir, users[i].UserID) {
+				users[i].AvatarURL = "/avatars/" + users[i].UserID
+			}
+		}
 		respond(w, 200, users)
 	})
 	mux.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +213,7 @@ func (a *App) Handler() http.Handler {
 		respond(w, 200, v)
 	})
 	mux.HandleFunc("GET /media/{post}/{asset}", a.media)
+	mux.HandleFunc("GET /avatars/{user}", a.avatar)
 	assets, _ := fs.Sub(static, "static")
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +233,7 @@ func (a *App) Handler() http.Handler {
 			problem(w, 403, "不允许跨站请求")
 			return
 		}
-		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" && r.URL.Path != "/api/setup/status") || strings.HasPrefix(r.URL.Path, "/media/") {
+		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" && r.URL.Path != "/api/setup/status") || strings.HasPrefix(r.URL.Path, "/media/") || strings.HasPrefix(r.URL.Path, "/avatars/") {
 			s, ok := a.auth.session(r)
 			if !ok {
 				problem(w, 401, "请先登录")
@@ -247,7 +270,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "default_interval_seconds": cfg.DefaultInterval, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "max_media_bytes": cfg.MaxMediaBytes})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "max_media_bytes": cfg.MaxMediaBytes})
 }
 
 type settingsInput struct {
@@ -290,6 +313,13 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if err := a.saveConfig(cfg); err != nil {
 		problem(w, 500, "保存配置失败，请检查配置文件权限")
 		return
+	}
+	if v.DefaultInterval != nil {
+		next := time.Now().Unix() + int64(*v.DefaultInterval)
+		if _, err := a.store.DB.Exec("UPDATE monitors SET interval_seconds=?,next_run=CASE WHEN enabled=1 THEN ? ELSE next_run END", *v.DefaultInterval, next); err != nil {
+			problem(w, 500, "全局周期已保存，但无法同步监控计划")
+			return
+		}
 	}
 	a.scheduler.Wake()
 	respond(w, 200, map[string]bool{"ok": true})
@@ -356,11 +386,63 @@ func (a *App) testProxy(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]any{"status": resp.StatusCode, "latency_ms": time.Since(start).Milliseconds(), "message": "已收到 X 的 HTTP 响应；这仅验证连通性，不代表 Cookie 或采集权限有效"})
 }
 
+func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
+	type step struct {
+		Name    string `json:"name"`
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	start := time.Now()
+	cookies, cookieErr := a.store.LoadCookies()
+	var cookieInput *archive.Cookies
+	if cookieErr == nil {
+		cookieInput = &cookies
+	}
+	info, checkErr := a.checkChrome(ctx, a.Config(), cookieInput)
+	mode := "有界面"
+	if info.Headless {
+		mode = "Headless"
+	}
+	steps := make([]step, 0, 4)
+	stage := archive.ChromeCheckStage(checkErr)
+	if info.Product != "" {
+		steps = append(steps, step{Name: "Chrome 环境", Status: "passed", Message: info.Product + " · " + mode + " 模式启动成功"})
+	} else if stage == "chrome" {
+		steps = append(steps, step{Name: "Chrome 环境", Status: "failed", Message: checkErr.Error()})
+	} else {
+		steps = append(steps, step{Name: "Chrome 环境", Status: "skipped", Message: "代理初始化失败，尚未启动 Chrome"})
+	}
+	if cookieErr != nil {
+		steps = append(steps, step{Name: "Cookie", Status: "failed", Message: "未找到可用的 auth_token 和 ct0，请先在 X 账号设置中导入 Cookie"})
+	} else if stage == "cookie" {
+		steps = append(steps, step{Name: "Cookie", Status: "failed", Message: checkErr.Error()})
+	} else {
+		steps = append(steps, step{Name: "Cookie", Status: "passed", Message: "已从数据库读取 auth_token 和 ct0"})
+	}
+	if cookieErr != nil || stage == "chrome" || stage == "cookie" {
+		steps = append(steps, step{Name: "X 网络", Status: "skipped", Message: "前置检查未通过，未连接 X"})
+		steps = append(steps, step{Name: "X 登录状态", Status: "skipped", Message: "前置检查未通过，未验证登录状态"})
+	} else if stage == "network" {
+		steps = append(steps, step{Name: "X 网络", Status: "failed", Message: checkErr.Error()})
+		steps = append(steps, step{Name: "X 登录状态", Status: "skipped", Message: "网络检查未通过，未验证登录状态"})
+	} else if stage == "session" {
+		steps = append(steps, step{Name: "X 网络", Status: "passed", Message: "Chrome 已打开 X 页面"})
+		steps = append(steps, step{Name: "X 登录状态", Status: "failed", Message: checkErr.Error()})
+	} else {
+		steps = append(steps, step{Name: "X 网络", Status: "passed", Message: "Chrome 已打开 X 页面"})
+		steps = append(steps, step{Name: "X 登录状态", Status: "passed", Message: "Cookie 登录状态有效，已检测到登录界面"})
+	}
+	respond(w, 200, map[string]any{"ok": checkErr == nil && cookieErr == nil, "latency_ms": time.Since(start).Milliseconds(), "steps": steps})
+}
+
 func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	var m Monitor
 	if !decode(w, r, &m) {
 		return
 	}
+	m.Interval = a.Config().DefaultInterval
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
@@ -392,13 +474,14 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Username = r.PathValue("username")
+	m.Interval = a.Config().DefaultInterval
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	res, err := a.store.DB.Exec(`UPDATE monitors SET interval_seconds=?,post_limit=?,replies=?,enabled=?,next_run=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Interval, m.Limit, m.Replies, m.Enabled, time.Now().Unix()+int64(m.Interval), m.Enabled, m.Username)
+	res, err := a.store.DB.Exec(`UPDATE monitors SET interval_seconds=?,post_limit=?,replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Interval, m.Limit, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
 	if err != nil {
 		problem(w, 500, "修改失败")
 		return
@@ -540,4 +623,49 @@ func (a *App) media(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
 	w.Header().Set("Content-Disposition", "inline")
 	http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
+}
+
+func (a *App) avatar(w http.ResponseWriter, r *http.Request) {
+	name, err := archive.AvatarFilename(r.PathValue("user"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	root, err := os.OpenRoot(filepath.Join(a.Config().DataDir, "avatars"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+	f, err := root.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+	var header [512]byte
+	n, err := f.Read(header[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := http.DetectContentType(header[:n])
+	switch contentType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "inline")
+	http.ServeContent(w, r, "avatar", st.ModTime(), f)
 }

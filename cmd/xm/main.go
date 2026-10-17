@@ -21,7 +21,7 @@ const usage = `XM — 个人 X 采集验证程序（Go + SQLite/MySQL + Chrome�
 命令：
   xm init          [-config config.yaml]
   xm import-cookie [-config config.yaml] -file cookies.txt
-  xm collect       [-config config.yaml] -users alice,bob [-limit 100] [-replies]
+  xm collect       [-config config.yaml] -users alice,bob [-limit 100] [-replies] [-backfill]
   xm retry-media   [-config config.yaml] [-user alice] [-verify]
   xm status        [-config config.yaml]
   xm migrate-mysql -config mysql-config.yaml -source data/archive.sqlite
@@ -55,7 +55,7 @@ func run(ctx context.Context, args []string) error {
 	configPath := f.String("config", "config.yaml", "配置文件")
 	var file, users, user, source *string
 	var limit *int
-	var replies, verify *bool
+	var replies, verify, backfill *bool
 	var listen *string
 	var secure *bool
 	switch command {
@@ -71,6 +71,7 @@ func run(ctx context.Context, args []string) error {
 		users = f.String("users", "", "用户名或主页 URL，多个用逗号分隔")
 		limit = f.Int("limit", 100, "每个账号的最大推文数")
 		replies = f.Bool("replies", false, "打开推文与回复页面")
+		backfill = f.Bool("backfill", false, "禁用增量边界，按上限继续向历史滚动")
 	case "retry-media":
 		user = f.String("user", "", "只重试此目标的媒体")
 		verify = f.Bool("verify", false, "校验已下载文件并修复")
@@ -271,11 +272,20 @@ func run(ctx context.Context, args []string) error {
 			if e != nil {
 				return e
 			}
+			if !*backfill {
+				identity.KnownPostIDs, e = s.KnownTargetPosts(target, max(*limit*4, 500))
+				if e != nil {
+					return e
+				}
+			}
+			var latestProfile *archive.Profile
 			result, collectErr := archive.CollectBound(ctx, cfg, cookies, target, identity, *limit, *replies, func(page archive.Page) error {
 				if page.Profile != nil {
 					if err := s.SaveTargetProfile(target, *page.Profile); err != nil {
 						return err
 					}
+					profile := *page.Profile
+					latestProfile = &profile
 				}
 				if err := s.SavePosts(target, page.Posts); err != nil {
 					return err
@@ -285,6 +295,9 @@ func run(ctx context.Context, args []string) error {
 				}
 				return nil
 			})
+			if latestProfile != nil && latestProfile.AvatarURL != "" && ctx.Err() == nil {
+				_ = archive.DownloadAvatar(ctx, cfg, *latestProfile)
+			}
 			status, message := "bounded_complete", result.Stop
 			if collectErr != nil {
 				status = "failed"

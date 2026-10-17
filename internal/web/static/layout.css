@@ -151,6 +151,15 @@ dialog form {
 .settings-section:not(#settings-storage) {
   max-width:760px;
 }
+.settings-section>.panel+.panel {
+  margin-top:18px;
+}
+.diagnostic-result {
+  white-space:pre-line;
+}
+.diagnostic-result.error {
+  color:#b05b47;
+}
 .settings-caption {
   margin:18px 4px;
   color:var(--muted);

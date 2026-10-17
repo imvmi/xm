@@ -48,8 +48,8 @@ func TestTimelineLongTextMediaAndModules(t *testing.T) {
 }
 
 func TestProtectedProfileAndErrors(t *testing.T) {
-	p, err := ParsePage([]byte(`{"data":{"user":{"result":{"rest_id":"42","core":{"screen_name":"alice"},"privacy":{"protected":true}}}}}`), "UserByScreenName")
-	if err != nil || p.Profile == nil || !p.Profile.Protected {
+	p, err := ParsePage([]byte(`{"data":{"user":{"result":{"rest_id":"42","core":{"screen_name":"alice"},"privacy":{"protected":true},"avatar":{"image_url":"https://pbs.twimg.com/profile_images/42/alice_normal.jpg"}}}}}`), "UserByScreenName")
+	if err != nil || p.Profile == nil || !p.Profile.Protected || p.Profile.AvatarURL != "https://pbs.twimg.com/profile_images/42/alice_normal.jpg" {
 		t.Fatal("protected profile not detected", err)
 	}
 	for _, b := range []string{`{"errors":[{"code":179}]}`, `{"errors":[{"code":89}]}`, `{"errors":[{"code":88}]}`, `{"data":{"user":{"result":{"__typename":"UserUnavailable"}}}}`, `{"data":{"user":{"result":{"timeline":{"unknown":[]}}}}}`} {

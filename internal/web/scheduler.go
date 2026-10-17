@@ -14,20 +14,31 @@ import (
 
 type collector func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error)
 type downloader func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error)
+type avatarDownloader func(context.Context, archive.Config, archive.Profile) error
+type collectionSession interface {
+	CollectBound(context.Context, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error)
+	Close()
+}
+type sessionFactory func(context.Context, archive.Config, archive.Cookies) (collectionSession, error)
 
 type Scheduler struct {
-	app       *App
-	wake      chan struct{}
-	mu        sync.Mutex
-	current   string
-	cancel    context.CancelFunc
-	collect   collector
-	download  downloader
-	lastError string
+	app        *App
+	wake       chan struct{}
+	mu         sync.Mutex
+	current    string
+	cancel     context.CancelFunc
+	active     bool
+	collect    collector
+	newSession sessionFactory
+	download   downloader
+	avatar     avatarDownloader
+	lastError  string
 }
 
 func newScheduler(a *App) *Scheduler {
-	return &Scheduler{app: a, wake: make(chan struct{}, 1), collect: archive.CollectBound, download: archive.DownloadPending}
+	return &Scheduler{app: a, wake: make(chan struct{}, 1), newSession: func(ctx context.Context, cfg archive.Config, cookies archive.Cookies) (collectionSession, error) {
+		return archive.NewBrowserSession(ctx, cfg, cookies)
+	}, download: archive.DownloadPending, avatar: archive.DownloadAvatar}
 }
 func (s *Scheduler) Wake() {
 	select {
@@ -76,7 +87,10 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	a := s.app
 	a.changeMu.Lock()
 	cfg := a.Config()
-	if current, _ := s.Current(); current != "" {
+	s.mu.Lock()
+	active := s.active
+	s.mu.Unlock()
+	if active {
 		a.changeMu.Unlock()
 		return false, nil
 	}
@@ -97,57 +111,162 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	// Settings/import operations and claiming a job are serialized. A replacement
 	// cookie or proxy always takes effect for the next job, never halfway through one.
 	cookieGeneration := state(a.store.DB, "cookie_imported")
-	condition := "(m.requested=1 OR (m.enabled=1 AND m.next_run<=?))"
-	if cfg.PollingPaused {
-		condition = "m.requested=1"
-	}
-	args := []any{}
+	now := time.Now().Unix()
+	autoBatch := false
 	if !cfg.PollingPaused {
-		args = append(args, time.Now().Unix())
+		var due int
+		if err = a.store.DB.QueryRow("SELECT COUNT(*) FROM monitors WHERE enabled=1 AND running=0 AND next_run<=?", now).Scan(&due); err != nil {
+			a.changeMu.Unlock()
+			return false, err
+		}
+		autoBatch = due > 0
 	}
-	m, err := scanMonitor(a.store.DB.QueryRow("SELECT "+monitorColumns+" FROM monitors m WHERE m.running=0 AND "+condition+" ORDER BY m.requested DESC,m.next_run,m.username LIMIT 1", args...))
-	if errors.Is(err, sql.ErrNoRows) {
+	condition := "m.requested=1"
+	if autoBatch {
+		condition = "m.enabled=1 OR m.requested=1"
+	}
+	rows, err := a.store.DB.Query("SELECT " + monitorColumns + " FROM monitors m WHERE m.running=0 AND (" + condition + ") ORDER BY m.requested DESC,m.username")
+	if err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
+	jobs := []Monitor{}
+	for rows.Next() {
+		m, scanErr := scanMonitor(rows)
+		if scanErr != nil {
+			rows.Close()
+			a.changeMu.Unlock()
+			return false, scanErr
+		}
+		jobs = append(jobs, m)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
+	if len(jobs) == 0 {
 		a.changeMu.Unlock()
 		return false, nil
 	}
-	if err != nil {
-		a.changeMu.Unlock()
-		return false, err
-	}
-	if err = a.prepareNotifications(m); err != nil {
-		a.changeMu.Unlock()
-		return false, err
-	}
-	started := time.Now().Unix()
-	_, err = a.store.DB.Exec("UPDATE monitors SET running=1,requested=0,last_started=?,last_error='' WHERE username=?", started, m.Username)
-	if err != nil {
-		a.changeMu.Unlock()
-		return false, err
-	}
-	jobCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
-	s.current = m.Username
-	s.cancel = cancel
+	s.active = true
 	s.lastError = ""
 	s.mu.Unlock()
 	a.changeMu.Unlock()
-	defer func() { cancel(); s.mu.Lock(); s.current = ""; s.cancel = nil; s.mu.Unlock() }()
+	defer func() {
+		s.mu.Lock()
+		s.active = false
+		s.current = ""
+		s.cancel = nil
+		s.mu.Unlock()
+	}()
+
+	batchCtx, cancelBatch := context.WithCancel(ctx)
+	defer cancelBatch()
+	collect := s.collect
+	var session collectionSession
+	if collect == nil {
+		session, err = s.newSession(batchCtx, cfg, cookies)
+		if err == nil {
+			collect = func(parent context.Context, _ archive.Config, _ archive.Cookies, target string, identity archive.TargetIdentity, limit int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
+				return session.CollectBound(parent, target, identity, limit, replies, save)
+			}
+		} else {
+			sessionErr := err
+			collect = func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error) {
+				return archive.Collection{}, sessionErr
+			}
+		}
+	}
+	if session != nil {
+		defer session.Close()
+	}
+
+	processed := []string{}
+	globalStop := false
+	for _, m := range jobs {
+		var enabled, requested bool
+		if err = a.store.DB.QueryRow("SELECT enabled,requested FROM monitors WHERE username=?", m.Username).Scan(&enabled, &requested); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return true, err
+		}
+		if !enabled && !requested {
+			continue
+		}
+		started := time.Now().Unix()
+		if _, err = a.store.DB.Exec("UPDATE monitors SET running=1,requested=0,last_started=?,last_error='' WHERE username=?", started, m.Username); err != nil {
+			return true, err
+		}
+		m.Enabled, m.Requested = enabled, requested
+		targetCtx, cancelTarget := context.WithCancel(batchCtx)
+		s.mu.Lock()
+		s.current = m.Username
+		s.cancel = cancelTarget
+		s.mu.Unlock()
+		kind, runErr := s.runMonitor(targetCtx, cfg, cookies, cookieGeneration, m, collect)
+		cancelTarget()
+		s.mu.Lock()
+		s.current = ""
+		s.cancel = nil
+		s.mu.Unlock()
+		processed = append(processed, m.Username)
+		if runErr != nil {
+			return true, runErr
+		}
+		if kind == "auth" || kind == "auth_replaced" || kind == "rate" {
+			globalStop = true
+			break
+		}
+	}
+	if autoBatch && !globalStop {
+		interval := a.Config().DefaultInterval
+		next := time.Now().Unix() + int64(interval)
+		for _, target := range processed {
+			if _, err = a.store.DB.Exec("UPDATE monitors SET interval_seconds=?,next_run=? WHERE username=? AND enabled=1", interval, next, target); err != nil {
+				return true, err
+			}
+		}
+	}
+	return true, nil
+}
+
+func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, collect collector) (string, error) {
+	a := s.app
+	if err := a.prepareNotifications(m); err != nil {
+		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0 WHERE username=?", m.Username)
+		return "", err
+	}
 	id, err := a.store.StartRun(m.Username)
 	if err != nil {
-		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0,next_run=? WHERE username=?", started+60, m.Username)
-		return true, err
+		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0 WHERE username=?", m.Username)
+		return "", err
 	}
 	identity, collectErr := a.store.TargetIdentity(m.Username)
-	var result archive.Collection
 	if collectErr == nil {
-		result, collectErr = s.collect(jobCtx, cfg, cookies, m.Username, identity, m.Limit, m.Replies, func(p archive.Page) error {
+		identity.KnownPostIDs, collectErr = a.store.KnownTargetPosts(m.Username, max(m.Limit*4, 500))
+	}
+	var result archive.Collection
+	var latestProfile *archive.Profile
+	if collectErr == nil {
+		result, collectErr = collect(jobCtx, cfg, cookies, m.Username, identity, m.Limit, m.Replies, func(p archive.Page) error {
 			if p.Profile != nil {
 				if err := a.store.SaveTargetProfile(m.Username, *p.Profile); err != nil {
 					return err
 				}
+				profile := *p.Profile
+				latestProfile = &profile
 			}
 			return a.store.SavePosts(m.Username, p.Posts)
 		})
+	}
+	if jobCtx.Err() == nil && latestProfile != nil && latestProfile.AvatarURL != "" {
+		// An unavailable avatar is cosmetic and must never fail an otherwise
+		// successful archive run; the UI keeps its generated fallback.
+		_ = s.avatar(jobCtx, cfg, *latestProfile)
 	}
 
 	var mediaErr error
@@ -173,45 +292,27 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		failure = jobCtx.Err()
 	}
 	if err = a.store.EndRun(id, status, result.Posts, message); err != nil {
-		return true, err
+		return "", err
 	}
-	delay := m.Interval
 	failures := 0
 	if failure != nil {
 		failures = m.Failures + 1
-		// Bounded exponential backoff, at least the configured interval.
-		backoff := 60 << min(failures-1, 6)
-		if delay < backoff {
-			delay = backoff
-		}
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	if archive.FailureKind(collectErr) == "auth" && state(a.store.DB, "cookie_imported") == cookieGeneration {
 		if err = setState(a.store.DB, "cookie_blocked", message); err != nil {
-			return true, err
+			return "", err
 		}
 	}
 	if archive.FailureKind(collectErr) == "access" || archive.FailureKind(collectErr) == "identity" {
 		if _, err = a.store.DB.Exec("UPDATE monitors SET enabled=0,requested=0 WHERE username=?", m.Username); err != nil {
-			return true, err
+			return "", err
 		}
 	}
 	if archive.FailureKind(collectErr) == "rate" {
-		if delay < 900 {
-			delay = 900
-		}
 		if err = setState(a.store.DB, "cooldown_until", strconv.FormatInt(ended+900, 10)); err != nil {
-			return true, err
-		}
-	}
-	// Honor edits made while the current collection was running.
-	var currentInterval int
-	if e := a.store.DB.QueryRow("SELECT interval_seconds FROM monitors WHERE username=?", m.Username).Scan(&currentInterval); e == nil {
-		if failure == nil {
-			delay = currentInterval
-		} else {
-			delay = max(delay, currentInterval)
+			return "", err
 		}
 	}
 	var count int
@@ -220,25 +321,28 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	if failure != nil {
 		lastError = message
 	}
-	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,next_run=?,last_posts=?,new_posts=? WHERE username=?`, ended, collectErr == nil && jobCtx.Err() == nil, ended, lastError, failures, ended+int64(delay), result.Posts, max(count-m.Posts, 0), m.Username)
+	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=? WHERE username=?`, ended, collectErr == nil && jobCtx.Err() == nil, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), m.Username)
 
 	if err != nil {
-		return true, err
+		return "", err
 	}
 	kind := ""
+	batchKind := ""
 	if collectErr != nil {
 		kind = archive.FailureKind(collectErr)
 		if kind == "" {
 			kind = "transient"
 		}
+		batchKind = kind
 	} else if mediaErr != nil {
 		kind = "media"
 	}
 	if kind == "auth" && state(a.store.DB, "cookie_imported") != cookieGeneration {
 		kind = ""
+		batchKind = "auth_replaced"
 	}
 	err = a.recordNotifications(cfg, m, failure == nil, jobCtx.Err() != nil, kind, failures)
-	return true, err
+	return batchKind, err
 }
 
 func (s *Scheduler) queue(target string) error {

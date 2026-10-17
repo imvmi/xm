@@ -89,10 +89,19 @@ func TestStoreIdempotencyAndRetryState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err = s.SavePosts("alice", p.Posts); err != nil {
-			t.Fatal(err)
-		}
+	if err = s.SavePosts("alice", p.Posts); err != nil {
+		t.Fatal(err)
+	}
+	var mediaUpdated string
+	if err = s.DB.QueryRow("SELECT updated_at FROM media ORDER BY post_id,media_id LIMIT 1").Scan(&mediaUpdated); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SavePosts("alice", p.Posts); err != nil {
+		t.Fatal(err)
+	}
+	var unchangedUpdated string
+	if err = s.DB.QueryRow("SELECT updated_at FROM media ORDER BY post_id,media_id LIMIT 1").Scan(&unchangedUpdated); err != nil || unchangedUpdated != mediaUpdated {
+		t.Fatal("unchanged post rewrote media row", err, mediaUpdated, unchangedUpdated)
 	}
 	var count int
 	s.DB.QueryRow("SELECT count(*) FROM posts").Scan(&count)

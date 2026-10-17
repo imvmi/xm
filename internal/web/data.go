@@ -253,6 +253,7 @@ func listPosts(db *database.DB, target, query, kind, section string, offset, lim
 
 type UserView struct {
 	UserID          string `json:"user_id"`
+	AvatarURL       string `json:"avatar_url"`
 	CurrentUsername string `json:"current_username"`
 	Username        string `json:"username"`
 	Name            string `json:"name"`

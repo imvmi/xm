@@ -54,6 +54,7 @@ func testApp(t *testing.T) *App {
 	a.scheduler.download = func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error) {
 		return archive.DownloadSummary{}, nil
 	}
+	a.scheduler.avatar = func(context.Context, archive.Config, archive.Profile) error { return nil }
 	return a
 }
 
@@ -176,14 +177,14 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	ok(t, b.request("POST", "/api/monitors", input, "http://localhost", true), 201)
 	ok(t, b.request("POST", "/api/monitors", input, "http://localhost", true), 409)
 	input["interval_seconds"] = 1
-	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 400)
+	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	input["interval_seconds"] = 300
 	input["enabled"] = false
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	// MySQL reports zero affected rows when an identical update changes nothing.
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	list, err := monitors(a.store.DB)
-	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 300 {
+	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 1200 {
 		t.Fatal("monitor update failed", err)
 	}
 	ok(t, b.request("POST", "/api/monitors/alice/run", nil, "http://localhost", true), 202)
@@ -192,6 +193,73 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	ok(t, b.request("POST", "/api/monitors/alice/stop", nil, "http://localhost", true), 200)
 	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 200)
 	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 404)
+}
+
+func TestChromeAndCookieDiagnostic(t *testing.T) {
+	a := testApp(t)
+	anon := &browserClient{t: t, a: a}
+	ok(t, anon.request("POST", "/api/chrome-test", nil, "http://localhost", false), 401)
+	b := login(t, a)
+	ok(t, b.request("POST", "/api/chrome-test", nil, "http://localhost", false), 403)
+
+	type diagnostic struct {
+		OK    bool `json:"ok"`
+		Steps []struct {
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"steps"`
+	}
+	decodeDiagnostic := func(w *httptest.ResponseRecorder) diagnostic {
+		t.Helper()
+		ok(t, w, 200)
+		var result diagnostic
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Steps) != 4 {
+			t.Fatalf("unexpected diagnostic steps: %+v", result.Steps)
+		}
+		return result
+	}
+
+	a.checkChrome = func(_ context.Context, _ archive.Config, cookies *archive.Cookies) (archive.ChromeInfo, error) {
+		if cookies != nil {
+			t.Fatal("unexpected cookies before import")
+		}
+		return archive.ChromeInfo{Product: "Chrome/fixture", Headless: true}, nil
+	}
+	result := decodeDiagnostic(b.request("POST", "/api/chrome-test", nil, "http://localhost", true))
+	if result.OK || result.Steps[0].Status != "passed" || result.Steps[1].Status != "failed" || result.Steps[2].Status != "skipped" {
+		t.Fatalf("missing-cookie diagnosis mismatch: %+v", result)
+	}
+
+	if err := a.store.SaveCookies(archive.Cookies{AuthToken: "fixture-auth", CSRF: "fixture-csrf"}); err != nil {
+		t.Fatal(err)
+	}
+	a.checkChrome = func(_ context.Context, _ archive.Config, cookies *archive.Cookies) (archive.ChromeInfo, error) {
+		if cookies == nil || cookies.AuthToken != "fixture-auth" || cookies.CSRF != "fixture-csrf" {
+			t.Fatal("saved cookies not supplied to Chrome diagnosis")
+		}
+		return archive.ChromeInfo{Product: "Chrome/fixture", Headless: true}, &archive.ChromeCheckError{Stage: "session", Message: "Cookie 登录态失效"}
+	}
+	result = decodeDiagnostic(b.request("POST", "/api/chrome-test", nil, "http://localhost", true))
+	if result.OK || result.Steps[2].Status != "passed" || result.Steps[3].Status != "failed" || !strings.Contains(result.Steps[3].Message, "Cookie") {
+		t.Fatalf("invalid-cookie diagnosis mismatch: %+v", result)
+	}
+
+	a.checkChrome = func(_ context.Context, _ archive.Config, _ *archive.Cookies) (archive.ChromeInfo, error) {
+		return archive.ChromeInfo{Product: "Chrome/fixture", Headless: true}, nil
+	}
+	result = decodeDiagnostic(b.request("POST", "/api/chrome-test", nil, "http://localhost", true))
+	if !result.OK {
+		t.Fatalf("successful diagnosis mismatch: %+v", result)
+	}
+	for _, step := range result.Steps {
+		if step.Status != "passed" {
+			t.Fatalf("step did not pass: %+v", step)
+		}
+	}
 }
 
 func TestArchivePaginationSearchAndMediaFilter(t *testing.T) {
