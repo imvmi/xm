@@ -12,7 +12,12 @@ RestartSec=5s
 TimeoutStopSec=30s
 UMask=0077
 NoNewPrivileges=true
-PrivateTmp=true
+# User-service PrivateTmp creates a user namespace that conflicts with Chrome.
+# Keep Chrome sandboxing and NoNewPrivileges; isolate temp files by permissions.
+PrivateTmp=false
+RuntimeDirectory=xm-tmp
+RuntimeDirectoryMode=0700
+Environment=TMPDIR=%t/xm-tmp
 
 [Install]
 WantedBy=default.target

@@ -320,6 +320,7 @@ Docker 中的 `127.0.0.1` 指容器自身；宿主机代理需使用容器可达
 | 现象 | 处理 |
 |---|---|
 | 无法启动 Chrome | 安装 Chrome/Chromium，设置 `chrome_path`，检查运行用户权限与沙箱 |
+| Chrome 报 SUID sandbox helper 权限错误，但文件已是 root:root / 4755 | 检查用户级 systemd 的 `PrivateTmp`：它可能创建用户命名空间，使 Chrome 看到文件所有者为 65534。使用仓库单元的 `PrivateTmp=false` 与 `RuntimeDirectory=xm-tmp`（0700），保留 `NoNewPrivileges=true` 和 Chrome 沙箱；重新加载单元并重启服务 |
 | 未检测到已登录界面 | 浏览器确认登录，重新导入两个 Cookie；有图形环境时设 `headless=false` 查看页面 |
 | 无权查看锁推 | 确认提供 Cookie 的账号已被批准关注，且未被移除或拉黑 |
 | HTTP 429 / code 88 | 等待限流恢复，减少采集量；程序不自动换账号或高频重试 |
