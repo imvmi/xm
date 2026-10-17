@@ -17,7 +17,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func TestMediaDownloadAtomicitySizeAndCredentials(t *testing.T) {
 	dir := t.TempDir()
-	j := MediaJob{PostID: "100", ID: "photo1", Kind: "photo", URL: "https://pbs.twimg.com/a.jpg"}
+	j := MediaJob{AuthorID: "123", Username: "Alice", PostID: "100", ID: "photo1", Kind: "photo", URL: "https://pbs.twimg.com/a.jpg"}
 	c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
 			t.Fatal("account credentials leaked to media host")
@@ -27,6 +27,9 @@ func TestMediaDownloadAtomicitySizeAndCredentials(t *testing.T) {
 	path, size, hash, err := Download(context.Background(), c, dir, j, 100)
 	if err != nil || size != 11 || len(hash) != 64 {
 		t.Fatal(path, size, hash, err)
+	}
+	if !strings.HasPrefix(path, "media/users/alice_123/") {
+		t.Fatal("media not grouped under author", path)
 	}
 	j.Path = path
 	j.Bytes = size

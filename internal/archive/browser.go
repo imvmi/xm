@@ -59,7 +59,7 @@ func operation(raw string) string {
 	parts := strings.Split(u.Path, "/")
 	s := parts[len(parts)-1]
 	switch s {
-	case "UserByScreenName", "UserTweets", "UserTweetsAndReplies", "UserOriginalsTimeline":
+	case "UserByScreenName", "UserByRestId", "TweetDetail", "TweetResultByRestId", "UserTweets", "UserTweetsAndReplies", "UserRepliesTimeline", "UserOriginalsTimeline":
 		return s
 	}
 	return ""
@@ -71,8 +71,40 @@ func Collect(parent context.Context, cfg Config, cookies Cookies, target string,
 	return collect(parent, cfg, cookies, target, limit, replies, save, nil)
 }
 
+func CollectBound(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error) (Collection, error) {
+	return collectIdentity(parent, cfg, cookies, target, identity, limit, replies, save, nil)
+}
+
+// Try the last verified handle first. Only an empty, unsuccessful collection
+// may fall back to a stable reference; auth and rate failures are not retried.
+func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.CollectionTimeout)*time.Second)
+	defer cancel()
+	saveFailed := false
+	checkedSave := func(p Page) error {
+		err := save(p)
+		if err != nil {
+			saveFailed = true
+		}
+		return err
+	}
+	result, err := collectBound(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup)
+	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" {
+		return result, err
+	}
+	identity.CurrentUsername = ""
+	return collectBound(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup)
+}
+
 func collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
+	return collectBound(parent, cfg, cookies, target, TargetIdentity{}, limit, replies, save, setup)
+}
+func collectBound(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
 	var result Collection
+	expectedID := identity.UserID
+	if expectedID != "" && !userIDPattern.MatchString(expectedID) {
+		return result, fail("identity", "无效的绑定用户 ID")
+	}
 	if limit < 1 || limit > 10000 {
 		return result, errors.New("limit 必须在 1～10000 之间")
 	}
@@ -178,7 +210,21 @@ func collect(parent context.Context, cfg Config, cookies Cookies, target string,
 		}
 	}()
 	path := "https://x.com/" + target
-	if replies {
+	resolvingPost := expectedID != "" && identity.CurrentUsername == "" && userIDPattern.MatchString(identity.ReferencePostID)
+	if expectedID != "" {
+		path = "https://x.com/i/user/" + expectedID
+		if resolvingPost {
+			path = "https://x.com/i/status/" + identity.ReferencePostID
+		} else if identity.CurrentUsername != "" {
+			if !usernamePattern.MatchString(identity.CurrentUsername) {
+				return result, fail("identity", "无效的绑定用户名")
+			}
+			path = "https://x.com/" + identity.CurrentUsername
+			if replies {
+				path += "/with_replies"
+			}
+		}
+	} else if replies {
 		path += "/with_replies"
 	}
 	if err = chromedp.Do(browser, chromedp.Navigate(path)); err != nil {
@@ -188,6 +234,9 @@ func collect(parent context.Context, cfg Config, cookies Cookies, target string,
 		return result, err
 	}
 	seen := make(map[string]bool)
+	verifiedID := ""
+	var pending []Page
+	replyNavigation := expectedID != "" && identity.CurrentUsername != "" && replies
 	scrolls, idle, lastCount := 0, 0, 0
 	ticker := time.NewTicker(time.Duration(cfg.ScrollDelay) * time.Second)
 	defer ticker.Stop()
@@ -202,49 +251,112 @@ func collect(parent context.Context, cfg Config, cookies Cookies, target string,
 			if c.err != nil {
 				return result, c.err
 			}
+			isDetail := c.meta.operation == "TweetDetail" || c.meta.operation == "TweetResultByRestId"
+			if resolvingPost && !isDetail || !resolvingPost && isDetail {
+				continue
+			}
 			switch c.meta.status {
 			case 200:
 			case 401:
 				return result, fail("auth", "Cookie 登录态失效，请重新导入")
 			case 403:
-				return result, fail("access", "X 拒绝访问：可能无查看权限、账号受限或需要浏览器验证")
+				return result, fail("access", "X "+c.meta.operation+" 拒绝访问：可能无查看权限、账号受限或需要浏览器验证")
 			case 429:
 				return result, fail("rate", "X 请求限流，请等待后重试")
 			default:
 				return result, fmt.Errorf("X 数据请求返回 HTTP %d", c.meta.status)
+			}
+			if resolvingPost {
+				p, e := IdentityFromPost(c.data, identity.ReferencePostID)
+				if e != nil {
+					return result, e
+				}
+				if p.ID != expectedID {
+					return result, fail("identity", "归档推文的作者 ID 与绑定身份不符")
+				}
+				resolvingPost = false
+				replyNavigation = replies
+				pending = nil
+				next := "https://x.com/" + p.Username
+				if replies {
+					next += "/with_replies"
+				}
+				if e = chromedp.Do(browser, chromedp.Navigate(next)); e != nil {
+					return result, errors.New("无法打开已核实身份的用户主页")
+				}
+				continue
+			}
+			if replies && c.meta.operation != "UserByScreenName" && c.meta.operation != "UserByRestId" && c.meta.operation != "UserTweetsAndReplies" && c.meta.operation != "UserRepliesTimeline" {
+				continue
 			}
 			page, e := ParsePage(c.data, c.meta.operation)
 			if e != nil {
 				return result, e
 			}
 			if page.Profile != nil {
-				if !strings.EqualFold(page.Profile.Username, target) {
+				p := page.Profile
+				if !userIDPattern.MatchString(p.ID) || !usernamePattern.MatchString(p.Username) {
+					return result, fail("identity", "无法确认目标账号身份")
+				}
+				if expectedID != "" && p.ID != expectedID {
+					return result, fail("identity", "目标用户 ID 与绑定身份不符，已停止采集")
+				}
+				if expectedID == "" && !strings.EqualFold(p.Username, target) {
 					continue
 				}
-				protected := page.Profile.Protected
+				if verifiedID != "" && p.ID != verifiedID {
+					return result, fail("identity", "采集中账号身份发生变化，已停止采集")
+				}
+				verifiedID = p.ID
+				protected := p.Protected
 				result.Protected = &protected
-			}
-			filtered := []Post{}
-			for _, p := range page.Posts {
-				// Conversation modules may also contain posts by other authors.
-				if !strings.EqualFold(p.Username, target) || seen[p.ID] || len(seen) >= limit {
+				if err = save(page); err != nil {
+					return result, err
+				}
+				if expectedID != "" && replies && !replyNavigation {
+					replyNavigation = true
+					pending = nil
+					if err = chromedp.Do(browser, chromedp.Navigate("https://x.com/"+p.Username+"/with_replies")); err != nil {
+						return result, errors.New("无法打开回复时间线")
+					}
 					continue
 				}
-				seen[p.ID] = true
-				filtered = append(filtered, p)
+			} else if verifiedID == "" {
+				if len(pending) >= 32 {
+					return result, fail("identity", "未能确认用户身份，未保存时间线")
+				}
+				pending = append(pending, page)
+				continue
 			}
-			page.Posts = filtered
-			if err = save(page); err != nil {
-				return result, err
+			pages := pending
+			pending = nil
+			if page.Profile == nil {
+				pages = append(pages, page)
 			}
-			result.Posts += len(filtered)
-			result.Unavailable += page.Unavailable
-			if page.Timeline {
-				result.Pages++
-			}
-			if result.Posts >= limit {
-				result.Stop = "limit_reached"
-				return result, nil
+			for _, page := range pages {
+				filtered := []Post{}
+				for _, p := range page.Posts {
+					// Author ID is authoritative. Historical posts may still
+					// carry an old handle; quoted authors remain separate.
+					if p.AuthorID != verifiedID || seen[p.ID] || len(seen) >= limit {
+						continue
+					}
+					seen[p.ID] = true
+					filtered = append(filtered, p)
+				}
+				page.Posts = filtered
+				if err = save(page); err != nil {
+					return result, err
+				}
+				result.Posts += len(filtered)
+				result.Unavailable += page.Unavailable
+				if page.Timeline {
+					result.Pages++
+				}
+				if result.Posts >= limit {
+					result.Stop = "limit_reached"
+					return result, nil
+				}
 			}
 		case <-ticker.C:
 			type pageState struct {
@@ -268,6 +380,9 @@ func collect(parent context.Context, cfg Config, cookies Cookies, target string,
 			}
 			lastCount = result.Posts
 			if scrolls >= cfg.MaxScrolls || idle >= 8 {
+				if verifiedID == "" {
+					return result, fail("identity", "未能确认目标用户 ID，未保存推文")
+				}
 				if result.Pages == 0 {
 					return result, errors.New("未收到可读取的用户时间线，不能认定为没有推文；请检查登录态、权限、代理或页面变化")
 				}

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,45 +27,39 @@ func TestStorageSettingsAndRemoteMedia(t *testing.T) {
 		http.ServeContent(w, r, "test.mp4", time.Time{}, strings.NewReader("0123456789"))
 	}))
 	defer remote.Close()
-	p := archive.StorageProfile{Name: "Home NAS", Kind: "webdav", Endpoint: remote.URL, Prefix: "archive", Username: "nas-user", Password: "initial-password", Timeout: 5}
-	w := b.request("POST", "/api/storage/profiles", p, "http://localhost", true)
+	p := archive.StorageProfile{ID: "fixture", Name: "Home NAS", Kind: "webdav", Endpoint: remote.URL, Prefix: "archive", Username: "nas-user", Password: "rotated-password", Timeout: 5}
+	// Seed the already-initialized destination; production configuration is immutable.
+	cfg := a.Config()
+	cfg.StorageProfiles = []archive.StorageProfile{p}
+	cfg.MediaStorage = p.ID
+	if err := a.store.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a.config = cfg
+	var e error
+	saved := p
+	w := b.request("GET", "/api/storage", nil, "", false)
 	ok(t, w, 200)
-	var result map[string]string
-	json.Unmarshal(w.Body.Bytes(), &result)
-	p.ID = result["id"]
-	if p.ID == "" {
-		t.Fatal("no storage ID")
-	}
-	p.Password = "rotated-password"
-	ok(t, b.request("POST", "/api/storage/profiles", p, "http://localhost", true), 200)
-	p.Password = ""
-	p.Name = "Renamed NAS"
-	ok(t, b.request("POST", "/api/storage/profiles", p, "http://localhost", true), 200)
-	saved, e := a.Config().Storage(p.ID)
-	if e != nil || saved.Password != "rotated-password" {
-		t.Fatal("blank erased credentials")
-	}
-	clone := a.Config()
-	clone.StorageProfiles[0].Name = "mutated snapshot"
-	if a.Config().StorageProfiles[0].Name != p.Name {
-		t.Fatal("shared mutable configuration")
-	}
-	w = b.request("GET", "/api/storage", nil, "", false)
-	ok(t, w, 200)
-	for _, secret := range []string{"initial-password", "rotated-password", "secret_key", "session_token", "access_key"} {
+	for _, secret := range []string{"rotated-password", "secret_key", "session_token", "access_key"} {
 		if strings.Contains(w.Body.String(), secret) {
-			t.Fatal("credential echoed", secret)
+			t.Fatal("credential echoed")
 		}
 	}
-	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": p.ID}, "http://localhost", true), 200)
-	cfg, e := archive.LoadConfig(a.configPath)
-	if e != nil || cfg.ActiveStorage() != p.ID {
-		t.Fatal("storage not persisted", e)
+	if !strings.Contains(w.Body.String(), `"locked":true`) {
+		t.Fatal("storage not locked")
 	}
-	p.Endpoint = "http://other.example"
-	ok(t, b.request("POST", "/api/storage/profiles", p, "http://localhost", true), 400)
-	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": "unknown"}, "http://localhost", true), 400)
-	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": "local"}, "http://localhost", true), 200)
+	ok(t, b.request("POST", "/api/storage/profiles", p, "http://localhost", true), 403)
+	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": "local"}, "http://localhost", true), 403)
+	changed := a.Config()
+	changed.MediaStorage = "local"
+	if e = a.saveConfig(changed); e == nil {
+		t.Fatal("internal storage mutation accepted")
+	}
+	changed = a.Config()
+	changed.Database = archive.DatabaseConfig{Driver: "mysql"}
+	if e = a.saveConfig(changed); e == nil {
+		t.Fatal("internal database mutation accepted")
+	}
 	if e = a.store.SavePosts("alice", []archive.Post{{ID: "10", Assets: []archive.Asset{{ID: "v", Kind: "video"}}}}); e != nil {
 		t.Fatal(e)
 	}
@@ -96,7 +89,7 @@ func TestStorageSettingsAndRemoteMedia(t *testing.T) {
 	ok(t, b.request("POST", "/api/storage/profiles", p, "http://evil.example", true), 403)
 	ok(t, b.request("POST", "/api/storage/profiles/"+saved.ID+"/test", nil, "http://localhost", false), 403)
 	// Existing local media is still served when a remote destination is active.
-	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": saved.ID}, "http://localhost", true), 200)
+	ok(t, b.request("PUT", "/api/storage/active", map[string]string{"id": saved.ID}, "http://localhost", true), 403)
 	if e = a.store.SavePosts("alice", []archive.Post{{ID: "11", Assets: []archive.Asset{{ID: "p", Kind: "photo"}}}}); e != nil {
 		t.Fatal(e)
 	}

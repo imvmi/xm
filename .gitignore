@@ -4,3 +4,12 @@
 /cookies*
 *.har
 *.sqlite*
+
+/config.*.json
+/.env
+
+/config.yaml
+/config.yml
+/config.*.yaml
+/config.*.yml
+/xm.next

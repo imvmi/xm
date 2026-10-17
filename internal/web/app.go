@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"mime"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,18 +36,22 @@ type App struct {
 	notifier   *Notifier
 }
 
-func New(path string, cfg archive.Config, s *archive.Store, password string, secure bool) (*App, string, error) {
+func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, error) {
 	if err := migrate(s); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	auth, generated, err := newAuth(cfg.DataDir, password, secure)
+	auth, err := newAuth(s, secure)
 	if err != nil {
-		return nil, "", err
+		return nil, err
+	}
+	cfg, err = s.LoadSettings(cfg)
+	if err != nil {
+		return nil, err
 	}
 	a := &App{store: s, configPath: path, config: cfg, auth: auth}
 	a.scheduler = newScheduler(a)
 	a.notifier = newNotifier(a)
-	return a, generated, nil
+	return a, nil
 }
 func (a *App) Config() archive.Config {
 	a.configMu.RLock()
@@ -56,8 +63,8 @@ func (a *App) Config() archive.Config {
 }
 
 // CookieImported is also called by the CLI while holding the worker lock.
-func CookieImported(dir string) error {
-	s, err := archive.OpenStore(dir)
+func CookieImported(cfg archive.Config) error {
+	s, err := archive.OpenConfiguredStore(cfg)
 	if err != nil {
 		return err
 	}
@@ -71,7 +78,12 @@ func CookieImported(dir string) error {
 	return setState(s.DB, "cookie_imported", time.Now().UTC().Format(time.RFC3339Nano))
 }
 func (a *App) saveConfig(cfg archive.Config) error {
-	if err := archive.SaveConfig(a.configPath, cfg); err != nil {
+	old := a.Config()
+	if !reflect.DeepEqual(old.Database, cfg.Database) || old.ActiveStorage() != cfg.ActiveStorage() || !reflect.DeepEqual(old.StorageProfiles, cfg.StorageProfiles) {
+		return errors.New("初始化已完成，数据库与存储配置已锁定")
+	}
+
+	if err := a.store.SaveSettings(cfg); err != nil {
 		return err
 	}
 	a.configMu.Lock()
@@ -81,8 +93,10 @@ func (a *App) saveConfig(cfg archive.Config) error {
 }
 func (a *App) Run(ctx context.Context) error {
 	// A process-wide worker file lock is held by the serve command at this point.
-	_, err := a.store.DB.Exec(`UPDATE monitors SET running=0,next_run=?,last_error='上次采集中断，等待重新执行' WHERE running=1;
-UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任务尚未完成，已保存数据保留' WHERE status='running'`, time.Now().Unix()+10, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := a.store.DB.Exec("UPDATE monitors SET running=0,next_run=?,last_error='上次采集中断，等待重新执行' WHERE running=1", time.Now().Unix()+10)
+	if err == nil {
+		_, err = a.store.DB.Exec("UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任务尚未完成，已保存数据保留' WHERE status='running'", time.Now().UTC().Format(time.RFC3339Nano))
+	}
 	if err != nil {
 		return err
 	}
@@ -125,6 +139,9 @@ func sameOrigin(r *http.Request) bool {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]bool{"needed": false})
+	})
 	mux.HandleFunc("POST /api/login", a.auth.login)
 	mux.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
 		s, _ := a.auth.session(r)
@@ -140,9 +157,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/channels/{id}/test", a.testNotificationChannel)
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
-	mux.HandleFunc("POST /api/storage/profiles", a.saveStorageProfile)
-	mux.HandleFunc("PUT /api/storage/active", a.activateStorage)
-	mux.HandleFunc("POST /api/storage/profiles/{id}/test", a.testStorage)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
 	mux.HandleFunc("POST /api/proxy-test", a.testProxy)
 	mux.HandleFunc("GET /api/monitors", func(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +210,7 @@ func (a *App) Handler() http.Handler {
 			problem(w, 403, "不允许跨站请求")
 			return
 		}
-		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login") || strings.HasPrefix(r.URL.Path, "/media/") {
+		if (strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" && r.URL.Path != "/api/setup/status") || strings.HasPrefix(r.URL.Path, "/media/") {
 			s, ok := a.auth.session(r)
 			if !ok {
 				problem(w, 401, "请先登录")
@@ -204,6 +218,10 @@ func (a *App) Handler() http.Handler {
 			}
 			if mutation && (r.Header.Get("X-CSRF-Token") == "" || r.Header.Get("X-CSRF-Token") != s.CSRF) {
 				problem(w, 403, "会话校验失败，请刷新页面")
+				return
+			}
+			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") {
+				problem(w, 403, "初始化已完成，数据库与存储配置已锁定，无法修改")
 				return
 			}
 		}
@@ -219,7 +237,7 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	current, lastError := a.scheduler.Current()
 	cfg := a.Config()
-	_, cookieErr := archive.LoadCookies(cfg.DataDir)
+	_, cookieErr := a.store.LoadCookies()
 	respond(w, 200, map[string]any{"counts": c, "running": current, "scheduler_error": lastError, "paused": cfg.PollingPaused, "cookie_ready": cookieErr == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cooldown_until": state(a.store.DB, "cooldown_until"), "server_time": time.Now().Unix()})
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
@@ -228,8 +246,8 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.Parse(cfg.Proxy); err == nil && cfg.Proxy != "" {
 		proxyLabel = u.Redacted()
 	}
-	_, err := archive.LoadCookies(cfg.DataDir)
-	respond(w, 200, map[string]any{"proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "default_interval_seconds": cfg.DefaultInterval, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "max_media_bytes": cfg.MaxMediaBytes})
+	_, err := a.store.LoadCookies()
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "default_interval_seconds": cfg.DefaultInterval, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "max_media_bytes": cfg.MaxMediaBytes})
 }
 
 type settingsInput struct {
@@ -294,7 +312,7 @@ func (a *App) importCookie(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	if err = archive.SaveCookies(a.Config().DataDir, cookies); err != nil {
+	if err = a.store.SaveCookies(cookies); err != nil {
 		problem(w, 500, "保存 Cookie 失败")
 		return
 	}
@@ -306,7 +324,7 @@ func (a *App) importCookie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.scheduler.Wake()
-	respond(w, 200, map[string]string{"message": "Cookie 已加密保存；登录状态将在下一次采集时验证"})
+	respond(w, 200, map[string]string{"message": "Cookie 已明文保存到数据库；登录状态将在下一次采集时验证"})
 }
 func (a *App) testProxy(w http.ResponseWriter, r *http.Request) {
 	var v struct {
@@ -349,6 +367,17 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
+	var existing string
+	e := a.store.DB.QueryRow("SELECT m.username FROM monitors m JOIN target_identities i ON i.target=m.username WHERE i.current_username=? LIMIT 1", m.Username).Scan(&existing)
+	if e == nil {
+		problem(w, 409, "此账号已在监控列表中，改名后会沿用原监控")
+		return
+	}
+	if !errors.Is(e, sql.ErrNoRows) {
+		problem(w, 500, "无法检查已有监控")
+		return
+	}
+
 	_, err := a.store.DB.Exec("INSERT INTO monitors(username,interval_seconds,post_limit,replies,enabled,next_run) VALUES(?,?,?,?,?,?)", m.Username, m.Interval, m.Limit, m.Replies, m.Enabled, time.Now().Unix())
 	if err != nil {
 		problem(w, 409, "添加失败，此账号可能已经在监控列表中")
@@ -374,7 +403,7 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "修改失败")
 		return
 	}
-	if err = missing(res); err != nil {
+	if err = a.missingMonitor(res, m.Username); err != nil {
 		problem(w, 404, err.Error())
 		return
 	}
@@ -420,7 +449,7 @@ func (a *App) stopMonitor(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "停止失败")
 		return
 	}
-	if err = missing(res); err != nil {
+	if err = a.missingMonitor(res, target); err != nil {
 		problem(w, 404, err.Error())
 		return
 	}
@@ -441,7 +470,13 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "搜索内容过长")
 		return
 	}
-	v, err := listPosts(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), offset, 24)
+	switch q.Get("section") {
+	case "", "posts", "replies", "media":
+	default:
+		problem(w, 400, "无效的动态类型")
+		return
+	}
+	v, err := listPosts(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, 24)
 	if err != nil {
 		problem(w, 500, "读取推文失败")
 		return

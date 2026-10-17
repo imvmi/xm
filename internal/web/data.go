@@ -7,29 +7,36 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"xm/internal/archive"
+	"xm/internal/database"
 )
 
 type Monitor struct {
-	Username     string `json:"username"`
-	Interval     int    `json:"interval_seconds"`
-	Limit        int    `json:"limit"`
-	Replies      bool   `json:"replies"`
-	Enabled      bool   `json:"enabled"`
-	Requested    bool   `json:"requested"`
-	Running      bool   `json:"running"`
-	NextRun      int64  `json:"next_run"`
-	LastStarted  int64  `json:"last_started"`
-	LastFinished int64  `json:"last_finished"`
-	LastSuccess  int64  `json:"last_success"`
-	LastError    string `json:"last_error"`
-	Failures     int    `json:"failures"`
-	Posts        int    `json:"posts"`
-	LastPosts    int    `json:"last_posts"`
-	NewPosts     int    `json:"new_posts"`
+	UserID          string `json:"user_id"`
+	CurrentUsername string `json:"current_username"`
+	Username        string `json:"username"`
+	Interval        int    `json:"interval_seconds"`
+	Limit           int    `json:"limit"`
+	Replies         bool   `json:"replies"`
+	Enabled         bool   `json:"enabled"`
+	Requested       bool   `json:"requested"`
+	Running         bool   `json:"running"`
+	NextRun         int64  `json:"next_run"`
+	LastStarted     int64  `json:"last_started"`
+	LastFinished    int64  `json:"last_finished"`
+	LastSuccess     int64  `json:"last_success"`
+	LastError       string `json:"last_error"`
+	Failures        int    `json:"failures"`
+	Posts           int    `json:"posts"`
+	LastPosts       int    `json:"last_posts"`
+	NewPosts        int    `json:"new_posts"`
 }
 
 func migrate(s *archive.Store) error {
+	if s.DB.Dialect == "mysql" {
+		return MigrateStore(s.DB)
+	}
 	_, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS monitors (
  username TEXT PRIMARY KEY, interval_seconds INTEGER NOT NULL, post_limit INTEGER NOT NULL,
  replies INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, requested INTEGER NOT NULL DEFAULT 0,
@@ -47,16 +54,16 @@ CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `m.username,m.interval_seconds,m.post_limit,m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,m.interval_seconds,m.post_limit,m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
-	err := row.Scan(&m.Username, &m.Interval, &m.Limit, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts)
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Limit, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts)
 	return m, err
 }
-func monitors(db *sql.DB) ([]Monitor, error) {
+func monitors(db *database.DB) ([]Monitor, error) {
 	r, err := db.Query("SELECT " + monitorColumns + " FROM monitors m ORDER BY m.username")
 	if err != nil {
 		return nil, err
@@ -86,13 +93,13 @@ func validateMonitor(m *Monitor) error {
 	}
 	return nil
 }
-func state(db *sql.DB, key string) string {
+func state(db *database.DB, key string) string {
 	var v string
-	_ = db.QueryRow("SELECT value FROM web_state WHERE key=?", key).Scan(&v)
+	_ = db.QueryRow("SELECT value FROM web_state WHERE `key`=?", key).Scan(&v)
 	return v
 }
-func setState(db *sql.DB, key, value string) error {
-	_, err := db.Exec("INSERT INTO web_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value)
+func setState(db *database.DB, key, value string) error {
+	_, err := db.Exec(database.Upsert(db.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), key, value)
 	return err
 }
 
@@ -144,7 +151,7 @@ func scanPost(row scanner) (PostView, error) {
 	p.Media = []MediaView{}
 	return p, err
 }
-func attachPost(db *sql.DB, p *PostView, depth int, seen map[string]bool) error {
+func attachPost(db *database.DB, p *PostView, depth int, seen map[string]bool) error {
 	seen[p.ID] = true
 	defer delete(seen, p.ID)
 	rows, err := db.Query("SELECT media_id,kind,status,last_error,bytes FROM media WHERE post_id=? ORDER BY media_id", p.ID)
@@ -184,7 +191,7 @@ func attachPost(db *sql.DB, p *PostView, depth int, seen map[string]bool) error 
 	}
 	return nil
 }
-func listPosts(db *sql.DB, target, query, kind string, offset, limit int) (PostList, error) {
+func listPosts(db *database.DB, target, query, kind, section string, offset, limit int) (PostList, error) {
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit}
 	where := " WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"
 	args := []any{}
@@ -197,6 +204,14 @@ func listPosts(db *sql.DB, target, query, kind string, offset, limit int) (PostL
 		args = append(args, query, query)
 	}
 	media := `EXISTS (SELECT 1 FROM related r JOIN media a ON a.post_id=r.id WHERE r.root=p.id`
+	switch section {
+	case "posts":
+		where += " AND p.reply_to=''"
+	case "replies":
+		where += " AND p.reply_to<>''"
+	case "media":
+		where += " AND " + media + ")"
+	}
 	switch kind {
 	case "photo":
 		where += " AND " + media + " AND a.kind='photo')"
@@ -237,23 +252,25 @@ func listPosts(db *sql.DB, target, query, kind string, offset, limit int) (PostL
 }
 
 type UserView struct {
-	Username  string `json:"username"`
-	Name      string `json:"name"`
-	Bio       string `json:"bio"`
-	Protected bool   `json:"protected"`
-	Posts     int    `json:"posts"`
-	Media     int    `json:"media"`
-	LastSaved string `json:"last_saved"`
-	LastRun   int64  `json:"last_run"`
-	Monitored bool   `json:"monitored"`
-	Enabled   bool   `json:"enabled"`
-	Interval  int    `json:"interval_seconds"`
+	UserID          string `json:"user_id"`
+	CurrentUsername string `json:"current_username"`
+	Username        string `json:"username"`
+	Name            string `json:"name"`
+	Bio             string `json:"bio"`
+	Protected       bool   `json:"protected"`
+	Posts           int    `json:"posts"`
+	Media           int    `json:"media"`
+	LastSaved       string `json:"last_saved"`
+	LastRun         int64  `json:"last_run"`
+	Monitored       bool   `json:"monitored"`
+	Enabled         bool   `json:"enabled"`
+	Interval        int    `json:"interval_seconds"`
 }
 
-func archiveUsers(db *sql.DB) ([]UserView, error) {
+func archiveUsers(db *database.DB) ([]UserView, error) {
 	rows, err := db.Query(`WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
  SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.interval_seconds,0),COALESCE(m.last_finished,0)
- FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id LEFT JOIN monitors m ON m.username=u.username GROUP BY u.username ORDER BY u.username`)
+ FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id LEFT JOIN monitors m ON m.username=u.username GROUP BY u.username,m.username,m.enabled,m.interval_seconds,m.last_finished ORDER BY u.username`)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +290,12 @@ func archiveUsers(db *sql.DB) ([]UserView, error) {
 	}
 	for i := range users {
 		u := &users[i]
-		u.Name = u.Username
+		u.CurrentUsername = u.Username
+		eIdentity := db.QueryRow("SELECT user_id,current_username FROM target_identities WHERE target=?", u.Username).Scan(&u.UserID, &u.CurrentUsername)
+		if eIdentity != nil && !errors.Is(eIdentity, sql.ErrNoRows) {
+			return nil, eIdentity
+		}
+		u.Name = u.CurrentUsername
 		var raw string
 		e := db.QueryRow(`SELECT raw_json,COALESCE((SELECT protected FROM profiles WHERE id=p.author_id),0) FROM posts p JOIN target_posts t ON t.post_id=p.id WHERE t.target=? ORDER BY length(p.id) DESC,p.id DESC LIMIT 1`, u.Username).Scan(&raw, &u.Protected)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
@@ -291,7 +313,7 @@ func archiveUsers(db *sql.DB) ([]UserView, error) {
 	return users, nil
 }
 
-func recentRuns(db *sql.DB) ([]map[string]any, error) {
+func recentRuns(db *database.DB) ([]map[string]any, error) {
 	r, err := db.Query("SELECT id,target,started_at,COALESCE(finished_at,''),status,posts_seen,message FROM runs ORDER BY id DESC LIMIT 20")
 	if err != nil {
 		return nil, err
@@ -309,7 +331,7 @@ func recentRuns(db *sql.DB) ([]map[string]any, error) {
 	return result, r.Err()
 }
 
-func counts(db *sql.DB) (map[string]int64, error) {
+func counts(db *database.DB) (map[string]int64, error) {
 	result := map[string]int64{}
 	queries := map[string]string{"posts": "SELECT COUNT(*) FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)", "media": "SELECT COUNT(*) FROM media WHERE status='done'", "media_failed": "SELECT COUNT(*) FROM media WHERE status='failed'", "media_bytes": "SELECT COALESCE(SUM(bytes),0) FROM media WHERE status='done'", "monitors": "SELECT COUNT(*) FROM monitors", "active": "SELECT COUNT(*) FROM monitors WHERE enabled=1", "today": "SELECT COUNT(*) FROM posts p WHERE first_seen>=? AND EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"}
 	for key, q := range queries {
@@ -332,6 +354,10 @@ func safeMessage(err error) string {
 	if err == nil {
 		return ""
 	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return "数据库操作失败，请检查 MySQL 连接、权限与容量"
+	}
 	s := err.Error()
 	if len(s) > 500 {
 		s = s[:500]
@@ -347,6 +373,20 @@ func missing(rows sql.Result) error {
 		return err
 	}
 	if n == 0 {
+		return fmt.Errorf("监控账号不存在")
+	}
+	return nil
+}
+
+func (a *App) missingMonitor(result sql.Result, name string) error {
+	if err := missing(result); err == nil {
+		return nil
+	}
+	var count int
+	if err := a.store.DB.QueryRow("SELECT COUNT(*) FROM monitors WHERE username=?", name).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
 		return fmt.Errorf("监控账号不存在")
 	}
 	return nil

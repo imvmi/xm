@@ -148,7 +148,12 @@ func TestStorageProtocolsAndSeek(t *testing.T) {
 	}
 }
 func TestRemoteUploadRetryAndStorageBinding(t *testing.T) {
-	p, f := mockStorage(t, "webdav")
+	for _, kind := range []string{"webdav", "s3"} {
+		t.Run(kind, func(t *testing.T) { testRemoteUploadRetryAndStorageBinding(t, kind) })
+	}
+}
+func testRemoteUploadRetryAndStorageBinding(t *testing.T, kind string) {
+	p, f := mockStorage(t, kind)
 	dir := t.TempDir()
 	cfg := Config{DataDir: dir, RequestTimeout: 5, MaxMediaBytes: 1024, MediaStorage: p.ID, StorageProfiles: []StorageProfile{p}}
 	s, e := OpenStore(dir)
@@ -156,16 +161,28 @@ func TestRemoteUploadRetryAndStorageBinding(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	if e = s.SavePosts("alice", []Post{{ID: "1", Username: "alice", Assets: []Asset{{ID: "a", Kind: "video"}}}}); e != nil {
+	if e = s.SavePosts("alice", []Post{{ID: "1", AuthorID: "123", Username: "alice", Assets: []Asset{{ID: "a", Kind: "video"}}}}); e != nil {
 		t.Fatal(e)
 	}
 	PrivateDir(filepath.Join(dir, "media"))
 	payload := []byte("cached movie")
 	sum := sha256.Sum256(payload)
 	hash := hex.EncodeToString(sum[:])
-	rel := "media/test.mp4"
-	os.WriteFile(filepath.Join(dir, rel), payload, 0600)
-	j := MediaJob{PostID: "1", ID: "a"}
+	j := MediaJob{PostID: "1", ID: "a", AuthorID: "123", Username: "alice"}
+	j.Directory, e = s.MediaDirectory(j)
+	if e != nil {
+		t.Fatal(e)
+	}
+	rel, e := mediaRelativePath(j, ".mp4")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = PrivateDir(filepath.Dir(filepath.Join(dir, rel))); e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(filepath.Join(dir, rel), payload, 0600); e != nil {
+		t.Fatal(e)
+	}
 	s.MediaResult(j, rel, int64(len(payload)), hash, fmt.Errorf("cached"))
 	f.mu.Lock()
 	f.fail = true
@@ -186,7 +203,7 @@ func TestRemoteUploadRetryAndStorageBinding(t *testing.T) {
 		t.Fatal(result, e)
 	}
 	jobs, _ = s.MediaJobs("alice", true)
-	if jobs[0].StorageID != p.ID || jobs[0].ObjectKey != "xm/media/test.mp4" || jobs[0].Path != "" {
+	if jobs[0].StorageID != p.ID || jobs[0].ObjectKey != "xm/"+rel || jobs[0].Path != "" {
 		t.Fatal("location lost", jobs)
 	}
 	if _, e = os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(e) {
@@ -237,31 +254,5 @@ func TestStorageValidationAndRedirects(t *testing.T) {
 	defer b.Close()
 	if e = b.Test(context.Background()); e == nil {
 		t.Fatal("redirect accepted")
-	}
-}
-func TestStorageMigrationPreservesLocal(t *testing.T) {
-	dir := t.TempDir()
-	s, e := OpenStore(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
-	s.SavePosts("a", []Post{{ID: "1", Assets: []Asset{{ID: "a", Kind: "photo"}}}})
-	s.MediaResult(MediaJob{PostID: "1", ID: "a"}, "media/a.jpg", 3, "hash", nil)
-	for _, c := range []string{"storage_id", "object_key"} {
-		if _, e = s.DB.Exec("ALTER TABLE media DROP COLUMN " + c); e != nil {
-			t.Fatal(e)
-		}
-	}
-	s.Close()
-	for range 2 {
-		s, e = OpenStore(dir)
-		if e != nil {
-			t.Fatal(e)
-		}
-		jobs, e := s.MediaJobs("", true)
-		if e != nil || len(jobs) != 1 || jobs[0].StorageID != "local" || jobs[0].Path != "media/a.jpg" {
-			t.Fatal(jobs, e)
-		}
-		s.Close()
 	}
 }

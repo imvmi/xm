@@ -23,6 +23,7 @@ func TestBrowserCollectionOffline(t *testing.T) {
 	}{
 		{"authorized", string(fixture(t, "timeline.json")), "UserTweets", false},
 		{"originals_timeline", string(fixture(t, "timeline.json")), "UserOriginalsTimeline", false},
+		{"replies_timeline", string(fixture(t, "timeline.json")), "UserRepliesTimeline", false},
 		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true},
 		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true},
 		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true},

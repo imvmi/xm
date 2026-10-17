@@ -12,7 +12,7 @@ import (
 	"xm/internal/archive"
 )
 
-type collector func(context.Context, archive.Config, archive.Cookies, string, int, bool, func(archive.Page) error) (archive.Collection, error)
+type collector func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error)
 type downloader func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error)
 
 type Scheduler struct {
@@ -27,7 +27,7 @@ type Scheduler struct {
 }
 
 func newScheduler(a *App) *Scheduler {
-	return &Scheduler{app: a, wake: make(chan struct{}, 1), collect: archive.Collect, download: archive.DownloadPending}
+	return &Scheduler{app: a, wake: make(chan struct{}, 1), collect: archive.CollectBound, download: archive.DownloadPending}
 }
 func (s *Scheduler) Wake() {
 	select {
@@ -89,7 +89,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		a.changeMu.Unlock()
 		return false, nil
 	}
-	cookies, err := archive.LoadCookies(cfg.DataDir)
+	cookies, err := a.store.LoadCookies()
 	if err != nil {
 		a.changeMu.Unlock()
 		return false, nil
@@ -137,14 +137,19 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0,next_run=? WHERE username=?", started+60, m.Username)
 		return true, err
 	}
-	result, collectErr := s.collect(jobCtx, cfg, cookies, m.Username, m.Limit, m.Replies, func(p archive.Page) error {
-		if p.Profile != nil {
-			if err := a.store.SaveProfile(*p.Profile); err != nil {
-				return err
+	identity, collectErr := a.store.TargetIdentity(m.Username)
+	var result archive.Collection
+	if collectErr == nil {
+		result, collectErr = s.collect(jobCtx, cfg, cookies, m.Username, identity, m.Limit, m.Replies, func(p archive.Page) error {
+			if p.Profile != nil {
+				if err := a.store.SaveTargetProfile(m.Username, *p.Profile); err != nil {
+					return err
+				}
 			}
-		}
-		return a.store.SavePosts(m.Username, p.Posts)
-	})
+			return a.store.SavePosts(m.Username, p.Posts)
+		})
+	}
+
 	var mediaErr error
 	if jobCtx.Err() == nil {
 		_, mediaErr = s.download(jobCtx, a.store, cfg, m.Username, false)
@@ -187,7 +192,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 			return true, err
 		}
 	}
-	if archive.FailureKind(collectErr) == "access" {
+	if archive.FailureKind(collectErr) == "access" || archive.FailureKind(collectErr) == "identity" {
 		if _, err = a.store.DB.Exec("UPDATE monitors SET enabled=0,requested=0 WHERE username=?", m.Username); err != nil {
 			return true, err
 		}
@@ -240,7 +245,7 @@ func (s *Scheduler) queue(target string) error {
 	a := s.app
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	if _, err := archive.LoadCookies(a.Config().DataDir); err != nil {
+	if _, err := a.store.LoadCookies(); err != nil {
 		return fmt.Errorf("请先导入有效格式的 Cookie")
 	}
 	if state(a.store.DB, "cookie_blocked") != "" {

@@ -13,9 +13,13 @@ import (
 	"time"
 
 	"xm/internal/archive"
+	"xm/internal/database"
 )
 
-func migrateNotifications(db *sql.DB) error {
+func migrateNotifications(db *database.DB) error {
+	if db.Dialect == "mysql" {
+		return MigrateStore(db)
+	}
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS notification_targets(target TEXT PRIMARY KEY,ready INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS notification_seen(target TEXT NOT NULL,post_id TEXT NOT NULL,PRIMARY KEY(target,post_id));
 CREATE TABLE IF NOT EXISTS notification_incidents(key TEXT PRIMARY KEY,kind TEXT NOT NULL,last_notice INTEGER NOT NULL);
@@ -36,7 +40,7 @@ func destination(ch archive.NotificationChannel) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
-func enqueueNotification(tx *sql.Tx, channels []archive.NotificationChannel, e NotificationEvent) error {
+func enqueueNotification(tx *database.Tx, channels []archive.NotificationChannel, e NotificationEvent) error {
 	if e.ID == "" {
 		e.ID = notificationID()
 	}
@@ -51,7 +55,7 @@ func enqueueNotification(tx *sql.Tx, channels []archive.NotificationChannel, e N
 		if e.Type != "test" && (!ch.Enabled || (e.Type == "new_posts" && !ch.Updates) || (e.Type != "new_posts" && !ch.Alerts)) {
 			continue
 		}
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO notification_deliveries(event_id,channel_id,destination,payload,next_attempt,created_at) VALUES(?,?,?,?,?,?)`, e.ID, ch.ID, destination(ch), string(raw), e.CreatedAt, e.CreatedAt); err != nil {
+		if _, err = tx.InsertIgnore(`INSERT INTO notification_deliveries(event_id,channel_id,destination,payload,next_attempt,created_at) VALUES(?,?,?,?,?,?)`, "event_id", e.ID, ch.ID, destination(ch), string(raw), e.CreatedAt, e.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -66,13 +70,13 @@ func (a *App) prepareNotifications(m Monitor) error {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec("INSERT OR IGNORE INTO notification_targets(target,ready) VALUES(?,?)", m.Username, m.LastSuccess > 0)
+	res, err := tx.InsertIgnore("INSERT INTO notification_targets(target,ready) VALUES(?,?)", "target", m.Username, m.LastSuccess > 0)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		if _, err = tx.Exec("INSERT OR IGNORE INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", m.Username); err != nil {
+		if _, err = tx.InsertIgnore("INSERT INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", "post_id", m.Username); err != nil {
 			return err
 		}
 	}
@@ -84,6 +88,12 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		return err
 	}
 	defer tx.Rollback()
+	displayName := m.Username
+	eName := tx.QueryRow("SELECT current_username FROM target_identities WHERE target=?", m.Username).Scan(&displayName)
+	if eName != nil && !errors.Is(eName, sql.ErrNoRows) {
+		return eName
+	}
+
 	var ready, count int
 	if err = tx.QueryRow("SELECT ready FROM notification_targets WHERE target=?", m.Username).Scan(&ready); err != nil {
 		return err
@@ -92,12 +102,34 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		return err
 	}
 	if ready != 0 && count > 0 {
-		if err = enqueueNotification(tx, cfg.NotificationChannels, NotificationEvent{Type: "new_posts", Target: m.Username, Title: "XM · @" + m.Username + " 有新动态", Message: fmt.Sprintf("本轮新增归档 %d 条动态，请登录 XM 查看正文和媒体。", count), Count: count}); err != nil {
+		if err = enqueueNotification(tx, cfg.NotificationChannels, NotificationEvent{Type: "new_posts", Target: displayName, Title: "XM · @" + displayName + " 有新动态", Message: fmt.Sprintf("本轮新增归档 %d 条动态，请登录 XM 查看正文和媒体。", count), Count: count}); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec("INSERT OR IGNORE INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", m.Username); err != nil {
+	if _, err = tx.InsertIgnore("INSERT INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", "post_id", m.Username); err != nil {
 		return err
+	}
+	var current string
+	if e := tx.QueryRow("SELECT current_username FROM target_identities WHERE target=?", m.Username).Scan(&current); e == nil && current != "" {
+		var previous string
+		key := "handle:" + m.Username
+		e = tx.QueryRow("SELECT value FROM web_state WHERE `key`=?", key).Scan(&previous)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if previous == "" {
+			previous = m.Username
+		}
+		if previous != current {
+			if err = enqueueNotification(tx, cfg.NotificationChannels, NotificationEvent{Type: "username_changed", Target: current, Title: "XM · 监控账号已改名", Message: "@" + previous + " 已改为 @" + current + "，用户 ID 一致，继续使用原归档。"}); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), key, current); err != nil {
+			return err
+		}
+	} else if e != nil && !errors.Is(e, sql.ErrNoRows) {
+		return e
 	}
 	if success {
 		if _, err = tx.Exec("UPDATE notification_targets SET ready=1 WHERE target=?", m.Username); err != nil {
@@ -108,6 +140,8 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		switch kind {
 		case "auth":
 			err = notificationIncident(tx, cfg, "cookie", "auth", "", "XM · Cookie 失效", "X 登录状态失效或受限，自动采集已暂停。请在连接设置中更新 Cookie。")
+		case "identity":
+			err = notificationIncident(tx, cfg, "identity:"+m.Username, "identity", m.Username, "XM · 账号身份校验失败", "@"+m.Username+" 的身份无法确认或与绑定用户 ID 不符，监控已暂停，未接受不匹配账号的推文。请检查采集记录。")
 		case "access":
 			err = notificationIncident(tx, cfg, "access:"+m.Username, "access", m.Username, "XM · 账号无法访问", "@"+m.Username+" 无法访问，可能是权限变化、账号不可用或未获准关注。该账号监控已暂停，请检查。")
 		case "rate":
@@ -123,7 +157,7 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 			return err
 		}
 		if success {
-			for _, key := range []string{"cookie", "rate", "access:" + m.Username, "health:" + m.Username} {
+			for _, key := range []string{"cookie", "rate", "access:" + m.Username, "health:" + m.Username, "identity:" + m.Username} {
 				if err = notificationRecovery(tx, cfg, key, m.Username); err != nil {
 					return err
 				}
@@ -136,10 +170,10 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 	a.notifier.Wake()
 	return nil
 }
-func notificationIncident(tx *sql.Tx, cfg archive.Config, key, kind, target, title, message string) error {
+func notificationIncident(tx *database.Tx, cfg archive.Config, key, kind, target, title, message string) error {
 	var old string
 	var at int64
-	err := tx.QueryRow("SELECT kind,last_notice FROM notification_incidents WHERE key=?", key).Scan(&old, &at)
+	err := tx.QueryRow("SELECT kind,last_notice FROM notification_incidents WHERE `key`=?", key).Scan(&old, &at)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -147,21 +181,21 @@ func notificationIncident(tx *sql.Tx, cfg archive.Config, key, kind, target, tit
 	if old == kind && now-at < 6*3600 {
 		return nil
 	}
-	if _, err = tx.Exec("INSERT INTO notification_incidents VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET kind=excluded.kind,last_notice=excluded.last_notice", key, kind, now); err != nil {
+	if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO notification_incidents VALUES(?,?,?)", []string{"key"}, []string{"kind", "last_notice"}), key, kind, now); err != nil {
 		return err
 	}
 	return enqueueNotification(tx, cfg.NotificationChannels, NotificationEvent{Type: kind, Target: target, Title: title, Message: message})
 }
-func notificationRecovery(tx *sql.Tx, cfg archive.Config, key, target string) error {
+func notificationRecovery(tx *database.Tx, cfg archive.Config, key, target string) error {
 	var kind string
-	err := tx.QueryRow("SELECT kind FROM notification_incidents WHERE key=?", key).Scan(&kind)
+	err := tx.QueryRow("SELECT kind FROM notification_incidents WHERE `key`=?", key).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec("DELETE FROM notification_incidents WHERE key=?", key); err != nil {
+	if _, err = tx.Exec("DELETE FROM notification_incidents WHERE `key`=?", key); err != nil {
 		return err
 	}
 	message := "@" + target + " 已恢复正常采集和媒体保存。"
@@ -198,7 +232,7 @@ func (n *Notifier) Run(ctx context.Context) {
 		worked, err := n.step(ctx)
 		n.mu.Lock()
 		if err != nil {
-			n.lastError = "通知队列读写失败，请检查 SQLite"
+			n.lastError = "通知队列读写失败，请检查数据库连接与权限"
 		} else {
 			n.lastError = ""
 		}
@@ -272,7 +306,7 @@ func (n *Notifier) step(ctx context.Context) (bool, error) {
 	_, e := n.app.store.DB.Exec("UPDATE notification_deliveries SET status=?,attempts=?,last_error=?,next_attempt=?,finished_at=? WHERE id=?", status, attempts, message, next, time.Now().Unix(), id)
 	// Retain pending work, and a bounded history of terminal deliveries.
 	if e == nil {
-		_, e = n.app.store.DB.Exec("DELETE FROM notification_deliveries WHERE status!='pending' AND id NOT IN (SELECT id FROM notification_deliveries ORDER BY id DESC LIMIT 1000)")
+		_, e = n.app.store.DB.Exec("DELETE FROM notification_deliveries WHERE status!='pending' AND id NOT IN (SELECT id FROM (SELECT id FROM notification_deliveries ORDER BY id DESC LIMIT 1000) AS retained)")
 	}
 	return true, e
 }

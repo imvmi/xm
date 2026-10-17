@@ -7,11 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"xm/internal/database"
 
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct{ DB *database.DB }
 
 func OpenStore(dir string) (*Store, error) {
 	if err := PrivateDir(dir); err != nil {
@@ -32,6 +33,7 @@ func OpenStore(dir string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS x_cookies (id INTEGER PRIMARY KEY CHECK(id=1),auth_token TEXT NOT NULL,ct0 TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS posts (
  id TEXT PRIMARY KEY, author_id TEXT NOT NULL, username TEXT NOT NULL, text TEXT NOT NULL,
  created_at TEXT NOT NULL, url TEXT NOT NULL, reply_to TEXT NOT NULL, quote_id TEXT NOT NULL,
@@ -40,6 +42,7 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE TABLE IF NOT EXISTS target_posts (
  target TEXT NOT NULL, post_id TEXT NOT NULL REFERENCES posts(id), PRIMARY KEY(target,post_id)
 );
+CREATE TABLE IF NOT EXISTS target_identities (target TEXT PRIMARY KEY,user_id TEXT NOT NULL,current_username TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS profiles (
  id TEXT PRIMARY KEY, username TEXT NOT NULL, protected INTEGER NOT NULL, checked_at TEXT NOT NULL
 );
@@ -48,6 +51,7 @@ CREATE TABLE IF NOT EXISTS media (
  source_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', local_path TEXT NOT NULL DEFAULT '',
  bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
  last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+ storage_id TEXT NOT NULL DEFAULT 'local', object_key TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(post_id,media_id)
 );
 CREATE INDEX IF NOT EXISTS media_status ON media(status);
@@ -59,11 +63,16 @@ CREATE TABLE IF NOT EXISTS runs (
 		db.Close()
 		return nil, err
 	}
-	if err = migrateStorage(db); err != nil {
+	d := &database.DB{DB: db, Dialect: "sqlite"}
+	if err = migrateSettings(d); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &Store{DB: db}, nil
+	if err = ensureArchiveIndexes(d); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{DB: d}, nil
 }
 
 func now() string             { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -80,7 +89,7 @@ func (s *Store) EndRun(id int64, status string, count int, message string) error
 	return err
 }
 func (s *Store) SaveProfile(p Profile) error {
-	_, err := s.DB.Exec(`INSERT INTO profiles VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,protected=excluded.protected,checked_at=excluded.checked_at`, p.ID, p.Username, p.Protected, now())
+	_, err := s.DB.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO profiles VALUES(?,?,?,?)`, []string{"id"}, []string{"username", "protected", "checked_at"}), p.ID, p.Username, p.Protected, now())
 	return err
 }
 func (s *Store) SavePosts(target string, posts []Post) error {
@@ -100,16 +109,12 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 			p.QuoteID = p.Quote.ID
 		}
 		t := now()
-		_, err = tx.Exec(`INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
- author_id=excluded.author_id,username=excluded.username,text=excluded.text,created_at=excluded.created_at,
- url=excluded.url,reply_to=excluded.reply_to,quote_id=excluded.quote_id,repost_id=excluded.repost_id,
- raw_json=excluded.raw_json,last_seen=excluded.last_seen`, p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, string(p.Raw), t, t)
+		_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"author_id", "username", "text", "created_at", "url", "reply_to", "quote_id", "repost_id", "raw_json", "last_seen"}), p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, string(p.Raw), t, t)
 		if err != nil {
 			return err
 		}
 		for _, a := range p.Assets {
-			_, err = tx.Exec(`INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)
- ON CONFLICT(post_id,media_id) DO UPDATE SET source_url=excluded.source_url,kind=excluded.kind,updated_at=excluded.updated_at`, p.ID, a.ID, a.Kind, a.URL, t)
+			_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)`, []string{"post_id", "media_id"}, []string{"source_url", "kind", "updated_at"}), p.ID, a.ID, a.Kind, a.URL, t)
 			if err != nil {
 				return err
 			}
@@ -124,7 +129,7 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 			return err
 		}
 		if target != "" {
-			if _, err := tx.Exec("INSERT OR IGNORE INTO target_posts VALUES(?,?)", target, p.ID); err != nil {
+			if _, err := tx.InsertIgnore("INSERT INTO target_posts VALUES(?,?)", "target", target, p.ID); err != nil {
 				return err
 			}
 		}
@@ -132,58 +137,8 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 	return tx.Commit()
 }
 
-// BackfillQuotes recovers embedded quotes from existing raw JSON without fetching
-// extra pages. Batches are restart-safe and do not add quote authors as targets.
-func (s *Store) BackfillQuotes() error {
-	if _, err := s.DB.Exec("CREATE TABLE IF NOT EXISTS archive_migrations (name TEXT PRIMARY KEY)"); err != nil {
-		return err
-	}
-	var done int
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM archive_migrations WHERE name='quotes_v1'").Scan(&done); err != nil {
-		return err
-	}
-	if done != 0 {
-		return nil
-	}
-	after := ""
-	for {
-		rows, err := s.DB.Query("SELECT id,raw_json FROM posts WHERE id>? AND instr(raw_json,'quoted_status_result')>0 ORDER BY id LIMIT 100", after)
-		if err != nil {
-			return err
-		}
-		var batch []Post
-		count := 0
-		for rows.Next() {
-			var raw string
-			if err := rows.Scan(&after, &raw); err != nil {
-				rows.Close()
-				return err
-			}
-			count++
-			var v object
-			if json.Unmarshal([]byte(raw), &v) == nil {
-				if p, err := parsePost(v); err == nil && p.Quote != nil {
-					batch = append(batch, p)
-				}
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if err := s.SavePosts("", batch); err != nil {
-			return err
-		}
-		if count < 100 {
-			break
-		}
-	}
-	_, err := s.DB.Exec("INSERT OR IGNORE INTO archive_migrations VALUES('quotes_v1')")
-	return err
-}
-
 type MediaJob struct {
+	AuthorID, Username, Directory       string
 	PostID, ID, Kind, URL, Path, Status string
 	StorageID, ObjectKey                string
 	Bytes                               int64
@@ -191,7 +146,7 @@ type MediaJob struct {
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
-	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key FROM media WHERE 1=1`
+	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username FROM media JOIN posts ON posts.id=media.post_id WHERE 1=1`
 	var args []any
 	if !includeDone {
 		query += " AND status != 'done'"
@@ -212,7 +167,7 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	var jobs []MediaJob
 	for r.Next() {
 		var j MediaJob
-		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey); err != nil {
+		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey, &j.AuthorID, &j.Username); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -310,40 +265,4 @@ func JSON(v any) string {
 		return fmt.Sprintf("JSON 编码失败: %v", err)
 	}
 	return string(b)
-}
-
-// Existing archives retain local storage. Inspect before ALTER to make reopening idempotent.
-func migrateStorage(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(media)")
-	if err != nil {
-		return err
-	}
-	cols := map[string]bool{}
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var def any
-		if err = rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		cols[name] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, name := range []string{"storage_id", "object_key"} {
-		if !cols[name] {
-			def := "''"
-			if name == "storage_id" {
-				def = "'local'"
-			}
-			if _, err = db.Exec("ALTER TABLE media ADD COLUMN " + name + " TEXT NOT NULL DEFAULT " + def); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }

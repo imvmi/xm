@@ -151,7 +151,7 @@ func (a *App) saveNotificationChannel(w http.ResponseWriter, r *http.Request) {
 		e := NotificationEvent{ID: "cookie-existing:" + ch.ID + ":" + generation + ":" + destination(ch), Type: "auth", Title: "XM · Cookie 失效", Message: "当前 X 登录状态失效或受限，采集已暂停。请在连接设置中更新 Cookie。"}
 		err = enqueueNotification(tx, []archive.NotificationChannel{ch}, e)
 		if err == nil {
-			_, err = tx.Exec("INSERT OR IGNORE INTO notification_incidents VALUES('cookie','auth',?)", time.Now().Unix())
+			_, err = tx.InsertIgnore("INSERT INTO notification_incidents VALUES('cookie','auth',?)", "key", time.Now().Unix())
 		}
 		if err == nil {
 			err = tx.Commit()

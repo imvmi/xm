@@ -81,9 +81,10 @@ func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max i
 	if ext == "" {
 		return "", 0, "", errors.New("媒体响应类型不匹配，未保存可能的错误页")
 	}
-	key := sha256.Sum256([]byte(j.PostID + "/" + j.ID))
-	name := hex.EncodeToString(key[:])
-	rel := filepath.Join("media", name[:2], name+ext)
+	rel, err := mediaRelativePath(j, ext)
+	if err != nil {
+		return "", 0, "", err
+	}
 	full := filepath.Join(dir, rel)
 	if err = PrivateDir(filepath.Dir(full)); err != nil {
 		return "", 0, "", errors.New("无法创建媒体目录")
@@ -154,6 +155,10 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 			j.StorageID = cfg.ActiveStorage()
 			j.ObjectKey = ""
 		}
+		j.Directory, err = s.MediaDirectory(j)
+		if err != nil {
+			return summary, err
+		}
 		localPath, size, hash := j.Path, j.Bytes, j.SHA256
 		var downloadErr error
 		if !validLocalMedia(cfg.DataDir, j) {
@@ -180,7 +185,7 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		}
 	}
 	if summary.Failed > 0 {
-		return summary, fmt.Errorf("%d 个媒体下载失败，详情见 SQLite media.last_error；使用 retry-media 重试", summary.Failed)
+		return summary, fmt.Errorf("%d 个媒体下载失败，详情见数据库 media.last_error；使用 retry-media 重试", summary.Failed)
 	}
 	return summary, nil
 }

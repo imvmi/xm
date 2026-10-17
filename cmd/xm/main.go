@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -15,16 +16,17 @@ import (
 	"xm/internal/web"
 )
 
-const usage = `XM — 个人 X 采集验证程序（Go + SQLite + Chrome）
+const usage = `XM — 个人 X 采集验证程序（Go + SQLite/MySQL + Chrome）
 
 命令：
-  xm init          [-config config.json]
-  xm import-cookie [-config config.json] -file cookies.txt
-  xm collect       [-config config.json] -users alice,bob [-limit 100] [-replies]
-  xm retry-media   [-config config.json] [-user alice] [-verify]
-  xm status        [-config config.json]
-  xm list          [-config config.json] [-user alice] [-limit 20]
-  xm serve         [-config config.json] [-listen 127.0.0.1:8080] [-secure-cookie]
+  xm init          [-config config.yaml]
+  xm import-cookie [-config config.yaml] -file cookies.txt
+  xm collect       [-config config.yaml] -users alice,bob [-limit 100] [-replies]
+  xm retry-media   [-config config.yaml] [-user alice] [-verify]
+  xm status        [-config config.yaml]
+  xm migrate-mysql -config mysql-config.yaml -source data/archive.sqlite
+  xm list          [-config config.yaml] [-user alice] [-limit 20]
+  xm serve         [-config config.yaml] [-listen 127.0.0.1:8080] [-secure-cookie]
 
 collect 对每个账号最多采集 limit 条，图片和最高码率 MP4 保存到配置的本地、WebDAV 或 S3 存储。
 Cookie 文件支持 Cookie 请求头、JSON 映射/数组、Netscape；-file - 从标准输入导入。
@@ -42,20 +44,24 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Print(usage)
 		return nil
 	}
 	command := args[0]
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
-	configPath := f.String("config", "config.json", "配置文件")
-	var file, users, user *string
+	configPath := f.String("config", "config.yaml", "配置文件")
+	var file, users, user, source *string
 	var limit *int
 	var replies, verify *bool
 	var listen *string
 	var secure *bool
 	switch command {
 	case "init", "status":
+	case "migrate-mysql":
+		source = f.String("source", "", "待迁移的 SQLite 文件；目标 MySQL 必须为空")
 	case "serve":
 		listen = f.String("listen", "127.0.0.1:8080", "管理页面监听地址")
 		secure = f.Bool("secure-cookie", false, "HTTPS 反向代理部署时启用 Secure 会话 Cookie")
@@ -84,12 +90,17 @@ func run(ctx context.Context, args []string) error {
 		return errors.New("存在多余参数；参数必须使用 -users、-file 等选项指定")
 	}
 	if command == "init" {
-		cfg := archive.Config{DataDir: "./data", Headless: true, RequestTimeout: 60, CollectionTimeout: 300, ScrollDelay: 3, MaxScrolls: 40, MaxMediaBytes: 512 << 20, DefaultInterval: 900}
+		cfg := archive.Bootstrap{DataDir: "./data", Database: archive.DatabaseConfig{Driver: "sqlite"}}
 		h, err := os.OpenFile(*configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			return fmt.Errorf("创建配置失败（已有文件不会覆盖）: %w", err)
 		}
-		_, err = h.WriteString(archive.JSON(cfg) + "\n")
+		b, encodeErr := archive.MarshalBootstrap(cfg)
+		if encodeErr != nil {
+			h.Close()
+			return encodeErr
+		}
+		_, err = h.Write(b)
 		closeErr := h.Close()
 		if err != nil {
 			return err
@@ -97,15 +108,55 @@ func run(ctx context.Context, args []string) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		fmt.Println("已创建", *configPath, "；按需设置 proxy 和 chrome_path，再导入 Cookie。")
+		fmt.Println("已创建", *configPath, "；运行 serve 并打开管理页面，按首次设置向导完成初始化。")
 		return nil
 	}
 	cfg, err := archive.LoadConfig(*configPath)
+	if command == "serve" && os.IsNotExist(err) {
+		// A fresh deployment needs no configuration file. Setup writes bootstrap only
+		// after the database and storage have been selected and tested.
+		cfg = archive.DefaultConfig()
+		cfg.DataDir, err = filepath.Abs(filepath.Join(filepath.Dir(*configPath), "data"))
+	}
 	if err != nil {
 		return err
 	}
-	if command == "serve" || command == "collect" || command == "retry-media" || command == "import-cookie" {
+	if command == "serve" || command == "collect" || command == "retry-media" || command == "import-cookie" || command == "migrate-mysql" {
 		release, e := archive.AcquireWorkerLock(cfg.DataDir)
+		if e != nil {
+			return e
+		}
+		defer release()
+	}
+	if command == "serve" {
+		cfg, err = web.Setup(ctx, *configPath, cfg, *listen, *secure)
+		if err != nil {
+			return err
+		}
+	}
+	if command == "migrate-mysql" {
+		if cfg.Database.DriverName() != "mysql" || *source == "" {
+			return errors.New("迁移需要 mysql 配置及 -source SQLite 文件")
+		}
+		sourceDir, e := filepath.Abs(filepath.Dir(*source))
+		if e != nil {
+			return e
+		}
+		if sourceDir != cfg.DataDir {
+			release, e := archive.AcquireWorkerLock(sourceDir)
+			if e != nil {
+				return e
+			}
+			defer release()
+		}
+	}
+	s, err := archive.OpenConfiguredStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	if command == "serve" || command == "collect" || command == "retry-media" || command == "import-cookie" || command == "migrate-mysql" {
+		release, e := s.AcquireDatabaseWorker(ctx, cancel, cfg.Database.Name)
 		if e != nil {
 			return e
 		}
@@ -135,13 +186,13 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err = archive.SaveCookies(cfg.DataDir, cookies); err != nil {
+		if err = s.SaveCookies(cookies); err != nil {
 			return err
 		}
-		if err = web.CookieImported(cfg.DataDir); err != nil {
+		if err = web.CookieImported(cfg); err != nil {
 			return err
 		}
-		fmt.Println("已加密保存 auth_token 和 ct0；格式检查通过，实际登录与访问权限将在 collect 时验证。")
+		fmt.Println("已将 auth_token 和 ct0 明文保存到数据库；格式检查通过，实际登录与访问权限将在 collect 时验证。")
 		return nil
 	}
 	if limit != nil && (*limit < 1 || *limit > 10000) {
@@ -171,17 +222,19 @@ func run(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	s, err := archive.OpenStore(cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	if command == "serve" || command == "collect" || command == "retry-media" {
-		if err := s.BackfillQuotes(); err != nil {
+
+	switch command {
+	case "migrate-mysql":
+		if err = web.MigrateStore(s.DB); err != nil {
+			return errors.New("创建 MySQL 管理表失败，请检查数据库权限")
+		}
+		counts, err := s.CopySQLiteToMySQL(ctx, *source)
+		if err != nil {
 			return err
 		}
-	}
-	switch command {
+		fmt.Println(archive.JSON(counts))
+		fmt.Println("迁移完成，源 SQLite 未修改。Cookie、管理员凭据和运行配置已随数据库迁移；请保留原 data_dir 中的本地媒体。")
+		return nil
 	case "serve":
 		return web.Serve(ctx, *configPath, cfg, s, *listen, *secure)
 	case "status":
@@ -203,7 +256,7 @@ func run(ctx context.Context, args []string) error {
 		fmt.Println(archive.JSON(v))
 		return e
 	case "collect":
-		cookies, e := archive.LoadCookies(cfg.DataDir)
+		cookies, e := s.LoadCookies()
 		if e != nil {
 			return e
 		}
@@ -214,9 +267,13 @@ func run(ctx context.Context, args []string) error {
 			if e != nil {
 				return e
 			}
-			result, collectErr := archive.Collect(ctx, cfg, cookies, target, *limit, *replies, func(page archive.Page) error {
+			identity, e := s.TargetIdentity(target)
+			if e != nil {
+				return e
+			}
+			result, collectErr := archive.CollectBound(ctx, cfg, cookies, target, identity, *limit, *replies, func(page archive.Page) error {
 				if page.Profile != nil {
-					if err := s.SaveProfile(*page.Profile); err != nil {
+					if err := s.SaveTargetProfile(target, *page.Profile); err != nil {
 						return err
 					}
 				}

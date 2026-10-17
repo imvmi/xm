@@ -18,20 +18,36 @@ import (
 
 const testPassword = "test-password-for-local-tests"
 
+func writeTestAdmin(t *testing.T, store *archive.Store, cfg archive.Config) {
+	t.Helper()
+	if err := archive.PrivateDir(cfg.DataDir); err != nil {
+		t.Fatal(err)
+	}
+	record, err := makePasswordRecord("admin", testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Initialize(cfg, record); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testApp(t *testing.T) *App {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
+	path := filepath.Join(dir, "config.yaml")
 	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 900}
-	if err := archive.SaveConfig(path, cfg); err != nil {
+	configureMySQLTest(t, &cfg)
+	if err := archive.SaveBootstrap(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	s, err := archive.OpenStore(cfg.DataDir)
+	s, err := archive.OpenConfiguredStore(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	a, _, err := New(path, cfg, s, testPassword, false)
+	writeTestAdmin(t, s, cfg)
+	a, err := New(path, cfg, s, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +87,7 @@ func (b *browserClient) request(method, path string, input any, origin string, c
 func login(t *testing.T, a *App) *browserClient {
 	t.Helper()
 	b := &browserClient{t: t, a: a}
-	w := b.request("POST", "/api/login", map[string]string{"password": testPassword}, "http://localhost", false)
+	w := b.request("POST", "/api/login", map[string]string{"username": "admin", "password": testPassword}, "http://localhost", false)
 	if w.Code != 200 {
 		t.Fatal("login failed", w.Code, w.Body.String())
 	}
@@ -97,7 +113,7 @@ func TestAuthCSRFAndPrivateMedia(t *testing.T) {
 	for _, p := range []string{"/api/posts", "/api/settings", "/media/1/a", "/api/monitors"} {
 		ok(t, anon.request("GET", p, nil, "", false), 401)
 	}
-	ok(t, anon.request("POST", "/api/login", map[string]string{"password": testPassword}, "http://evil.example", false), 403)
+	ok(t, anon.request("POST", "/api/login", map[string]string{"username": "admin", "password": testPassword}, "http://evil.example", false), 403)
 	b := login(t, a)
 	ok(t, b.request("PUT", "/api/settings", map[string]bool{"polling_paused": true}, "http://localhost", false), 403)
 	ok(t, b.request("PUT", "/api/settings", map[string]bool{"polling_paused": true}, "http://evil.example", true), 403)
@@ -133,6 +149,14 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	a := testApp(t)
 	b := login(t, a)
 	ok(t, b.request("POST", "/api/cookies", map[string]string{"content": `{"auth_token":"local-test-secret","ct0":"test-csrf"}`}, "http://localhost", true), 200)
+	var token, csrf string
+	if err := a.store.DB.QueryRow("SELECT auth_token,ct0 FROM x_cookies WHERE id=1").Scan(&token, &csrf); err != nil || token != "local-test-secret" || csrf != "test-csrf" {
+		t.Fatal("Cookie import did not write database plaintext", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.Config().DataDir, "cookies.enc")); !os.IsNotExist(err) {
+		t.Fatal("Cookie import wrote legacy file")
+	}
+
 	w := b.request("GET", "/api/settings", nil, "", false)
 	ok(t, w, 200)
 	if strings.Contains(w.Body.String(), "local-test-secret") {
@@ -156,12 +180,15 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	input["interval_seconds"] = 300
 	input["enabled"] = false
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
+	// MySQL reports zero affected rows when an identical update changes nothing.
+	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	list, err := monitors(a.store.DB)
 	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 300 {
 		t.Fatal("monitor update failed", err)
 	}
 	ok(t, b.request("POST", "/api/monitors/alice/run", nil, "http://localhost", true), 202)
 	ok(t, b.request("POST", "/api/monitors/alice/run", nil, "http://localhost", true), 409)
+	ok(t, b.request("POST", "/api/monitors/alice/stop", nil, "http://localhost", true), 200)
 	ok(t, b.request("POST", "/api/monitors/alice/stop", nil, "http://localhost", true), 200)
 	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 200)
 	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 404)

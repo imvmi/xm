@@ -5,25 +5,36 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
-
 	"xm/internal/archive"
 )
 
 const iterations = 600000
 
-type passwordRecord struct {
-	Salt []byte `json:"salt"`
-	Hash []byte `json:"hash"`
+type passwordRecord = archive.AdminCredentials
+
+var adminUsername = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}$`)
+
+func makePasswordRecord(username, password string) (passwordRecord, error) {
+	if !adminUsername.MatchString(username) {
+		return passwordRecord{}, errors.New("用户名需为 3～32 位字母、数字、下划线、点或短横线，首位为字母、数字或下划线")
+	}
+	if len(password) < 12 || len(password) > 1024 {
+		return passwordRecord{}, errors.New("管理员密码需为 12～1024 字节")
+	}
+	r := passwordRecord{Username: username, Salt: randomBytes(32), ConfigurationLocked: true}
+	var err error
+	r.Hash, err = pbkdf2.Key(sha256.New, password, r.Salt, iterations, 32)
+	return r, err
 }
+
 type session struct {
 	CSRF    string
 	Expires time.Time
@@ -48,40 +59,41 @@ func randomBytes(n int) []byte {
 	}
 	return b
 }
-func newAuth(dir, password string, secure bool) (*auth, string, error) {
-	a := &auth{sessions: map[[32]byte]session{}, attempts: map[string]attempt{}, secure: secure}
-	path := filepath.Join(dir, "admin.json")
-	b, err := os.ReadFile(path)
-	if err == nil {
-		if json.Unmarshal(b, &a.record) != nil || len(a.record.Hash) != 32 || len(a.record.Salt) != 32 {
-			return nil, "", errors.New("管理员密码文件损坏")
-		}
-		return a, "", nil
+func loadAdmin(s *archive.Store) (passwordRecord, bool, error) {
+	record, err := s.AdminCredentials()
+	if errors.Is(err, sql.ErrNoRows) {
+		return record, false, nil
 	}
-	if !os.IsNotExist(err) {
-		return nil, "", err
-	}
-	generated := ""
-	if password == "" {
-		password = randomToken()
-		generated = password
-	}
-	if len(password) < 12 || len(password) > 1024 {
-		return nil, "", errors.New("管理员密码需为 12～1024 字节")
-	}
-	a.record.Salt = randomBytes(32)
-	a.record.Hash, err = pbkdf2.Key(sha256.New, password, a.record.Salt, iterations, 32)
 	if err != nil {
-		return nil, "", err
+		return record, false, errors.New("无法读取数据库管理员凭据")
 	}
-	b, err = json.Marshal(a.record)
+	if !record.ConfigurationLocked || !adminUsername.MatchString(record.Username) || len(record.Salt) != 32 || len(record.Hash) != 32 {
+		return record, false, errors.New("数据库管理员凭据损坏，请恢复备份")
+	}
+	return record, true, nil
+}
+func installationReady(cfg archive.Config) (bool, error) {
+	s, err := archive.OpenConfiguredStore(cfg)
 	if err != nil {
-		return nil, "", err
+		return false, err
 	}
-	if err = archive.AtomicWrite(path, b); err != nil {
-		return nil, "", err
+	defer s.Close()
+	_, ready, err := loadAdmin(s)
+	if err != nil || !ready {
+		return ready, err
 	}
-	return a, generated, nil
+	_, err = s.LoadSettings(cfg)
+	return ready, err
+}
+func newAuth(s *archive.Store, secure bool) (*auth, error) {
+	record, ready, err := loadAdmin(s)
+	if err != nil {
+		return nil, err
+	}
+	if !ready {
+		return nil, errors.New("请先运行 xm serve 完成首次设置")
+	}
+	return &auth{record: record, sessions: map[[32]byte]session{}, attempts: map[string]attempt{}, secure: secure}, nil
 }
 func (a *auth) session(r *http.Request) (session, bool) {
 	c, err := r.Cookie("xm_session")
@@ -103,6 +115,7 @@ func (a *auth) session(r *http.Request) (session, bool) {
 }
 func (a *auth) login(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if !decode(w, r, &input) {
@@ -129,12 +142,13 @@ func (a *auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(input.Password) > 1024 {
-		problem(w, 401, "密码不正确")
+		problem(w, 401, "用户名或密码不正确")
 		return
 	}
 	hash, err := pbkdf2.Key(sha256.New, input.Password, a.record.Salt, iterations, 32)
-	if err != nil || subtle.ConstantTimeCompare(hash, a.record.Hash) != 1 {
-		problem(w, 401, "密码不正确")
+	usernameOK := input.Username == a.record.Username
+	if err != nil || subtle.ConstantTimeCompare(hash, a.record.Hash) != 1 || !usernameOK {
+		problem(w, 401, "用户名或密码不正确")
 		return
 	}
 	token := randomToken()

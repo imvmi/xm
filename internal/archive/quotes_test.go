@@ -18,7 +18,7 @@ func quotedFixture(t *testing.T) Post {
 	}
 	return p
 }
-func TestQuotedTextMediaStorageAndBackfill(t *testing.T) {
+func TestQuotedTextMediaStorage(t *testing.T) {
 	p := quotedFixture(t)
 	if p.QuoteID != "102" || p.Quote == nil || p.Quote.Quote == nil || p.Quote.Text != "引用全文 & image-search-needle" {
 		t.Fatalf("quote tree missing: %+v", p)
@@ -31,14 +31,8 @@ func TestQuotedTextMediaStorageAndBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	// Simulate a pre-upgrade archive: the raw JSON has quotes, normalized rows do not.
-	old := p
-	old.Quote = nil
-	if err = s.SavePosts("alice", []Post{old}); err != nil {
-		t.Fatal(err)
-	}
 	for range 2 {
-		if err = s.BackfillQuotes(); err != nil {
+		if err = s.SavePosts("alice", []Post{p}); err != nil {
 			t.Fatal(err)
 		}
 	}

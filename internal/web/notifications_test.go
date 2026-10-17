@@ -57,7 +57,7 @@ func TestNotificationNewPostsBaselineDedupAndPrivacy(t *testing.T) {
 	notificationFixture(t, a)
 	seedMonitor(t, a, "alice")
 	id := "100"
-	a.scheduler.collect = func(ctx context.Context, cfg archive.Config, c archive.Cookies, user string, n int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(ctx context.Context, cfg archive.Config, c archive.Cookies, user string, identity archive.TargetIdentity, n int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
 		p := archive.Post{ID: id, Username: user, Text: "PRIVATE SECRET", QuoteID: "quote", Quote: &archive.Post{ID: "quote", Text: "PRIVATE QUOTE"}}
 		for range 2 {
 			if e := save(archive.Page{Posts: []archive.Post{p}}); e != nil {
@@ -97,7 +97,7 @@ func TestNotificationIncidentsRecoveryAndStaleCookie(t *testing.T) {
 	notificationFixture(t, a)
 	seedMonitor(t, a, "alice")
 	kind := "transient"
-	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, int, bool, func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error) {
 		if kind == "" {
 			return archive.Collection{}, nil
 		}
@@ -132,7 +132,7 @@ func TestNotificationIncidentsRecoveryAndStaleCookie(t *testing.T) {
 	if all := events(t, a); len(all) != 4 || all[3].Type != "recovered" {
 		t.Fatal(all)
 	}
-	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, int, bool, func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error) {
 		setState(a.store.DB, "cookie_imported", "replacement")
 		return archive.Collection{}, &archive.Failure{Kind: "auth", Message: "stale"}
 	}
@@ -365,7 +365,7 @@ func TestNotificationSenderDoesNotBlockCollection(t *testing.T) {
 	}
 	go func() { defer close(done); a.notifier.step(context.Background()) }()
 	<-started
-	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, int, bool, func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error) {
 		return archive.Collection{}, nil
 	}
 	runCollection(t, a)

@@ -3,11 +3,10 @@ package archive
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestCookieFormatsAndEncryption(t *testing.T) {
+func TestCookieFormatsAndDatabaseStorage(t *testing.T) {
 	for _, input := range []string{
 		`auth_token=secret-auth; ct0=secret-csrf; ignored=discard`,
 		`Cookie: auth_token=secret-auth; ct0=secret-csrf`,
@@ -23,25 +22,51 @@ func TestCookieFormatsAndEncryption(t *testing.T) {
 			t.Fatalf("bad parse: %+v", c)
 		}
 		dir := t.TempDir()
-		if err = SaveCookies(dir, c); err != nil {
+		store, err := OpenStore(dir)
+		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := os.ReadFile(filepath.Join(dir, "cookies.enc"))
-		if strings.Contains(string(b), "secret-") {
-			t.Fatal("plaintext cookie stored")
+		if _, err = store.LoadCookies(); err == nil {
+			t.Fatal("empty database accepted")
 		}
-		loaded, err := LoadCookies(dir)
+		if err = store.SaveCookies(c); err != nil {
+			t.Fatal(err)
+		}
+		var token, csrf string
+		if err = store.DB.QueryRow("SELECT auth_token,ct0 FROM x_cookies WHERE id=1").Scan(&token, &csrf); err != nil || token != c.AuthToken || csrf != c.CSRF {
+			t.Fatal("cookies were not stored as plaintext", err)
+		}
+		if err = store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store, err = OpenStore(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := store.LoadCookies()
 		if err != nil || loaded != c {
-			t.Fatalf("vault roundtrip: %v", err)
+			t.Fatal("database roundtrip failed", err)
 		}
-		b[len(b)-1] ^= 1
-		os.WriteFile(filepath.Join(dir, "cookies.enc"), b, 0600)
-		if _, err = LoadCookies(dir); err == nil {
-			t.Fatal("tampering accepted")
+		replacement := Cookies{AuthToken: "new-auth", CSRF: "new-csrf"}
+		if err = store.SaveCookies(replacement); err != nil {
+			t.Fatal(err)
 		}
-		st, _ := os.Stat(filepath.Join(dir, "cookie.key"))
-		if st.Mode().Perm() != 0600 {
-			t.Fatal("key permissions")
+		if err = store.SaveCookies(Cookies{AuthToken: "invalid"}); err == nil {
+			t.Fatal("invalid Cookie saved")
+		}
+		loaded, err = store.LoadCookies()
+		if err != nil || loaded != replacement {
+			t.Fatal("replacement was not retained", err)
+		}
+		var n int
+		if err = store.DB.QueryRow("SELECT COUNT(*) FROM x_cookies").Scan(&n); err != nil || n != 1 {
+			t.Fatal("cookie replacement created duplicate rows", err)
+		}
+		store.Close()
+		for _, name := range []string{"cookies.enc", "cookie.key"} {
+			if _, err = os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+				t.Fatal("legacy Cookie file created")
+			}
 		}
 	}
 }

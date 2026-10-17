@@ -12,7 +12,7 @@ import (
 
 func seedMonitor(t *testing.T, a *App, name string) {
 	t.Helper()
-	if err := archive.SaveCookies(a.Config().DataDir, archive.Cookies{AuthToken: "synthetic", CSRF: "synthetic"}); err != nil {
+	if err := a.store.SaveCookies(archive.Cookies{AuthToken: "synthetic", CSRF: "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := a.store.DB.Exec("INSERT INTO monitors(username,interval_seconds,post_limit,enabled,next_run) VALUES(?,60,20,1,0)", name)
@@ -24,7 +24,7 @@ func TestSchedulerSuccessDedupAndPause(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")
 	calls := 0
-	a.scheduler.collect = func(ctx context.Context, cfg archive.Config, c archive.Cookies, name string, n int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(ctx context.Context, cfg archive.Config, c archive.Cookies, name string, identity archive.TargetIdentity, n int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
 		calls++
 		err := save(archive.Page{Posts: []archive.Post{{ID: "100", AuthorID: "42", Username: name, Text: "saved", Raw: json.RawMessage(`{}`)}}})
 		return archive.Collection{Posts: 1, Stop: "limit_reached"}, err
@@ -66,7 +66,7 @@ func TestSchedulerFailurePolicies(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			a := testApp(t)
 			seedMonitor(t, a, "alice")
-			a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, int, bool, func(archive.Page) error) (archive.Collection, error) {
+			a.scheduler.collect = func(context.Context, archive.Config, archive.Cookies, string, archive.TargetIdentity, int, bool, func(archive.Page) error) (archive.Collection, error) {
 				return archive.Collection{}, &archive.Failure{Kind: kind, Message: "test failure"}
 			}
 			worked, err := a.scheduler.step(context.Background())
@@ -105,7 +105,7 @@ func TestSchedulerSerialCancelAndCookieReplacement(t *testing.T) {
 	started := make(chan struct{})
 	finish := make(chan struct{})
 	done := make(chan error, 1)
-	a.scheduler.collect = func(ctx context.Context, _ archive.Config, _ archive.Cookies, _ string, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
+	a.scheduler.collect = func(ctx context.Context, _ archive.Config, _ archive.Cookies, _ string, _ archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
 		close(started)
 		select {
 		case <-finish:

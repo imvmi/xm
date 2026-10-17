@@ -18,13 +18,11 @@ func Serve(ctx context.Context, path string, cfg archive.Config, s *archive.Stor
 		return err
 	}
 	defer l.Close()
-	a, password, err := New(path, cfg, s, os.Getenv("XM_ADMIN_PASSWORD"), secure)
+	a, err := New(path, cfg, s, secure)
 	if err != nil {
 		return err
 	}
-	if password != "" {
-		fmt.Fprintln(os.Stderr, "首次启动，管理员密码（仅显示一次，请保存）：", password)
-	}
+
 	fmt.Fprintln(os.Stderr, "XM 管理页面 · Local: http://"+l.Addr().String())
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

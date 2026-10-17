@@ -1,15 +1,12 @@
 package archive
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
+	"xm/internal/database"
 )
 
 type Cookies struct {
@@ -86,79 +83,37 @@ func cookieDomain(s string) bool {
 	return s == "x.com" || s == "twitter.com" || s == "www.x.com" || s == "www.twitter.com"
 }
 
-func vaultCipher(dir string, create bool) (cipher.AEAD, error) {
-	path := filepath.Join(dir, "cookie.key")
-	key, err := os.ReadFile(path)
-	if os.IsNotExist(err) && create {
-		key = make([]byte, 32)
-		if _, err = rand.Read(key); err != nil {
-			return nil, err
-		}
-		f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if e != nil {
-			return nil, e
-		}
-		_, err = f.Write(key)
-		if err == nil {
-			err = f.Sync()
-		}
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-	}
+// SaveCookies stores the X session directly in the configured database.
+// The singleton row is replaced atomically; credentials never enter config JSON.
+func (s *Store) SaveCookies(c Cookies) error {
+	plain, err := json.Marshal(c)
 	if err != nil {
-		return nil, errors.New("无法读取 Cookie 密钥；请先导入 Cookie，恢复备份时同时恢复 cookie.key")
+		return errors.New("Cookie 格式无效")
 	}
-	if len(key) != 32 {
-		return nil, errors.New("Cookie 密钥文件无效")
+	if _, err = ParseCookies(plain); err != nil {
+		return err
 	}
-	if err = os.Chmod(path, 0600); err != nil {
-		return nil, err
-	}
-	b, err := aes.NewCipher(key)
+	_, err = s.DB.Exec(database.Upsert(s.DB.Dialect,
+		"INSERT INTO x_cookies(id,auth_token,ct0,updated_at) VALUES(1,?,?,?)",
+		[]string{"id"}, []string{"auth_token", "ct0", "updated_at"}), c.AuthToken, c.CSRF, now())
 	if err != nil {
-		return nil, err
+		return errors.New("保存 Cookie 到数据库失败")
 	}
-	return cipher.NewGCM(b)
+	return nil
 }
 
-func SaveCookies(dir string, c Cookies) error {
-	if err := PrivateDir(dir); err != nil {
-		return err
+func (s *Store) LoadCookies() (Cookies, error) {
+	var c Cookies
+	err := s.DB.QueryRow("SELECT auth_token,ct0 FROM x_cookies WHERE id=1").Scan(&c.AuthToken, &c.CSRF)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Cookies{}, errors.New("请先导入 Cookie")
 	}
-	a, err := vaultCipher(dir, true)
 	if err != nil {
-		return err
-	}
-	nonce := make([]byte, a.NonceSize())
-	if _, err = rand.Read(nonce); err != nil {
-		return err
+		return Cookies{}, errors.New("读取数据库 Cookie 失败")
 	}
 	plain, err := json.Marshal(c)
 	if err != nil {
-		return err
-	}
-	sealed := a.Seal(nonce, nonce, plain, []byte("xm-cookies-v1"))
-	return AtomicWrite(filepath.Join(dir, "cookies.enc"), sealed)
-}
-
-func LoadCookies(dir string) (Cookies, error) {
-	var c Cookies
-	a, err := vaultCipher(dir, false)
-	if err != nil {
-		return c, err
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "cookies.enc"))
-	if err != nil {
-		return c, errors.New("请先运行 import-cookie 导入 Cookie")
-	}
-	if len(b) < a.NonceSize() {
-		return c, errors.New("Cookie 文件损坏")
-	}
-	plain, err := a.Open(nil, b[:a.NonceSize()], b[a.NonceSize():], []byte("xm-cookies-v1"))
-	if err != nil {
-		return c, errors.New("Cookie 解密失败，文件或密钥不匹配")
+		return Cookies{}, errors.New("数据库 Cookie 格式无效")
 	}
 	return ParseCookies(plain)
 }
