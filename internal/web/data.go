@@ -41,7 +41,10 @@ func migrate(s *archive.Store) error {
 CREATE TABLE IF NOT EXISTS web_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS monitors_due ON monitors(next_run);
 CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
-	return err
+	if err != nil {
+		return err
+	}
+	return migrateNotifications(s.DB)
 }
 
 const monitorColumns = `m.username,m.interval_seconds,m.post_limit,m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)`

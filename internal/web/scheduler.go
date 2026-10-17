@@ -114,6 +114,10 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		a.changeMu.Unlock()
 		return false, err
 	}
+	if err = a.prepareNotifications(m); err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
 	started := time.Now().Unix()
 	_, err = a.store.DB.Exec("UPDATE monitors SET running=1,requested=0,last_started=?,last_error='' WHERE username=?", started, m.Username)
 	if err != nil {
@@ -212,6 +216,23 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		lastError = message
 	}
 	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,next_run=?,last_posts=?,new_posts=? WHERE username=?`, ended, collectErr == nil && jobCtx.Err() == nil, ended, lastError, failures, ended+int64(delay), result.Posts, max(count-m.Posts, 0), m.Username)
+
+	if err != nil {
+		return true, err
+	}
+	kind := ""
+	if collectErr != nil {
+		kind = archive.FailureKind(collectErr)
+		if kind == "" {
+			kind = "transient"
+		}
+	} else if mediaErr != nil {
+		kind = "media"
+	}
+	if kind == "auth" && state(a.store.DB, "cookie_imported") != cookieGeneration {
+		kind = ""
+	}
+	err = a.recordNotifications(cfg, m, failure == nil, jobCtx.Err() != nil, kind, failures)
 	return true, err
 }
 

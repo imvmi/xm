@@ -134,13 +134,44 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		if err = ctx.Err(); err != nil {
 			return summary, err
 		}
-		if j.Status == "done" && validLocalMedia(cfg.DataDir, j) {
-			summary.Skipped++
-			continue
+		if j.Status == "done" {
+			valid := false
+			if j.StorageID == "local" || j.StorageID == "" {
+				valid = validLocalMedia(cfg.DataDir, j)
+			} else {
+				valid, err = verifyRemote(ctx, cfg, j)
+				// A temporary remote outage must not erase the saved location.
+				if err != nil {
+					summary.Failed++
+					continue
+				}
+			}
+			if valid {
+				summary.Skipped++
+				continue
+			}
+		} else {
+			j.StorageID = cfg.ActiveStorage()
+			j.ObjectKey = ""
 		}
-		path, size, hash, downloadErr := Download(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes)
-		if err = s.MediaResult(j, path, size, hash, downloadErr); err != nil {
+		localPath, size, hash := j.Path, j.Bytes, j.SHA256
+		var downloadErr error
+		if !validLocalMedia(cfg.DataDir, j) {
+			localPath, size, hash, downloadErr = Download(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes)
+		}
+		savedPath := localPath
+		if downloadErr == nil && j.StorageID != "local" && j.StorageID != "" {
+			j.ObjectKey, downloadErr = uploadRemote(ctx, cfg, j.StorageID, localPath, size, hash)
+			if downloadErr == nil {
+				savedPath = ""
+			}
+		}
+		if err = s.MediaResult(j, savedPath, size, hash, downloadErr); err != nil {
 			return summary, err
+		}
+		if downloadErr == nil && savedPath == "" && localPath != "" {
+			// Remove staging only after both upload verification and DB commit.
+			_ = os.Remove(filepath.Join(cfg.DataDir, filepath.FromSlash(localPath)))
 		}
 		if downloadErr != nil {
 			summary.Failed++
@@ -159,7 +190,7 @@ func validLocalMedia(dir string, j MediaJob) bool {
 		return false
 	}
 	clean := filepath.Clean(filepath.FromSlash(j.Path))
-	if strings.HasPrefix(clean, "..") {
+	if !strings.HasPrefix(filepath.ToSlash(clean), "media/") || strings.HasPrefix(clean, "..") {
 		return false
 	}
 	f, err := os.Open(filepath.Join(dir, clean))
@@ -170,4 +201,50 @@ func validLocalMedia(dir string, j MediaJob) bool {
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	return err == nil && n == j.Bytes && hex.EncodeToString(h.Sum(nil)) == j.SHA256
+}
+
+func uploadRemote(ctx context.Context, cfg Config, id, localPath string, size int64, hash string) (string, error) {
+	b, err := NewRemote(cfg, id)
+	if err != nil {
+		return "", err
+	}
+	defer b.Close()
+	key := b.Key(localPath)
+	f, err := os.Open(filepath.Join(cfg.DataDir, filepath.FromSlash(localPath)))
+	if err != nil {
+		return key, errors.New("无法打开媒体暂存文件")
+	}
+	defer f.Close()
+	if err = b.Put(ctx, key, f, size, mime.TypeByExtension(filepath.Ext(localPath)), hash); err != nil {
+		return key, err
+	}
+	n, err := b.Size(ctx, key)
+	if err != nil {
+		return key, err
+	}
+	if n != size {
+		return key, errors.New("上传后远程文件长度不一致，暂存文件已保留")
+	}
+	return key, nil
+}
+func verifyRemote(ctx context.Context, cfg Config, j MediaJob) (bool, error) {
+	b, err := NewRemote(cfg, j.StorageID)
+	if err != nil {
+		return false, err
+	}
+	defer b.Close()
+	r, err := b.Open(ctx, j.ObjectKey, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer r.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(r, j.Bytes+1))
+	if err != nil {
+		return false, errors.New("远程媒体校验读取失败")
+	}
+	return n == j.Bytes && hex.EncodeToString(h.Sum(nil)) == j.SHA256, nil
 }

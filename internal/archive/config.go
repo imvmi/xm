@@ -10,17 +10,20 @@ import (
 )
 
 type Config struct {
-	DataDir           string `json:"data_dir"`
-	Proxy             string `json:"proxy"`
-	ChromePath        string `json:"chrome_path"`
-	Headless          bool   `json:"headless"`
-	RequestTimeout    int    `json:"request_timeout_seconds"`
-	CollectionTimeout int    `json:"collection_timeout_seconds"`
-	ScrollDelay       int    `json:"scroll_delay_seconds"`
-	MaxScrolls        int    `json:"max_scrolls"`
-	MaxMediaBytes     int64  `json:"max_media_bytes"`
-	DefaultInterval   int    `json:"default_interval_seconds"`
-	PollingPaused     bool   `json:"polling_paused"`
+	NotificationChannels []NotificationChannel `json:"notification_channels,omitempty"`
+	MediaStorage         string                `json:"media_storage,omitempty"`
+	StorageProfiles      []StorageProfile      `json:"storage_profiles,omitempty"`
+	DataDir              string                `json:"data_dir"`
+	Proxy                string                `json:"proxy"`
+	ChromePath           string                `json:"chrome_path"`
+	Headless             bool                  `json:"headless"`
+	RequestTimeout       int                   `json:"request_timeout_seconds"`
+	CollectionTimeout    int                   `json:"collection_timeout_seconds"`
+	ScrollDelay          int                   `json:"scroll_delay_seconds"`
+	MaxScrolls           int                   `json:"max_scrolls"`
+	MaxMediaBytes        int64                 `json:"max_media_bytes"`
+	DefaultInterval      int                   `json:"default_interval_seconds"`
+	PollingPaused        bool                  `json:"polling_paused"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -57,10 +60,19 @@ func LoadConfig(path string) (Config, error) {
 	if c.DefaultInterval < 60 || c.DefaultInterval > 604800 {
 		return c, errors.New("默认轮询周期必须为 1 分钟到 7 天")
 	}
-	return c, nil
+	if err = c.ValidateStorage(); err != nil {
+		return c, err
+	}
+	return c, c.ValidateNotifications()
 }
 
 func SaveConfig(path string, c Config) error {
+	if err := c.ValidateNotifications(); err != nil {
+		return err
+	}
+	if err := c.ValidateStorage(); err != nil {
+		return err
+	}
 	// data_dir is absolute after loading, so moving the working directory will
 	// not silently redirect the archive after a settings update.
 	if _, err := proxyURL(c.Proxy); err != nil {

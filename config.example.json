@@ -9,5 +9,8 @@
   "max_scrolls": 40,
   "max_media_bytes": 536870912,
   "default_interval_seconds": 900,
-  "polling_paused": false
+  "polling_paused": false,
+  "media_storage": "local",
+  "storage_profiles": [],
+  "notification_channels": []
 }

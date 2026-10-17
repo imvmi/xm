@@ -26,7 +26,7 @@ const usage = `XM — 个人 X 采集验证程序（Go + SQLite + Chrome）
   xm list          [-config config.json] [-user alice] [-limit 20]
   xm serve         [-config config.json] [-listen 127.0.0.1:8080] [-secure-cookie]
 
-collect 对每个账号最多采集 limit 条，图片和最高码率 MP4 保存到本地。
+collect 对每个账号最多采集 limit 条，图片和最高码率 MP4 保存到配置的本地、WebDAV 或 S3 存储。
 Cookie 文件支持 Cookie 请求头、JSON 映射/数组、Netscape；-file - 从标准输入导入。
 retry-media -verify 同时检查已下载文件的 SHA-256，丢失或损坏的文件重新下载。
 不同 X 登录账号请使用不同的配置文件和 data_dir。

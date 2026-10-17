@@ -30,6 +30,7 @@ type App struct {
 	changeMu   sync.Mutex
 	auth       *auth
 	scheduler  *Scheduler
+	notifier   *Notifier
 }
 
 func New(path string, cfg archive.Config, s *archive.Store, password string, secure bool) (*App, string, error) {
@@ -42,12 +43,16 @@ func New(path string, cfg archive.Config, s *archive.Store, password string, sec
 	}
 	a := &App{store: s, configPath: path, config: cfg, auth: auth}
 	a.scheduler = newScheduler(a)
+	a.notifier = newNotifier(a)
 	return a, generated, nil
 }
 func (a *App) Config() archive.Config {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	return a.config
+	cfg := a.config
+	cfg.NotificationChannels = append([]archive.NotificationChannel(nil), cfg.NotificationChannels...)
+	cfg.StorageProfiles = append([]archive.StorageProfile(nil), cfg.StorageProfiles...)
+	return cfg
 }
 
 // CookieImported is also called by the CLI while holding the worker lock.
@@ -81,7 +86,10 @@ UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任�
 	if err != nil {
 		return err
 	}
+	done := make(chan struct{})
+	go func() { defer close(done); a.notifier.Run(ctx) }()
 	a.scheduler.Run(ctx)
+	<-done
 	return nil
 }
 
@@ -126,6 +134,15 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", a.overview)
 	mux.HandleFunc("GET /api/settings", a.settings)
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
+	mux.HandleFunc("GET /api/notifications", a.notificationSettings)
+	mux.HandleFunc("POST /api/notifications/channels", a.saveNotificationChannel)
+	mux.HandleFunc("DELETE /api/notifications/channels/{id}", a.deleteNotificationChannel)
+	mux.HandleFunc("POST /api/notifications/channels/{id}/test", a.testNotificationChannel)
+	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
+	mux.HandleFunc("GET /api/storage", a.storageSettings)
+	mux.HandleFunc("POST /api/storage/profiles", a.saveStorageProfile)
+	mux.HandleFunc("PUT /api/storage/active", a.activateStorage)
+	mux.HandleFunc("POST /api/storage/profiles/{id}/test", a.testStorage)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
 	mux.HandleFunc("POST /api/proxy-test", a.testProxy)
 	mux.HandleFunc("GET /api/monitors", func(w http.ResponseWriter, r *http.Request) {
@@ -450,8 +467,13 @@ func (a *App) targets(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, v)
 }
 func (a *App) media(w http.ResponseWriter, r *http.Request) {
-	var path string
-	err := a.store.DB.QueryRow("SELECT local_path FROM media WHERE post_id=? AND media_id=? AND status='done'", r.PathValue("post"), r.PathValue("asset")).Scan(&path)
+	var path, storageID, objectKey string
+	var size int64
+	err := a.store.DB.QueryRow("SELECT local_path,storage_id,object_key,bytes FROM media WHERE post_id=? AND media_id=? AND status='done'", r.PathValue("post"), r.PathValue("asset")).Scan(&path, &storageID, &objectKey, &size)
+	if err == nil && storageID != "local" {
+		a.remoteMedia(w, r, storageID, objectKey, size)
+		return
+	}
 	if err != nil || !strings.HasPrefix(path, "media/") {
 		http.NotFound(w, r)
 		return

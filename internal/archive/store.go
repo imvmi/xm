@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS runs (
 		db.Close()
 		return nil, err
 	}
+	if err = migrateStorage(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{DB: db}, nil
 }
 
@@ -181,12 +185,13 @@ func (s *Store) BackfillQuotes() error {
 
 type MediaJob struct {
 	PostID, ID, Kind, URL, Path, Status string
+	StorageID, ObjectKey                string
 	Bytes                               int64
 	SHA256                              string
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
-	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256 FROM media WHERE 1=1`
+	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key FROM media WHERE 1=1`
 	var args []any
 	if !includeDone {
 		query += " AND status != 'done'"
@@ -207,7 +212,7 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	var jobs []MediaJob
 	for r.Next() {
 		var j MediaJob
-		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256); err != nil {
+		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -215,12 +220,15 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	return jobs, r.Err()
 }
 func (s *Store) MediaResult(j MediaJob, path string, size int64, hash string, downloadErr error) error {
+	if j.StorageID == "" {
+		j.StorageID = "local"
+	}
 	status, message := "done", ""
 	if downloadErr != nil {
 		status = "failed"
 		message = downloadErr.Error()
 	}
-	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,attempts=attempts+1,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, message, now(), j.PostID, j.ID)
+	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, j.StorageID, j.ObjectKey, message, now(), j.PostID, j.ID)
 	return err
 }
 
@@ -302,4 +310,40 @@ func JSON(v any) string {
 		return fmt.Sprintf("JSON 编码失败: %v", err)
 	}
 	return string(b)
+}
+
+// Existing archives retain local storage. Inspect before ALTER to make reopening idempotent.
+func migrateStorage(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(media)")
+	if err != nil {
+		return err
+	}
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var def any
+		if err = rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"storage_id", "object_key"} {
+		if !cols[name] {
+			def := "''"
+			if name == "storage_id" {
+				def = "'local'"
+			}
+			if _, err = db.Exec("ALTER TABLE media ADD COLUMN " + name + " TEXT NOT NULL DEFAULT " + def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
