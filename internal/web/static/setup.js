@@ -1,16 +1,18 @@
 'use strict';
 const el=id=>document.getElementById(id);
-const sections=['step-database','step-storage','step-account'];
-let step=0,busy=false,loaded=false;
+const sections=['step-database','step-storage','step-account','step-existing'];
+let step=0,busy=false,loaded=false,existing=false,testedDatabase=null;
+const activeSections=()=>existing?[sections[0],sections[3]]:sections.slice(0,3);
 el('setup-form').noValidate=true;
 function showStep(next){
- step=next;sections.forEach((id,i)=>el(id).hidden=i!==step);
- document.querySelectorAll('[data-step]').forEach((item,i)=>{if(i===step)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');item.classList.toggle('done',i<step);});
- el('setup-back').hidden=step===0;el('step-count').textContent=`0${step+1} / 03`;
- el('setup-next').textContent=['测试数据库并继续 →','测试存储并继续 →','完成设置 →'][step];
+ const active=activeSections();step=next;sections.forEach(id=>el(id).hidden=id!==active[step]);
+ document.querySelectorAll('[data-step]').forEach((item,i)=>{item.hidden=i>=active.length;if(i===step)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');item.classList.toggle('done',i<step);if(i===1){item.querySelector('strong').textContent=existing?'验证原账号':'媒体存储';item.querySelector('small').textContent=existing?'保留全部原有配置':'安放图片和视频';}});
+ el('setup-back').hidden=step===0;el('step-count').textContent=`0${step+1} / 0${active.length}`;
+ el('step-database').querySelector('.eyebrow').textContent=`STEP 01 / 0${active.length}`;
+ el('setup-next').textContent=(existing?['测试数据库并继续 →','验证并接入 →']:['测试数据库并继续 →','测试存储并继续 →','完成设置 →'])[step];
  el('setup-error').textContent='';el('setup-status').textContent='';
  if(step===2){const db=document.querySelector('input[name="db-kind"]:checked').value;el('setup-summary').textContent=`管理员：${el('setup-username').value} · 数据库：${db==='sqlite'?'SQLite':'MySQL / '+el('db-name').value} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}
- el(sections[step]).querySelector('h2').focus({preventScroll:true});
+ el(active[step]).querySelector('h2').focus({preventScroll:true});
 }
 function databaseChanged(){const mysql=document.querySelector('input[name="db-kind"]:checked').value==='mysql';el('mysql-fields').hidden=!mysql;el('mysql-fields').disabled=!mysql;el('sqlite-note').hidden=mysql;}
 function storageChanged(){
@@ -42,12 +44,13 @@ function populate(c){
 }
 function validStep(){
  el('setup-confirm').setCustomValidity(el('setup-password').value===el('setup-confirm').value?'':'两次密码不一致');
- for(const field of el(sections[step]).querySelectorAll('input,select'))if(field.willValidate&&!field.reportValidity())return false;
+ for(const field of el(activeSections()[step]).querySelectorAll('input,select'))if(field.willValidate&&!field.reportValidity())return false;
  return true;
 }
 function setBusy(value){busy=value;el('setup-next').disabled=value;el('setup-back').disabled=value;el('setup-form').setAttribute('aria-busy',String(value));for(const field of document.querySelectorAll('#setup-form input,#setup-form select')){if(value){field.dataset.wasDisabled=String(field.disabled);field.disabled=true;}else if(field.dataset.wasDisabled!==undefined){field.disabled=field.dataset.wasDisabled==='true';delete field.dataset.wasDisabled;}}}
 async function ready(){
  el('setup-form').hidden=true;el('setup-success').hidden=false;
+ if(existing)el('setup-success-description').textContent='已接入原有数据库，管理员、存储及其他配置均已保留。请使用原管理员用户名和密码登录。';
  document.querySelectorAll('input[type="password"]').forEach(input=>input.value='');
  for(let i=0;i<25;i++){
   try{const r=await fetch('/api/setup/status',{cache:'no-store'});const s=await r.json();if(r.ok&&s.needed===false){el('setup-ready').textContent='服务已就绪，请登录。';el('setup-login').disabled=false;return;}}catch{}
@@ -58,10 +61,11 @@ async function ready(){
 el('setup-form').addEventListener('submit',async e=>{
  e.preventDefault();if(busy)return;if(!loaded){await loadDefaults();return;}if(!validStep())return;el('setup-error').textContent='';
  // Snapshot user input before disabling the controls during network requests.
- const payload={username:el('setup-username').value,password:el('setup-password').value,database:database(),storage_kind:el('media-kind').value,storage:storage()};
- setBusy(true);el('setup-status').textContent=['正在测试数据库建表和事务读写…','正在测试媒体存储读写…','正在验证并保存账号与配置…'][step];
+ const payload=existing&&step===1?{username:el('existing-username').value,password:el('existing-password').value,database:testedDatabase}:{username:el('setup-username').value,password:el('setup-password').value,database:database(),storage_kind:el('media-kind').value,storage:storage()};
+ setBusy(true);el('setup-status').textContent=existing&&step===1?'正在验证原管理员身份并保存本机连接配置…':['正在连接数据库并检查初始化状态…','正在测试媒体存储读写…','正在验证并保存账号与配置…'][step];
  try{
-  if(step===0){await request('database-test',{database:payload.database});setBusy(false);showStep(1);}
+  if(step===0){const result=await request('database-test',{database:payload.database});existing=result.initialized===true;testedDatabase=payload.database;setBusy(false);showStep(1);}
+  else if(existing){await request('connect',payload);await ready();}
   else if(step===1){await request('storage-test',{database:payload.database,storage_kind:payload.storage_kind,storage:payload.storage});setBusy(false);showStep(2);}
   else{await request('complete',payload);await ready();}
  }catch(err){el('setup-error').textContent=err.message;el('setup-status').textContent='';}

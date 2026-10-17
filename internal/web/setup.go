@@ -58,15 +58,17 @@ func Setup(ctx context.Context, path string, cfg archive.Config, address string,
 }
 
 type setupWizard struct {
-	path      string
-	cfg       archive.Config
-	mu        sync.Mutex
-	completed bool
-	done      chan archive.Config
+	path            string
+	cfg             archive.Config
+	mu              sync.Mutex
+	completed       bool
+	done            chan archive.Config
+	openStore       func(archive.Config) (*archive.Store, error)
+	connectAttempts attempt // Protected by mu; shared across destinations and clients.
 }
 
 func newSetup(path string, cfg archive.Config) *setupWizard {
-	return &setupWizard{path: path, cfg: cfg, done: make(chan archive.Config, 1)}
+	return &setupWizard{path: path, cfg: cfg, done: make(chan archive.Config, 1), openStore: archive.OpenConfiguredStore}
 }
 
 type setupInput struct {
@@ -156,43 +158,56 @@ func (s *setupWizard) guardLocalArchive(c archive.Config) error {
 	return nil
 }
 func (s *setupWizard) checkDatabase(ctx context.Context, c archive.Config) error {
-	if err := s.guardLocalArchive(c); err != nil {
-		return err
+	existing, err := s.inspectDatabase(ctx, c)
+	if err == nil && existing {
+		return errors.New("目标数据库已初始化，请返回数据库步骤并验证原管理员账号以接入；不能覆盖原有配置")
 	}
-	store, err := archive.OpenConfiguredStore(c)
+	return err
+}
+
+func (s *setupWizard) inspectDatabase(ctx context.Context, c archive.Config) (bool, error) {
+	if err := s.guardLocalArchive(c); err != nil {
+		return false, err
+	}
+	store, err := s.openStore(c)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer store.Close()
+	if _, ready, e := loadAdmin(store); e != nil || ready {
+		// Detection does not require taking over an active instance's worker lock.
+		// No credentials or stored configuration are exposed before authentication.
+		return ready, e
+	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	release, err := store.AcquireDatabaseWorker(workerCtx, cancel, c.Database.Name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer release()
 	if _, ready, e := loadAdmin(store); e != nil {
-		return e
+		return false, e
 	} else if ready {
-		return errors.New("目标数据库已初始化，不能覆盖管理员和存储配置")
+		return true, nil
 	}
 	if err = migrate(store); err != nil {
-		return errors.New("数据库建表失败，请检查权限和版本")
+		return false, errors.New("数据库建表失败，请检查权限和版本")
 	}
 	tx, err := store.DB.BeginTx(workerCtx, nil)
 	if err != nil {
-		return errors.New("无法开始数据库测试事务")
+		return false, errors.New("无法开始数据库测试事务")
 	}
 	defer tx.Rollback()
 	key := "setup_test_" + randomToken()
 	if _, err = tx.ExecContext(workerCtx, "INSERT INTO web_state (`key`,value) VALUES(?,?)", key, "test"); err != nil {
-		return errors.New("数据库写入测试失败，请检查权限")
+		return false, errors.New("数据库写入测试失败，请检查权限")
 	}
 	var value string
 	if err = tx.QueryRowContext(workerCtx, "SELECT value FROM web_state WHERE `key`=?", key).Scan(&value); err != nil || value != "test" {
-		return errors.New("数据库读取测试失败")
+		return false, errors.New("数据库读取测试失败")
 	}
-	return tx.Rollback()
+	return false, tx.Rollback()
 }
 func (s *setupWizard) checkStorage(ctx context.Context, c archive.Config) error {
 	if c.ActiveStorage() == "local" {
@@ -246,14 +261,19 @@ func (s *setupWizard) Handler() http.Handler {
 		}
 		v.StorageKind = "keep"
 		c, err := s.candidate(v)
+		var existing bool
 		if err == nil {
-			err = s.checkDatabase(r.Context(), c)
+			existing, err = s.inspectDatabase(r.Context(), c)
 		}
 		if err != nil {
 			problem(w, 400, err.Error())
 			return
 		}
-		respond(w, 200, map[string]string{"message": "数据库建表、读写与事务测试通过"})
+		message := "数据库建表、读写与事务测试通过"
+		if existing {
+			message = "检测到已有数据库，请验证原管理员账号密码；管理员、存储及其他配置将原样保留"
+		}
+		respond(w, 200, map[string]any{"message": message, "initialized": existing})
 	})
 	mux.HandleFunc("POST /api/setup/storage-test", func(w http.ResponseWriter, r *http.Request) {
 		var v setupInput
@@ -276,6 +296,7 @@ func (s *setupWizard) Handler() http.Handler {
 		respond(w, 200, map[string]string{"message": "媒体存储读写与清理测试通过"})
 	})
 	mux.HandleFunc("POST /api/setup/complete", s.complete)
+	mux.HandleFunc("POST /api/setup/connect", s.connect)
 	assets, _ := fs.Sub(static, "static")
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +320,11 @@ func (s *setupWizard) Handler() http.Handler {
 				return
 			}
 			defer s.mu.Unlock()
-			if ready, err := installationReady(s.cfg); s.completed || ready {
+			if s.completed {
+				problem(w, 409, "初始化已完成，请刷新页面登录")
+				return
+			}
+			if ready, err := installationReady(s.cfg); ready {
 				problem(w, 409, "初始化已完成，请刷新页面登录")
 				return
 			} else if err != nil {
@@ -311,6 +336,78 @@ func (s *setupWizard) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
+// connect only writes this host's bootstrap pointer. It must never initialize
+// the target, save settings, test remote storage, or replace its administrator.
+func (s *setupWizard) connect(w http.ResponseWriter, r *http.Request) {
+	var v setupInput
+	if !decode(w, r, &v) {
+		return
+	}
+	if s.connectAttempts.Start.IsZero() || time.Since(s.connectAttempts.Start) > time.Minute {
+		s.connectAttempts = attempt{Start: time.Now()}
+	}
+	s.connectAttempts.Count++
+	if s.connectAttempts.Count > 6 {
+		w.Header().Set("Retry-After", "60")
+		problem(w, 429, "验证尝试过多，请一分钟后重试")
+		return
+	}
+	// Even a crafted request cannot apply the wizard's new-storage selections.
+	v.StorageKind = "keep"
+	c, err := s.candidate(v)
+	if err == nil {
+		err = s.guardLocalArchive(c)
+	}
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	store, err := s.openStore(c)
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	defer store.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	release, err := store.AcquireDatabaseWorker(ctx, cancel, c.Database.Name)
+	if err != nil {
+		problem(w, 409, "数据库正在使用或无法获取工作锁，请先停止旧主机的 XM 服务再接入")
+		return
+	}
+	defer release()
+	record, initialized, err := loadAdmin(store)
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	if !initialized {
+		problem(w, 409, "目标数据库尚未初始化，请返回数据库步骤重新检测")
+		return
+	}
+	if !verifyPassword(record, v.Username, v.Password) {
+		problem(w, 401, "原管理员用户名或密码不正确")
+		return
+	}
+	c, err = store.LoadSettings(c)
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	if ctx.Err() != nil {
+		problem(w, 408, "接入超时，请重试")
+		return
+	}
+	if err = archive.SaveBootstrap(s.path, c); err != nil {
+		problem(w, 500, "无法保存本机连接配置，请检查文件权限")
+		return
+	}
+	s.cfg, s.completed = c, true
+	respond(w, 200, map[string]bool{"ok": true})
+	s.done <- c
+}
+
 func (s *setupWizard) complete(w http.ResponseWriter, r *http.Request) {
 	var v setupInput
 	if !decode(w, r, &v) {

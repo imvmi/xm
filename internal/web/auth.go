@@ -35,6 +35,14 @@ func makePasswordRecord(username, password string) (passwordRecord, error) {
 	return r, err
 }
 
+func verifyPassword(record passwordRecord, username, password string) bool {
+	if len(password) > 1024 {
+		return false
+	}
+	hash, err := pbkdf2.Key(sha256.New, password, record.Salt, iterations, 32)
+	return err == nil && subtle.ConstantTimeCompare(hash, record.Hash) == 1 && username == record.Username
+}
+
 type session struct {
 	CSRF    string
 	Expires time.Time
@@ -141,13 +149,7 @@ func (a *auth) login(w http.ResponseWriter, r *http.Request) {
 		problem(w, 429, "登录尝试过多，请一分钟后重试")
 		return
 	}
-	if len(input.Password) > 1024 {
-		problem(w, 401, "用户名或密码不正确")
-		return
-	}
-	hash, err := pbkdf2.Key(sha256.New, input.Password, a.record.Salt, iterations, 32)
-	usernameOK := input.Username == a.record.Username
-	if err != nil || subtle.ConstantTimeCompare(hash, a.record.Hash) != 1 || !usernameOK {
+	if !verifyPassword(a.record, input.Username, input.Password) {
 		problem(w, 401, "用户名或密码不正确")
 		return
 	}
