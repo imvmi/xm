@@ -1,0 +1,2 @@
+/* All assets are local. No CDN, external font, or analytics requests. */
+html{scroll-behavior:smooth}::selection{background:#d9e5cf;color:#294431}body:has(dialog[open]){overflow:hidden}

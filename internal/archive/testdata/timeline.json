@@ -1,0 +1,31 @@
+{
+  "data": {"user": {"result": {"timeline_v2": {"timeline": {"instructions": [
+    {"type":"TimelineAddEntries","entries":[
+      {"entryId":"tweet-1900000000000000001","content":{"entryType":"TimelineTimelineItem","itemContent":{"itemType":"TimelineTweet","tweet_results":{"result":{
+        "__typename":"TweetWithVisibilityResults","tweet":{
+          "__typename":"Tweet","rest_id":"1900000000000000001",
+          "core":{"user_results":{"result":{"rest_id":"42","core":{"screen_name":"alice"}}}},
+          "note_tweet":{"note_tweet_results":{"result":{"text":"完整的长推文 &amp; 中文"}}},
+          "legacy":{"full_text":"截断文本","created_at":"Fri Oct 16 12:00:00 +0000 2026","quoted_status_id_str":"1899999999999999999","extended_entities":{"media":[
+            {"id_str":"101","media_key":"3_101","type":"photo","media_url_https":"https://pbs.twimg.com/media/image.jpg"},
+            {"id_str":"102","media_key":"7_102","type":"video","video_info":{"variants":[
+              {"content_type":"application/x-mpegURL","url":"https://video.twimg.com/playlist.m3u8"},
+              {"content_type":"video/mp4","bitrate":256000,"url":"https://video.twimg.com/low.mp4"},
+              {"content_type":"video/mp4","bitrate":2000000,"url":"https://video.twimg.com/high.mp4"}
+            ]}}
+          ]}},
+          "quoted_status_result":{"result":{"rest_id":"1899999999999999999","legacy":{"full_text":"被引用内容"}}}
+        }
+      }}}}},
+      {"entryId":"conversation-2","content":{"entryType":"TimelineTimelineModule","items":[
+        {"item":{"itemContent":{"tweet_results":{"result":{"__typename":"Tweet","rest_id":"1900000000000000002","core":{"user_results":{"result":{"rest_id":"42","legacy":{"screen_name":"alice"}}}},"legacy":{"full_text":"回复内容","in_reply_to_status_id_str":"1800000000000000001","created_at":"Fri Oct 16 13:00:00 +0000 2026"}}}}}},
+        {"item":{"itemContent":{"tweet_results":{"result":{"__typename":"TweetUnavailable"}}}}}
+      ]}},
+      {"entryId":"tweet-1900000000000000003","content":{"itemContent":{"tweet_results":{"result":{
+        "__typename":"Tweet","rest_id":"1900000000000000003","core":{"user_results":{"result":{"rest_id":"42","legacy":{"screen_name":"alice"}}}},
+        "legacy":{"full_text":"RT truncated","created_at":"Fri Oct 16 14:00:00 +0000 2026","retweeted_status_result":{"result":{"rest_id":"1800000000000000000","legacy":{"full_text":"原始推文完整内容","extended_entities":{"media":[{"id_str":"103","type":"animated_gif","video_info":{"variants":[{"content_type":"video/mp4","url":"https://video.twimg.com/gif.mp4"}]}}]}}}}}
+      }}}}},
+      {"entryId":"cursor-bottom","content":{"entryType":"TimelineTimelineCursor","cursorType":"Bottom","value":"opaque"}}
+    ]}
+  ]}}}}}
+}

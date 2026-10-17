@@ -1,0 +1,173 @@
+package archive
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func mediaURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" && u.Port() != "443" {
+		return nil, errors.New("媒体 URL 必须使用受支持的 HTTPS 地址")
+	}
+	h := strings.ToLower(u.Hostname())
+	if h != "pbs.twimg.com" && h != "video.twimg.com" {
+		return nil, errors.New("媒体域名不在允许列表中（仅 pbs.twimg.com、video.twimg.com）")
+	}
+	return u, nil
+}
+
+// Download sends no account Cookie or Authorization to media hosts.
+func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max int64) (string, int64, string, error) {
+	if j.URL == "" {
+		return "", 0, "", errors.New("该媒体未提供可下载的图片/MP4 地址；HLS 暂不支持")
+	}
+	u, err := mediaURL(j.URL)
+	if err != nil {
+		return "", 0, "", err
+	}
+	client := *c
+	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("媒体重定向次数过多")
+		}
+		_, err := mediaURL(r.URL.String())
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", 0, "", errors.New("无法创建媒体请求")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, "", NetworkError(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", 0, "", fmt.Errorf("媒体下载返回 HTTP %d；可重新采集刷新链接后重试", resp.StatusCode)
+	}
+	if resp.ContentLength > max {
+		return "", 0, "", errors.New("媒体超过配置的大小上限")
+	}
+	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	ext := ""
+	if j.Kind == "photo" {
+		switch ct {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/png":
+			ext = ".png"
+		case "image/webp":
+			ext = ".webp"
+		case "image/gif":
+			ext = ".gif"
+		case "image/avif":
+			ext = ".avif"
+		}
+	} else if ct == "video/mp4" || ct == "application/mp4" {
+		ext = ".mp4"
+	}
+	if ext == "" {
+		return "", 0, "", errors.New("媒体响应类型不匹配，未保存可能的错误页")
+	}
+	key := sha256.Sum256([]byte(j.PostID + "/" + j.ID))
+	name := hex.EncodeToString(key[:])
+	rel := filepath.Join("media", name[:2], name+ext)
+	full := filepath.Join(dir, rel)
+	if err = PrivateDir(filepath.Dir(full)); err != nil {
+		return "", 0, "", errors.New("无法创建媒体目录")
+	}
+	f, err := os.CreateTemp(filepath.Dir(full), ".download-*")
+	if err != nil {
+		return "", 0, "", errors.New("无法创建媒体临时文件")
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, max+1))
+	if err != nil {
+		return "", 0, "", errors.New("媒体读取或写入失败，临时文件已移除")
+	}
+	if n > max {
+		return "", 0, "", errors.New("媒体超过配置的大小上限")
+	}
+	if n == 0 {
+		return "", 0, "", errors.New("媒体内容为空")
+	}
+	if err = f.Sync(); err != nil {
+		return "", 0, "", errors.New("媒体同步到磁盘失败")
+	}
+	if err = f.Close(); err != nil {
+		return "", 0, "", errors.New("关闭媒体文件失败")
+	}
+	if err = os.Rename(f.Name(), full); err != nil {
+		return "", 0, "", errors.New("媒体文件提交失败")
+	}
+	return filepath.ToSlash(rel), n, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type DownloadSummary struct{ Downloaded, Skipped, Failed int }
+
+func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, verify bool) (DownloadSummary, error) {
+	var summary DownloadSummary
+	c, err := HTTPClient(cfg.Proxy, time.Duration(cfg.RequestTimeout)*time.Second)
+	if err != nil {
+		return summary, err
+	}
+	defer c.CloseIdleConnections()
+	jobs, err := s.MediaJobs(target, verify)
+	if err != nil {
+		return summary, err
+	}
+	for _, j := range jobs {
+		if err = ctx.Err(); err != nil {
+			return summary, err
+		}
+		if j.Status == "done" && validLocalMedia(cfg.DataDir, j) {
+			summary.Skipped++
+			continue
+		}
+		path, size, hash, downloadErr := Download(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes)
+		if err = s.MediaResult(j, path, size, hash, downloadErr); err != nil {
+			return summary, err
+		}
+		if downloadErr != nil {
+			summary.Failed++
+		} else {
+			summary.Downloaded++
+		}
+	}
+	if summary.Failed > 0 {
+		return summary, fmt.Errorf("%d 个媒体下载失败，详情见 SQLite media.last_error；使用 retry-media 重试", summary.Failed)
+	}
+	return summary, nil
+}
+
+func validLocalMedia(dir string, j MediaJob) bool {
+	if j.Path == "" || filepath.IsAbs(j.Path) {
+		return false
+	}
+	clean := filepath.Clean(filepath.FromSlash(j.Path))
+	if strings.HasPrefix(clean, "..") {
+		return false
+	}
+	f, err := os.Open(filepath.Join(dir, clean))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	return err == nil && n == j.Bytes && hex.EncodeToString(h.Sum(nil)) == j.SHA256
+}

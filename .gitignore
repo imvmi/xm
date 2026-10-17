@@ -1,0 +1,6 @@
+/data/
+/xm
+/config.json
+/cookies*
+*.har
+*.sqlite*
