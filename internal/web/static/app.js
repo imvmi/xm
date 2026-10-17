@@ -18,7 +18,7 @@ async function api(path, method='GET', data) {
 }
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
-  state.authenticated=false;state.csrf='';state.postRequest++;
+  state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','monitor-rows','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
@@ -75,7 +75,7 @@ async function navigate() {
   else if(state.view==='settings')await refreshSettings();
   else if(state.view==='notifications')await refreshNotifications();
 }
-document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();$('main-content').focus();});
+document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();(state.authenticated?$('main-content'):$('username')).focus();});
 window.addEventListener('hashchange',()=>navigate().catch(err=>toast(err.message,true)));
 async function refreshUsers(){
  const users=await api('/users');if(!state.authenticated)return;state.users=users;renderUsers();
@@ -83,8 +83,10 @@ async function refreshUsers(){
 function renderUsers(){
  const q=$('user-search').value.trim().toLowerCase();const users=state.users.filter(u=>(u.username+' '+handle(u)+' '+u.name).toLowerCase().includes(q));
  $('user-count').textContent=users.length+' 位用户';$('user-empty').hidden=users.length>0;
- $('user-empty').querySelector('h3').textContent=q?'没有找到匹配的用户':'还没有用户档案';
- $('user-list').innerHTML=users.map(u=>`<a class="user-card" href="${userURL(u.username)}"><div class="user-card-top">${avatar(handle(u),'user-avatar',u.avatar_url)}<span class="badge ${u.enabled?'':'neutral'}">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div><h3>${escape(u.name)}${u.protected?icon('lock'):''}</h3><div class="user-handle">@${escape(handle(u))}</div><p class="user-bio">${escape(u.bio||'关注的动态，保存在自己的空间里。')}</p><div class="user-card-stats"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个媒体</span></div><footer><span>${u.last_saved?'最近归档 '+escape(date(u.last_saved,true)):'等待第一次采集'}</span><span class="user-open">查看动态 →</span></footer></a>`).join('');
+ $('user-empty').querySelector('h3').textContent=q?'没有找到匹配的用户':'开始你的第一份归档';
+ $('user-empty').querySelector('p').textContent=q?'换个名称或用户名试试。':'添加一个监控账号，采集的动态会保存在这里。';
+ $('user-empty').querySelector('button').hidden=!!q;
+ $('user-list').innerHTML=users.map(u=>`<a class="user-card" href="${userURL(u.username)}"><div class="user-card-top">${avatar(handle(u),'user-avatar',u.avatar_url)}<div class="user-card-identity"><h3>${escape(u.name||handle(u))}${u.protected?icon('lock'):''}</h3><div class="user-handle">@${escape(handle(u))}</div></div><span class="user-open" aria-hidden="true">→</span></div><div class="user-card-stats"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个媒体</span></div><footer><span class="badge ${u.enabled?'':'neutral'}">${u.monitored?(u.enabled?'监控中':'已暂停'):'已归档'}</span><span>${u.last_saved?'最近归档 '+escape(date(u.last_saved,true)):'等待第一次采集'}</span></footer></a>`).join('');
 }
 $('user-search').addEventListener('input',renderUsers);
 function renderProfile(){

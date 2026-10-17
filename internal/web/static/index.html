@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"><link rel="stylesheet" href="/assets/home.css"></head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
 <svg class="svg-defs" aria-hidden="true"><defs>
@@ -18,27 +18,36 @@
 <symbol id="i-exit" viewBox="0 0 24 24"><path d="M9 4H4v16h5m6-13 5 5-5 5m-7-5h12"/></symbol>
 </defs></svg>
 <section id="login-view" class="login-view">
-  <div class="login-story"><a class="brand" href="/"><span class="brand-mark">x<span>m</span></span><span>私人动态档案</span></a><div><div class="eyebrow">YOUR OWN LITTLE ARCHIVE</div><h1>值得关注的，<br>值得留下。</h1><p>把关注的声音、瞬间和灵感，<br>留在自己的空间里。</p><div class="story-line"></div><span class="quiet">自部署 · 私有存储 · 由你掌控</span></div><span class="quiet">XM / PERSONAL ARCHIVE</span></div>
-  <div class="login-panel"><form id="login-form" class="login-form"><span class="badge">仅限本人访问</span><h2>欢迎回来</h2><p class="muted">登录你的私人动态档案。</p><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required maxlength="32" placeholder="输入管理员用户名"><label for="password">管理员密码</label><input id="password" name="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码"><p id="login-error" class="form-error" role="alert"></p><button class="button primary wide" type="submit">进入管理页面 <span>→</span></button><p class="login-tip">使用首次设置时的用户名和密码登录。</p></form></div>
+  <header class="login-top"><a class="brand" href="/"><span class="brand-mark">x<span>m</span></span><span>私人动态档案</span></a><span>管理员登录</span></header>
+  <div class="login-panel">
+    <form id="login-form" class="login-form" aria-labelledby="login-title">
+      <h1 id="login-title">欢迎回来</h1><p class="muted">登录你的私人档案室。</p>
+      <div class="login-field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required maxlength="32" placeholder="输入管理员用户名"></div>
+      <div class="login-field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required placeholder="输入登录密码"></div>
+      <p id="login-error" class="form-error" role="alert"></p>
+      <button class="button primary wide" type="submit">登录 <span aria-hidden="true">→</span></button>
+      <p class="login-tip">使用首次设置时创建的账号。</p>
+    </form>
+  </div>
+  <footer class="login-foot">自部署 · 私有存储 · 由你掌控</footer>
 </section>
 <div id="app" class="app" hidden>
   <aside class="sidebar">
     <a class="brand" href="#archive"><span class="brand-mark">x<span>m</span></span><span>私人动态档案</span></a>
-    <div class="nav-label">工作空间</div>
     <nav aria-label="主导航"><a href="#archive" data-view="archive"><svg><use href="#i-grid"/></svg><span class="nav-text">推文归档</span><span id="nav-count" class="nav-count">0</span></a><a href="#monitors" data-view="monitors"><svg><use href="#i-users"/></svg><span class="nav-text">监控账号</span></a><a href="#activity" data-view="activity"><svg><use href="#i-clock"/></svg><span class="nav-text">采集记录</span></a><a href="#notifications" data-view="notifications"><svg><use href="#i-bell"/></svg><span class="nav-text">通知</span></a><a href="#settings" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-text">设置</span></a></nav>
-    <div class="sidebar-bottom"><div class="private-note"><svg><use href="#i-lock"/></svg><div><strong>你的内容，只属于你</strong><p>归档存储由你掌控</p></div></div><button id="logout" class="logout" aria-label="退出登录" title="退出登录"><span class="avatar tiny">我</span><span>个人工作空间<small>管理员</small></span><svg><use href="#i-exit"/></svg></button></div>
+    <div class="sidebar-bottom"><button id="logout" class="logout" aria-label="退出登录" title="退出登录"><svg aria-hidden="true"><use href="#i-exit"/></svg><span>退出登录</span></button></div>
   </aside>
   <main id="main-content" tabindex="-1">
-    <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <strong id="breadcrumb-title">推文归档</strong></div><div id="service-state" class="service-state"><span class="status-dot"></span>正在连接服务</div></header>
+    <header class="topbar"><div class="breadcrumb"><strong id="breadcrumb-title">推文归档</strong></div><div id="service-state" class="service-state"><span class="status-dot"></span>正在连接服务</div></header>
     <div class="content">
       <div id="connection-banner" class="notice" hidden></div>
       <section id="view-archive" class="view">
-        <div class="page-heading"><div><div class="eyebrow">THE COLLECTION</div><h1>推文归档<span class="title-dot">.</span></h1><p>关注的动态，在这里慢慢积累。</p></div><div class="heading-actions"><button id="refresh-archive" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>
-        <div class="stats"><div><span>已保存推文 <svg><use href="#i-grid"/></svg></span><strong id="stat-posts">—</strong><small><span id="stat-today">0</span> 条今日归档 · UTC</small></div><div><span>监控账号 <svg><use href="#i-users"/></svg></span><strong id="stat-monitors">—</strong><small><span id="stat-active">0</span> 个正在监控</small></div><div><span>已归档媒体 <svg><use href="#i-image"/></svg></span><strong id="stat-media">—</strong><small>图片、视频与动图</small></div><div><span>媒体占用 <svg><use href="#i-lock"/></svg></span><strong id="stat-bytes">—</strong><small>本地与远程归档文件</small></div></div>
-        <div class="collection-head"><div><h2>全部动态 <span id="user-count" class="count-label">0 位用户</span></h2><p class="collection-caption">选择一个用户，进入他的动态档案。</p></div><label class="search-box"><svg><use href="#i-search"/></svg><input id="user-search" type="search" placeholder="搜索用户名称或用户名" aria-label="搜索归档用户"></label></div>
+        <div class="page-heading"><div><h1>推文归档</h1><p>查看关注账号的已保存动态。</p></div><div class="heading-actions"><button id="refresh-archive" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>
+        <div class="stats" aria-label="归档概览"><div><span>已保存推文</span><strong id="stat-posts">—</strong><small>今日 <span id="stat-today">0</span> 条 · UTC</small></div><div><span>监控账号</span><strong id="stat-monitors">—</strong><small><span id="stat-active">0</span> 个正在监控</small></div><div><span>已归档媒体</span><strong id="stat-media">—</strong><small>图片、视频与动图</small></div><div><span>存储占用</span><strong id="stat-bytes">—</strong><small>本地与远程媒体</small></div></div>
+        <div class="collection-head"><h2>用户档案 <span id="user-count" class="count-label">0 位用户</span></h2><label class="search-box"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="user-search" type="search" placeholder="搜索名称或用户名" aria-label="搜索归档用户"></label></div>
         <div id="user-list" class="user-list" aria-live="polite"></div>
-        <div id="user-empty" class="empty-state" hidden><div class="empty-icon"><svg><use href="#i-users"/></svg></div><h3>还没有用户档案</h3><p>添加一个监控账号，从第一条动态开始积累。</p><button class="button primary" data-action="add">添加监控</button></div>
-        <div class="page-foot"><span><span class="status-dot"></span> 归档内容仅管理员可见</span><span>正文、引用与媒体，一起留下。</span></div>
+        <div id="user-empty" class="empty-state" hidden><div class="empty-icon"><svg aria-hidden="true"><use href="#i-users"/></svg></div><h3>开始你的第一份归档</h3><p>添加一个监控账号，采集的动态会保存在这里。</p><button class="button secondary" data-action="add">添加监控账号</button></div>
+        <div class="page-foot"><span><svg aria-hidden="true"><use href="#i-lock"/></svg> 仅管理员可见</span></div>
       </section>
       <section id="view-user" class="view" hidden>
         <div class="profile-layout">
