@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const state = {csrf:'', view:'archive', settings:null, monitors:[], overview:null, offset:0, total:0, editing:null, deleting:null, postRequest:0, authenticated:false};
+const state = {csrf:'', view:'archive', settings:null, monitors:[], overview:null, offset:0, total:0, editing:null, deleting:null, postRequest:0, authenticated:false, users:[], target:'', mediaTab:false, navRequest:0};
 let toastTimer, searchTimer;
 function toast(message, error=false) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').classList.toggle('error',error); $('toast').hidden=false; toastTimer=setTimeout(()=>$('toast').hidden=true,error?7000:4000); }
 function date(value, short=false) { if(!value)return '尚未执行';const d=new Date(typeof value==='number'?value*1000:value);if(Number.isNaN(d.getTime()))return String(value);return d.toLocaleString('zh-CN',short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
@@ -20,10 +20,10 @@ async function action(button, work) { if(button?.disabled)return; if(button)butt
 function showLogin() {
   state.authenticated=false;state.csrf='';state.postRequest++;
   $('app').hidden=true;$('login-view').hidden=false;
-  for(const id of ['posts','monitor-rows','runs'])$(id).replaceChildren();
+  for(const id of ['posts','user-list','profile-header','profile-summary','monitor-rows','runs'])$(id).replaceChildren();
   $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';
   document.querySelectorAll('dialog[open]').forEach(d=>d.close());
-  state.monitors=[];state.settings=null;state.overview=null;
+  state.monitors=[];state.users=[];state.settings=null;state.overview=null;state.navRequest++;
 }
 async function enter() {
   state.authenticated=true;$('password').value='';$('login-error').textContent='';$('login-view').hidden=true;$('app').hidden=false;
@@ -50,41 +50,68 @@ async function refreshOverview() {
   else if(o.scheduler_error)warning=o.scheduler_error;
   if(warning){banner.hidden=false;banner.append(document.createTextNode(warning+' '));const link=document.createElement('a');link.href='#settings';link.textContent='前往连接设置 →';banner.append(link);}
 }
-const titles={archive:'推文归档',monitors:'监控账号',activity:'采集记录',settings:'连接设置'};
+const titles={archive:'推文归档',user:'用户动态',monitors:'监控账号',activity:'采集记录',settings:'连接设置'};
+function avatar(username, extra='') { const alt=[...username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;return `<span class="avatar alt${alt} ${extra}">${escape(username.slice(0,2).toUpperCase())}</span>`; }
+function userURL(username) { return '#user/'+encodeURIComponent(username); }
 async function navigate() {
   if(!state.authenticated)return;
-  const next=location.hash.slice(1);state.view=titles[next]?next:'archive';
-  for(const name of Object.keys(titles)){$('view-'+name).hidden=name!==state.view;document.querySelector(`[data-view="${name}"]`).classList.toggle('active',name===state.view);}
+  const request=++state.navRequest;state.postRequest++;
+  const next=location.hash.slice(1),match=/^user\/([A-Za-z0-9_]{1,15})$/.exec(next);
+  state.view=match?'user':titles[next]&&next!=='user'?next:'archive';
+  for(const name of Object.keys(titles))$('view-'+name).hidden=name!==state.view;
+  for(const a of document.querySelectorAll('[data-view]'))a.classList.toggle('active',a.dataset.view===(state.view==='user'?'archive':state.view));
   $('breadcrumb-title').textContent=titles[state.view];document.title=`${titles[state.view]} · XM`;
-  if(state.view==='archive'){await refreshTargets();await refreshPosts();}
+  if(state.view==='archive')await refreshUsers();
+  else if(state.view==='user') {
+    state.target=match[1].toLowerCase();state.offset=0;state.mediaTab=false;$('search').value='';$('kind-filter').value='';
+    $('posts').replaceChildren();$('profile-header').replaceChildren();$('profile-top-name').textContent='@'+state.target;$('profile-top-count').textContent='正在读取档案…';
+    await refreshUsers();if(request!==state.navRequest)return;renderProfile();syncTabs();await refreshPosts();
+  }
   else if(state.view==='monitors')await refreshMonitors();
   else if(state.view==='activity')await refreshRuns();
   else if(state.view==='settings')await refreshSettings();
 }
 window.addEventListener('hashchange',()=>navigate().catch(err=>toast(err.message,true)));
-async function refreshTargets() {
-  const names=await api('/targets');const select=$('target-filter'),chosen=select.value;
-  select.replaceChildren(new Option('全部账号',''));for(const n of names)select.add(new Option('@'+n,n));if(names.includes(chosen))select.value=chosen;
+async function refreshUsers(){
+ const users=await api('/users');if(!state.authenticated)return;state.users=users;renderUsers();
 }
+function renderUsers(){
+ const q=$('user-search').value.trim().toLowerCase();const users=state.users.filter(u=>(u.username+' '+u.name).toLowerCase().includes(q));
+ $('user-count').textContent=users.length+' 位用户';$('user-empty').hidden=users.length>0;
+ $('user-empty').querySelector('h3').textContent=q?'没有找到匹配的用户':'还没有用户档案';
+ $('user-list').innerHTML=users.map(u=>`<a class="user-card" href="${userURL(u.username)}"><div class="user-card-top">${avatar(u.username,'user-avatar')}<span class="badge ${u.enabled?'':'neutral'}">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div><h3>${escape(u.name)}${u.protected?icon('lock'):''}</h3><div class="user-handle">@${escape(u.username)}</div><p class="user-bio">${escape(u.bio||'关注的动态，保存在自己的空间里。')}</p><div class="user-card-stats"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个媒体</span></div><footer><span>${u.last_saved?'最近归档 '+escape(date(u.last_saved,true)):'等待第一次采集'}</span><span class="user-open">查看动态 →</span></footer></a>`).join('');
+}
+$('user-search').addEventListener('input',renderUsers);
+function renderProfile(){
+ const u=state.users.find(u=>u.username===state.target)||{username:state.target,name:state.target,posts:0,media:0};
+ $('profile-top-name').textContent=u.name;$('profile-top-count').textContent=number(u.posts)+' 条已归档推文';document.title=u.name+' (@'+u.username+') · XM';
+ $('profile-header').innerHTML=`<div class="profile-cover"><span>PERSONAL ARCHIVE</span>${icon('lock')}</div><div class="profile-identity"><div class="profile-actions">${avatar(u.username,'profile-avatar')}<a href="https://x.com/${encodeURIComponent(u.username)}" class="button secondary" target="_blank" rel="noopener noreferrer">在 X 查看 ${icon('arrow')}</a></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><div class="user-handle">@${escape(u.username)}</div><p class="profile-bio">${escape(u.bio||'这里保存着这个用户的动态，以及动态中引用的内容。')}</p><div class="profile-meta">${icon('clock')} ${u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</div><div class="profile-numbers"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个本地媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'本地档案'}</span></div></div>`;
+ $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${number(u.posts)}</dd></div><div><dt>本地媒体（含引用）</dt><dd>${number(u.media)}</dd></div><div><dt>轮询周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/60)+' 分钟':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
+}
+function syncTabs(){for(const [id,active] of [['tab-posts',!state.mediaTab],['tab-media',state.mediaTab]]){$(id).classList.toggle('selected',active);$(id).setAttribute('aria-selected',String(active));}}
+for(const [id,media] of [['tab-posts',false],['tab-media',true]])$(id).addEventListener('click',()=>action(null,async()=>{state.mediaTab=media;state.offset=0;$('kind-filter').value='';syncTabs();await refreshPosts();}));
 function mediaHTML(post) {
   const done=post.media.filter(m=>m.status==='done');let html='';
   if(done.length){html+=`<div class="media-grid ${done.length===1?'single':''}">`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`;if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=`<video controls playsinline preload="metadata" src="${escape(src)}" aria-label="@${escape(post.username)} 的归档视频"></video>`;}html+='</div>';}
   for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='failed'?'下载失败':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
   return html;
 }
+function quoteHTML(p,depth=0){
+ if(!p.quote_id)return '';
+ if(!p.quote||depth>=4)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
+ const q=p.quote;
+ return `<div class="quote-card"><div class="quote-content"><div class="quote-author">${avatar(q.username,'tiny-quote')}<strong>${escape(q.name||q.username)}</strong><span>@${escape(q.username)}</span><span>· ${escape(date(q.created_at,true))}</span></div><div class="post-text quote-text">${escape(q.text)}</div>${q.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div><a class="quote-source" href="https://x.com/i/status/${encodeURIComponent(q.id)}" target="_blank" rel="noopener noreferrer">已归档的引用推文 ${icon('arrow')}</a></div>`;
+}
 async function refreshPosts() {
-  const id=++state.postRequest;const q=new URLSearchParams({q:$('search').value,target:$('target-filter').value,kind:$('kind-filter').value,offset:String(state.offset)});
-  const r=await api('/posts?'+q);if(id!==state.postRequest||!state.authenticated)return;
+  if(state.view!=='user')return;
+  const id=++state.postRequest;const q=new URLSearchParams({q:$('search').value,target:state.target,kind:$('kind-filter').value||(state.mediaTab?'media':''),offset:String(state.offset)});
+  const r=await api('/posts?'+q);if(id!==state.postRequest||!state.authenticated||state.view!=='user')return;
   state.total=r.total;$('result-count').textContent=number(r.total);
-  $('posts').innerHTML=r.items.map(p=>{
-    const alt=[...p.username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;
-    return `<article class="post"><div class="post-body"><div class="post-header"><span class="avatar alt${alt}">${escape(p.username.slice(0,2).toUpperCase())}</span><div><div class="post-author">${escape(p.username)}</div><div class="post-userline">@${escape(p.username)} · ${escape(date(p.created_at,true))}</div></div>${p.protected?`<span class="badge neutral">${icon('lock')}锁推</span>`:p.repost_id?'<span class="badge neutral">转推</span>':p.reply_to?'<span class="badge neutral">回复</span>':''}</div><div class="post-text">${escape(p.text)}</div>${p.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}</div><footer class="post-footer"><span>${icon('clock')}${escape(date(p.saved_at,true))} 归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.id)}" target="_blank" rel="noopener noreferrer">查看原推文${icon('arrow')}</a></footer></article>`;
-  }).join('');
+  $('posts').innerHTML=r.items.map(p=>`<article class="post"><div class="post-body"><div class="post-header">${avatar(p.username)}<div class="timeline-author"><strong>${escape(p.name||p.username)}</strong><span>@${escape(p.username)} · ${escape(date(p.created_at,true))}</span></div>${p.repost_id?'<span class="badge neutral">转推</span>':p.reply_to?'<span class="badge neutral">回复</span>':''}</div><div class="post-main"><div class="post-text">${escape(p.text)}</div>${p.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div><footer class="post-footer"><span>${icon('clock')}${escape(date(p.saved_at,true))} 归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.id)}" target="_blank" rel="noopener noreferrer">查看原推文${icon('arrow')}</a></footer></article>`).join('');
   $('post-empty').hidden=r.items.length>0;
-  const filtered=$('search').value||$('target-filter').value||$('kind-filter').value;
-  $('post-empty').querySelector('h3').textContent=filtered?'没有找到匹配的动态':'你的档案，从第一次关注开始';
-  $('empty-text').textContent=filtered?'试试其他关键词、账号或媒体类型。':'导入 Cookie，添加想要监控的账号。保存下来的推文、图片和视频将出现在这里。';
-  $('post-empty').querySelector('button').hidden=!!filtered;
+  const filtered=$('search').value||$('kind-filter').value||state.mediaTab;
+  $('post-empty').querySelector('h3').textContent=filtered?'没有找到匹配的动态':'还没有保存的推文';
+  $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':'采集完成后，该用户的推文及引用内容会显示在这里。';
   $('page-label').textContent=r.total?`第 ${state.offset+1}–${Math.min(state.offset+r.limit,r.total)} 条，共 ${number(r.total)} 条`:'暂无归档内容';
   $('prev-page').disabled=state.offset===0;$('next-page').disabled=state.offset+r.limit>=r.total;
 }
@@ -94,8 +121,9 @@ $('posts').addEventListener('click',event=>{
 });
 $('image-dialog').addEventListener('close',()=>$('large-image').removeAttribute('src'));
 $('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{state.offset=0;refreshPosts().catch(e=>toast(e.message,true));},300);});
-for(const id of ['target-filter','kind-filter'])$(id).addEventListener('change',()=>{state.offset=0;refreshPosts().catch(e=>toast(e.message,true));});
-$('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),async()=>{await refreshOverview();await refreshTargets();await refreshPosts();}));
+for(const id of ['kind-filter'])$(id).addEventListener('change',()=>{state.offset=0;refreshPosts().catch(e=>toast(e.message,true));});
+$('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),async()=>{await refreshOverview();await refreshUsers();}));
+$('refresh-user').addEventListener('click',()=>action($('refresh-user'),async()=>{await refreshOverview();await refreshUsers();renderProfile();await refreshPosts();}));
 for(const [id,delta] of [['prev-page',-24],['next-page',24]])$(id).addEventListener('click',()=>action(null,async()=>{state.offset=Math.max(0,state.offset+delta);await refreshPosts();}));
 
 function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested)return ['等待执行','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_error)return ['等待重试','error'];return ['监控中','']; }

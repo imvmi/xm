@@ -18,13 +18,14 @@ func TestBrowserCollectionOffline(t *testing.T) {
 		t.Skip("set XM_BROWSER_TEST=1 to run real-Chrome fixture integration")
 	}
 	for _, test := range []struct {
-		name, body string
-		wantErr    bool
+		name, body, operation string
+		wantErr               bool
 	}{
-		{"authorized", string(fixture(t, "timeline.json")), false},
-		{"protected_denied", `{"errors":[{"code":179}]}`, true},
-		{"expired_cookie", `{"errors":[{"code":89}]}`, true},
-		{"rate_limited", `{"errors":[{"code":88}]}`, true},
+		{"authorized", string(fixture(t, "timeline.json")), "UserTweets", false},
+		{"originals_timeline", string(fixture(t, "timeline.json")), "UserOriginalsTimeline", false},
+		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true},
+		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true},
+		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -53,11 +54,11 @@ func TestBrowserCollectionOffline(t *testing.T) {
 						case strings.Contains(e.Request.URL, "/UserByScreenName"):
 							ct = "application/json"
 							body = `{"data":{"user":{"result":{"rest_id":"42","core":{"screen_name":"alice"},"privacy":{"protected":true}}}}}`
-						case strings.Contains(e.Request.URL, "/UserTweets"):
+						case strings.HasSuffix(e.Request.URL, "/"+test.operation):
 							ct = "application/json"
 							body = test.body
 						case strings.HasSuffix(e.Request.URL, "/alice"):
-							body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{await fetch('/i/api/graphql/fixture/UserByScreenName');await new Promise(r=>setTimeout(r,300));await fetch('/i/api/graphql/fixture/UserTweets');})()</script></body></html>`
+							body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{await fetch('/i/api/graphql/fixture/UserByScreenName');await new Promise(r=>setTimeout(r,300));await fetch('/i/api/graphql/fixture/` + test.operation + `');})()</script></body></html>`
 						}
 						_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
 							_, err := cdp.Call(c, target, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: 200, ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: ct}}, Body: []byte(body)})

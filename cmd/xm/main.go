@@ -176,6 +176,11 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer s.Close()
+	if command == "serve" || command == "collect" || command == "retry-media" {
+		if err := s.BackfillQuotes(); err != nil {
+			return err
+		}
+	}
 	switch command {
 	case "serve":
 		return web.Serve(ctx, *configPath, cfg, s, *listen, *secure)

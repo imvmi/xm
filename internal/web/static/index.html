@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/app.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><script defer src="/assets/app.js"></script></head>
 <body>
 <svg class="svg-defs" aria-hidden="true"><defs>
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
@@ -33,11 +33,25 @@
       <section id="view-archive" class="view">
         <div class="page-heading"><div><div class="eyebrow">THE COLLECTION</div><h1>推文归档<span class="title-dot">.</span></h1><p>关注的动态，在这里慢慢积累。</p></div><div class="heading-actions"><button id="refresh-archive" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>
         <div class="stats"><div><span>已保存推文 <svg><use href="#i-grid"/></svg></span><strong id="stat-posts">—</strong><small><span id="stat-today">0</span> 条今日归档 · UTC</small></div><div><span>监控账号 <svg><use href="#i-users"/></svg></span><strong id="stat-monitors">—</strong><small><span id="stat-active">0</span> 个正在监控</small></div><div><span>本地媒体 <svg><use href="#i-image"/></svg></span><strong id="stat-media">—</strong><small>图片、视频与动图</small></div><div><span>媒体占用 <svg><use href="#i-lock"/></svg></span><strong id="stat-bytes">—</strong><small>保存在你的本地磁盘</small></div></div>
-        <div class="collection-head"><div><h2>全部动态 <span id="result-count" class="count-label">0</span></h2></div><div class="filters"><label class="search-box"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索推文内容或用户名" aria-label="搜索推文"></label><select id="target-filter" aria-label="筛选账号"><option value="">全部账号</option></select><select id="kind-filter" aria-label="筛选媒体"><option value="">全部类型</option><option value="photo">含图片</option><option value="video">含视频</option><option value="text">纯文字</option></select></div></div>
-        <div id="posts" class="posts-grid" aria-live="polite"></div>
-        <div id="post-empty" class="empty-state" hidden><div class="empty-icon"><svg><use href="#i-grid"/></svg></div><h3>你的档案，从第一次关注开始</h3><p id="empty-text">导入 Cookie，添加想要监控的账号。<br>保存下来的推文、图片和视频将出现在这里。</p><button class="button primary" data-action="add">添加第一个监控账号</button></div>
-        <div class="pagination"><span id="page-label"></span><div><button id="prev-page" class="button secondary" disabled>← 上一页</button><button id="next-page" class="button secondary" disabled>下一页 →</button></div></div>
-        <div class="page-foot"><span><span class="status-dot"></span> 归档内容仅管理员可见</span><span>每一条动态，都有迹可循。</span></div>
+        <div class="collection-head"><div><h2>全部动态 <span id="user-count" class="count-label">0 位用户</span></h2><p class="collection-caption">选择一个用户，进入他的动态档案。</p></div><label class="search-box"><svg><use href="#i-search"/></svg><input id="user-search" type="search" placeholder="搜索用户名称或用户名" aria-label="搜索归档用户"></label></div>
+        <div id="user-list" class="user-list" aria-live="polite"></div>
+        <div id="user-empty" class="empty-state" hidden><div class="empty-icon"><svg><use href="#i-users"/></svg></div><h3>还没有用户档案</h3><p>添加一个监控账号，从第一条动态开始积累。</p><button class="button primary" data-action="add">添加监控</button></div>
+        <div class="page-foot"><span><span class="status-dot"></span> 归档内容仅管理员可见</span><span>正文、引用与媒体，一起留下。</span></div>
+      </section>
+      <section id="view-user" class="view" hidden>
+        <div class="profile-layout">
+          <div class="profile-feed">
+            <header class="profile-top"><a href="#archive" class="back-link" aria-label="返回用户列表">←</a><div><h1 id="profile-top-name"></h1><span id="profile-top-count" class="muted"></span></div><button id="refresh-user" class="icon-button" aria-label="刷新用户推文"><svg><use href="#i-refresh"/></svg></button></header>
+            <div id="profile-header"></div>
+            <div class="timeline-tabs" role="tablist" aria-label="用户动态类型"><button id="tab-posts" role="tab" aria-selected="true" class="selected">推文</button><button id="tab-media" role="tab" aria-selected="false">媒体</button></div>
+            <div class="timeline-filters"><label class="search-box"><svg><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索推文及引用内容" aria-label="搜索推文"></label><select id="kind-filter" aria-label="筛选媒体"><option value="">全部类型</option><option value="photo">含图片</option><option value="video">含视频</option><option value="text">纯文字</option></select></div>
+            <div class="timeline-result"><span id="result-count">0</span> 条动态</div>
+            <div id="posts" class="timeline-posts" aria-live="polite"></div>
+            <div id="post-empty" class="empty-state" hidden><h3>还没有保存的推文</h3><p id="empty-text">采集完成后，推文会显示在这里。</p></div>
+            <div class="pagination"><span id="page-label"></span><div><button id="prev-page" class="button secondary" disabled>← 上一页</button><button id="next-page" class="button secondary" disabled>下一页 →</button></div></div>
+          </div>
+          <aside class="profile-aside"><div class="profile-info"><span class="eyebrow">YOUR PRIVATE COPY</span><h2>这个用户的档案</h2><div id="profile-summary"></div><p>引用内容与原推文一起保存。图片和视频均从本地归档读取。</p><a href="#monitors" class="button secondary wide">管理监控账号</a></div><div class="profile-tip"><svg><use href="#i-lock"/></svg>只有登录管理员才能查看这些内容。</div></aside>
+        </div>
       </section>
       <section id="view-monitors" class="view" hidden>
         <div class="page-heading"><div><div class="eyebrow">STAY IN THE LOOP</div><h1>监控账号<span class="title-dot">.</span></h1><p>为每一个关注的声音，安排自己的节奏。</p></div><div class="heading-actions"><button id="pause-all" class="button secondary">暂停自动轮询</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>

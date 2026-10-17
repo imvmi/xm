@@ -85,16 +85,22 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, p := range posts {
+	seen := map[string]bool{}
+	var save func(Post, int) error
+	save = func(p Post, depth int) error {
+		if seen[p.ID] || depth > MaxQuoteDepth {
+			return nil
+		}
+		seen[p.ID] = true
+		if p.Quote != nil && p.Quote.ID != p.ID {
+			p.QuoteID = p.Quote.ID
+		}
 		t := now()
 		_, err = tx.Exec(`INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
  author_id=excluded.author_id,username=excluded.username,text=excluded.text,created_at=excluded.created_at,
  url=excluded.url,reply_to=excluded.reply_to,quote_id=excluded.quote_id,repost_id=excluded.repost_id,
  raw_json=excluded.raw_json,last_seen=excluded.last_seen`, p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, string(p.Raw), t, t)
 		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec("INSERT OR IGNORE INTO target_posts VALUES(?,?)", target, p.ID); err != nil {
 			return err
 		}
 		for _, a := range p.Assets {
@@ -104,8 +110,73 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 				return err
 			}
 		}
+		if p.Quote != nil {
+			return save(*p.Quote, depth+1)
+		}
+		return nil
+	}
+	for _, p := range posts {
+		if err := save(p, 0); err != nil {
+			return err
+		}
+		if target != "" {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO target_posts VALUES(?,?)", target, p.ID); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
+}
+
+// BackfillQuotes recovers embedded quotes from existing raw JSON without fetching
+// extra pages. Batches are restart-safe and do not add quote authors as targets.
+func (s *Store) BackfillQuotes() error {
+	if _, err := s.DB.Exec("CREATE TABLE IF NOT EXISTS archive_migrations (name TEXT PRIMARY KEY)"); err != nil {
+		return err
+	}
+	var done int
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM archive_migrations WHERE name='quotes_v1'").Scan(&done); err != nil {
+		return err
+	}
+	if done != 0 {
+		return nil
+	}
+	after := ""
+	for {
+		rows, err := s.DB.Query("SELECT id,raw_json FROM posts WHERE id>? AND instr(raw_json,'quoted_status_result')>0 ORDER BY id LIMIT 100", after)
+		if err != nil {
+			return err
+		}
+		var batch []Post
+		count := 0
+		for rows.Next() {
+			var raw string
+			if err := rows.Scan(&after, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			count++
+			var v object
+			if json.Unmarshal([]byte(raw), &v) == nil {
+				if p, err := parsePost(v); err == nil && p.Quote != nil {
+					batch = append(batch, p)
+				}
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if err := s.SavePosts("", batch); err != nil {
+			return err
+		}
+		if count < 100 {
+			break
+		}
+	}
+	_, err := s.DB.Exec("INSERT OR IGNORE INTO archive_migrations VALUES('quotes_v1')")
+	return err
 }
 
 type MediaJob struct {
@@ -121,7 +192,10 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 		query += " AND status != 'done'"
 	}
 	if target != "" {
-		query += " AND post_id IN (SELECT post_id FROM target_posts WHERE target=?)"
+		query += ` AND post_id IN (WITH RECURSIVE wanted(id) AS (
+ SELECT post_id FROM target_posts WHERE target=?
+ UNION SELECT p.quote_id FROM posts p JOIN wanted w ON p.id=w.id WHERE p.quote_id<>''
+ ) SELECT id FROM wanted)`
 		args = append(args, target)
 	}
 	query += " ORDER BY post_id,media_id"

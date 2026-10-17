@@ -59,7 +59,7 @@ func operation(raw string) string {
 	parts := strings.Split(u.Path, "/")
 	s := parts[len(parts)-1]
 	switch s {
-	case "UserByScreenName", "UserTweets", "UserTweetsAndReplies":
+	case "UserByScreenName", "UserTweets", "UserTweetsAndReplies", "UserOriginalsTimeline":
 		return s
 	}
 	return ""

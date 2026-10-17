@@ -28,6 +28,7 @@ type Post struct {
 	QuoteID   string          `json:"quote_id,omitempty"`
 	RepostID  string          `json:"repost_id,omitempty"`
 	Assets    []Asset         `json:"assets"`
+	Quote     *Post           `json:"quote,omitempty"`
 	Raw       json.RawMessage `json:"raw"`
 }
 
@@ -171,7 +172,14 @@ func ParsePage(data []byte, operation string) (Page, error) {
 	return page, nil
 }
 
-func parsePost(v any) (Post, error) {
+const MaxQuoteDepth = 4
+
+func parsePost(v any) (Post, error) { return parsePostDepth(v, 0) }
+
+func parsePostDepth(v any, depth int) (Post, error) {
+	if wrapped := at(v, "tweet"); wrapped != nil {
+		v = wrapped
+	}
 	var p Post
 	p.ID = first(str(at(v, "rest_id")), str(at(v, "legacy", "id_str")))
 	legacy := at(v, "legacy")
@@ -190,12 +198,15 @@ func parsePost(v any) (Post, error) {
 	p.QuoteID = str(at(legacy, "quoted_status_id_str"))
 	p.URL = "https://x.com/i/status/" + p.ID
 	mediaLegacy := legacy
+	quoteSource := v
 	if rt := at(legacy, "retweeted_status_result", "result"); rt != nil {
 		if wrapped := at(rt, "tweet"); wrapped != nil {
 			rt = wrapped
 		}
 		p.RepostID = str(at(rt, "rest_id"))
 		mediaLegacy = at(rt, "legacy")
+		quoteSource = rt
+		p.QuoteID = str(at(mediaLegacy, "quoted_status_id_str"))
 		if full := first(str(at(rt, "note_tweet", "note_tweet_results", "result", "text")), str(at(mediaLegacy, "full_text"))); full != "" {
 			p.Text = "RT: " + html.UnescapeString(full)
 		}
@@ -233,6 +244,27 @@ func parsePost(v any) (Post, error) {
 		}
 		p.Assets = append(p.Assets, a)
 	}
+	if quoted := at(quoteSource, "quoted_status_result", "result"); quoted != nil {
+		if wrapped := at(quoted, "tweet"); wrapped != nil {
+			quoted = wrapped
+		}
+		p.QuoteID = first(p.QuoteID, str(at(quoted, "rest_id")), str(at(quoted, "legacy", "id_str")))
+		if depth < MaxQuoteDepth && str(at(quoted, "__typename")) != "TweetUnavailable" && str(at(quoted, "__typename")) != "TweetTombstone" {
+			if q, err := parsePostDepth(quoted, depth+1); err == nil && q.ID != p.ID {
+				p.QuoteID, p.Quote = q.ID, &q
+			}
+		}
+	}
 	p.Raw, _ = json.Marshal(v)
 	return p, nil
+}
+
+// AuthorDetails reads only the author metadata already included in a saved post.
+func AuthorDetails(raw []byte) (name, bio string) {
+	var v object
+	if json.Unmarshal(raw, &v) != nil {
+		return "", ""
+	}
+	u := at(v, "core", "user_results", "result")
+	return first(str(at(u, "core", "name")), str(at(u, "legacy", "name"))), str(at(u, "legacy", "description"))
 }

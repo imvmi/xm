@@ -1,0 +1,111 @@
+{
+  "__typename": "Tweet",
+  "rest_id": "103",
+  "core": {
+    "user_results": {
+      "result": {
+        "rest_id": "author-alice",
+        "core": {
+          "screen_name": "alice",
+          "name": "Alice"
+        },
+        "legacy": {
+          "description": "记录每一个值得留下的瞬间。"
+        }
+      }
+    }
+  },
+  "legacy": {
+    "full_text": "把这段分享也一起存下来。",
+    "created_at": "Sat Oct 17 09:00:00 +0000 2026"
+  },
+  "quoted_status_result": {
+    "result": {
+      "__typename": "Tweet",
+      "rest_id": "102",
+      "core": {
+        "user_results": {
+          "result": {
+            "rest_id": "author-bob",
+            "core": {
+              "screen_name": "bob",
+              "name": "Bob"
+            },
+            "legacy": {
+              "description": "记录每一个值得留下的瞬间。"
+            }
+          }
+        }
+      },
+      "legacy": {
+        "full_text": "引用里的一张图片，以及一个更早的故事。",
+        "created_at": "Sat Oct 17 09:00:00 +0000 2026",
+        "extended_entities": {
+          "media": [
+            {
+              "id_str": "photo1",
+              "type": "photo",
+              "media_url_https": "https://pbs.twimg.com/media/demo.jpg"
+            }
+          ]
+        }
+      },
+      "note_tweet": {
+        "note_tweet_results": {
+          "result": {
+            "text": "引用全文 &amp; image-search-needle"
+          }
+        }
+      },
+      "quoted_status_result": {
+        "result": {
+          "__typename": "TweetWithVisibilityResults",
+          "tweet": {
+            "__typename": "Tweet",
+            "rest_id": "101",
+            "core": {
+              "user_results": {
+                "result": {
+                  "rest_id": "author-carol",
+                  "core": {
+                    "screen_name": "carol",
+                    "name": "Carol"
+                  },
+                  "legacy": {
+                    "description": "记录每一个值得留下的瞬间。"
+                  }
+                }
+              }
+            },
+            "legacy": {
+              "full_text": "更早的引用文字",
+              "created_at": "Sat Oct 17 09:00:00 +0000 2026",
+              "extended_entities": {
+                "media": [
+                  {
+                    "id_str": "video1",
+                    "type": "video",
+                    "video_info": {
+                      "variants": [
+                        {
+                          "content_type": "video/mp4",
+                          "bitrate": 100,
+                          "url": "https://video.twimg.com/low.mp4"
+                        },
+                        {
+                          "content_type": "video/mp4",
+                          "bitrate": 900,
+                          "url": "https://video.twimg.com/high.mp4"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

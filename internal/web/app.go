@@ -143,6 +143,14 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("GET /api/posts", a.posts)
 	mux.HandleFunc("GET /api/targets", a.targets)
+	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
+		users, err := archiveUsers(a.store.DB)
+		if err != nil {
+			problem(w, 500, "读取用户归档失败")
+			return
+		}
+		respond(w, 200, users)
+	})
 	mux.HandleFunc("GET /api/runs", func(w http.ResponseWriter, r *http.Request) {
 		v, err := recentRuns(a.store.DB)
 		if err != nil {
