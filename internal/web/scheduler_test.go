@@ -99,8 +99,9 @@ func TestSchedulerLoadsIncrementalBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, identity archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
-		if !identity.KnownPostIDs["100"] {
-			t.Fatal("scheduler did not load known post boundary")
+		known, err := identity.LookupKnownPosts([]string{"100", "101"})
+		if err != nil || !known["100"] || known["101"] {
+			t.Fatal("scheduler did not look up known post boundary", known, err)
 		}
 		return archive.Collection{Stop: "known_boundary_reached"}, nil
 	}

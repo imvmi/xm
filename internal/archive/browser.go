@@ -507,6 +507,19 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				pages = append(pages, page)
 			}
 			for _, page := range pages {
+				knownPosts := identity.KnownPostIDs
+				if identity.LookupKnownPosts != nil {
+					ids := make([]string, 0, len(page.Posts))
+					for _, p := range page.Posts {
+						if p.AuthorID == verifiedID && !seen[p.ID] {
+							ids = append(ids, p.ID)
+						}
+					}
+					knownPosts, err = identity.LookupKnownPosts(ids)
+					if err != nil {
+						return result, err
+					}
+				}
 				filtered := []Post{}
 				for _, p := range page.Posts {
 					// Author ID is authoritative. Historical posts may still
@@ -514,7 +527,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					if p.AuthorID != verifiedID || seen[p.ID] {
 						continue
 					}
-					known := identity.KnownPostIDs[p.ID]
+					known := knownPosts[p.ID]
 					if identity.Catchup {
 						anchor := identity.CatchupPostAnchor
 						if replies {
@@ -523,8 +536,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						if anchor != "" && p.ID == anchor {
 							boundaryReached = true
 						}
-					} else if len(identity.KnownPostIDs) > 0 {
-						if identity.KnownPostIDs[p.ID] {
+					} else {
+						if known {
 							knownStreak++
 						} else {
 							knownStreak = 0
@@ -570,7 +583,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			// A run still starts at the top so new posts cannot be skipped. Once
 			// eight consecutive timeline entries are already archived, older pages
 			// are outside the incremental window and need not be fetched again.
-			if len(identity.KnownPostIDs) > 0 && knownStreak >= knownBoundaryPosts {
+			if !identity.Catchup && knownStreak >= knownBoundaryPosts {
 				if replies {
 					if err = startOriginalTimeline(); err != nil {
 						return result, errors.New("回复增量边界已到达，但无法打开普通推文时间线")

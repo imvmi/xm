@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,14 +23,20 @@ func TestDatabaseConfigAndTLS(t *testing.T) {
 		t.Fatal(e)
 	}
 	c.TLSMode = "disabled"
-	if _, e = mysqlConfig(c); e == nil {
-		t.Fatal("unencrypted remote connection accepted")
+	for _, host := range []string{"db.example.com", "192.0.2.1", "2001:db8::1", "localhost", "127.0.0.1", "::1"} {
+		c.Host = host
+		mc, e = mysqlConfig(c)
+		if e != nil || mc.TLS != nil || mc.Addr != net.JoinHostPort(host, "3306") {
+			t.Fatalf("explicitly disabled TLS rejected for %s: %v", host, e)
+		}
 	}
-	c.Host = "127.0.0.1"
-	mc, e = mysqlConfig(c)
-	if e != nil || mc.TLS != nil {
-		t.Fatal(e)
+	for _, mode := range []string{"preferred", "skip_verify", "invalid"} {
+		c.TLSMode = mode
+		if _, e = mysqlConfig(c); e == nil {
+			t.Fatalf("invalid TLS mode %q accepted", mode)
+		}
 	}
+	c.TLSMode = "disabled"
 	c.PasswordEnv = "XM_TEST_MISSING_PASSWORD"
 	os.Unsetenv(c.PasswordEnv)
 	if _, e = mysqlConfig(c); e == nil {

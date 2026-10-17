@@ -86,10 +86,23 @@ func (s *Store) StartRun(target string) (int64, error) {
 	return r.LastInsertId()
 }
 func (s *Store) EndRun(id int64, status string, count int, message string) error {
-	if _, err := s.DB.Exec("UPDATE runs SET finished_at=?,status=?,posts_seen=?,message=? WHERE id=?", now(), status, count, message, id); err != nil {
+	tx, err := s.DB.Begin()
+	if err != nil {
 		return err
 	}
-	_, err := s.DB.Exec("DELETE FROM runs WHERE id < (SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM runs ORDER BY id DESC LIMIT 1000) recent)")
+	defer tx.Rollback()
+	if err = EndRunTx(tx, id, status, count, message); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// EndRunTx allows the scheduler to commit the run result and checkpoint together.
+func EndRunTx(tx *database.Tx, id int64, status string, count int, message string) error {
+	if _, err := tx.Exec("UPDATE runs SET finished_at=?,status=?,posts_seen=?,message=? WHERE id=?", now(), status, count, message, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec("DELETE FROM runs WHERE status<>'running' AND id < (SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM runs ORDER BY id DESC LIMIT 1000) recent)")
 	return err
 }
 func (s *Store) SaveProfile(p Profile) error {

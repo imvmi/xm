@@ -1,9 +1,50 @@
 package archive
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 )
+
+func TestKnownTargetPostIDsChecksFullArchiveInChunks(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	posts := make([]Post, 5001)
+	ids := make([]string, len(posts))
+	for i := range posts {
+		ids[i] = fmt.Sprint(i + 1)
+		posts[i] = Post{ID: ids[i], AuthorID: "42", Username: "alice"}
+	}
+	if err = s.SavePosts("alice", posts); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SavePosts("bob", []Post{{ID: "9999", AuthorID: "99", Username: "bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	known, err := s.KnownTargetPostIDs(context.Background(), "alice", append(ids, "9999", "missing", "1"))
+	if err != nil || len(known) != len(posts) || !known["1"] || !known["5001"] || known["9999"] || known["missing"] {
+		t.Fatalf("full archive lookup: count=%d err=%v", len(known), err)
+	}
+	known, err = s.KnownTargetPostIDs(context.Background(), "alice", nil)
+	if err != nil || len(known) != 0 {
+		t.Fatal(known, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = s.KnownTargetPostIDs(ctx, "alice", ids[:1]); err == nil {
+		t.Fatal("cancelled lookup succeeded")
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.KnownTargetPostIDs(context.Background(), "alice", ids[:1]); err == nil {
+		t.Fatal("failed lookup silently treated archived posts as new")
+	}
+}
 
 func TestTargetIdentityRenameAndTakeover(t *testing.T) {
 	s, err := OpenStore(t.TempDir())

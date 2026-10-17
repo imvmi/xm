@@ -249,12 +249,18 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		return "", err
 	}
 	identity, collectErr := a.store.TargetIdentity(m.Username)
-	if collectErr == nil {
-		identity.KnownPostIDs, collectErr = a.store.KnownTargetPosts(m.Username, monitorCollectionLimit*4)
+	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
+		return a.store.KnownTargetPostIDs(jobCtx, m.Username, ids)
 	}
 	postAnchor, replyAnchor := m.CatchupPost, m.CatchupReply
 	if collectErr == nil && !m.Catchup {
 		postAnchor, replyAnchor, collectErr = a.store.TargetAnchors(m.Username)
+		if collectErr == nil {
+			// Commit the pre-run boundary before the collector can save any posts.
+			// Keep this invocation's normal incremental mode; after a crash the
+			// next invocation resumes against these stable anchors instead.
+			_, collectErr = a.store.DB.Exec("UPDATE monitors SET catchup=1,catchup_post_anchor=?,catchup_reply_anchor=? WHERE username=?", postAnchor, replyAnchor, m.Username)
+		}
 	}
 	identity.Catchup = m.Catchup
 	identity.CatchupPostAnchor = postAnchor
@@ -308,9 +314,6 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		message = "任务已停止；已入库内容保留"
 		failure = jobCtx.Err()
 	}
-	if err = a.store.EndRun(id, status, result.Posts, message); err != nil {
-		return "", err
-	}
 	failures := 0
 	if failure != nil {
 		failures = m.Failures + 1
@@ -347,9 +350,20 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	} else {
 		postAnchor, replyAnchor, catchupScrolls = "", "", 0
 	}
-	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=?,catchup=?,catchup_post_anchor=?,catchup_reply_anchor=?,catchup_scroll_budget=? WHERE username=?`, ended, complete && jobCtx.Err() == nil, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), catchup, postAnchor, replyAnchor, catchupScrolls, m.Username)
+	tx, err := a.store.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if err = archive.EndRunTx(tx, id, status, result.Posts, message); err != nil {
+		return "", err
+	}
+	_, err = tx.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=?,catchup=?,catchup_post_anchor=?,catchup_reply_anchor=?,catchup_scroll_budget=? WHERE username=?`, ended, complete && jobCtx.Err() == nil, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), catchup, postAnchor, replyAnchor, catchupScrolls, m.Username)
 
 	if err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
 		return "", err
 	}
 	kind := ""

@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,14 +15,46 @@ var userIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 
 // TargetIdentity keeps the archive key stable when the public handle changes.
 type TargetIdentity struct {
-	UserID              string          `json:"user_id"`
-	CurrentUsername     string          `json:"current_username"`
-	ReferencePostID     string          `json:"-"`
-	KnownPostIDs        map[string]bool `json:"-"`
-	Catchup             bool            `json:"-"`
-	CatchupPostAnchor   string          `json:"-"`
-	CatchupReplyAnchor  string          `json:"-"`
-	CatchupScrollBudget int             `json:"-"`
+	UserID              string                                  `json:"user_id"`
+	CurrentUsername     string                                  `json:"current_username"`
+	ReferencePostID     string                                  `json:"-"`
+	KnownPostIDs        map[string]bool                         `json:"-"`
+	LookupKnownPosts    func([]string) (map[string]bool, error) `json:"-"`
+	Catchup             bool                                    `json:"-"`
+	CatchupPostAnchor   string                                  `json:"-"`
+	CatchupReplyAnchor  string                                  `json:"-"`
+	CatchupScrollBudget int                                     `json:"-"`
+}
+
+// KnownTargetPostIDs checks only the current response's IDs against the entire
+// target archive. Query size and memory stay bounded without a historical cutoff.
+func (s *Store) KnownTargetPostIDs(ctx context.Context, target string, ids []string) (map[string]bool, error) {
+	known := make(map[string]bool)
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := []any{target}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.DB.QueryContext(ctx, "SELECT post_id FROM target_posts WHERE target=? AND post_id IN ("+strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			known[id] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return known, nil
 }
 
 // KnownTargetPosts returns a bounded set of the target's newest archived IDs.

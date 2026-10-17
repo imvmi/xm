@@ -50,13 +50,7 @@ func (c DatabaseConfig) Validate() error {
 		return errors.New("请填写有效的 MySQL host、port、name 和 user")
 	}
 	if c.TLSMode != "" && c.TLSMode != "verify_identity" && c.TLSMode != "disabled" {
-		return errors.New("MySQL TLS 模式仅支持 verify_identity（默认）或 disabled（仅本机测试）")
-	}
-	if c.TLSMode == "disabled" {
-		ip := net.ParseIP(strings.Trim(c.Host, "[]"))
-		if c.Host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return errors.New("仅允许本机回环地址禁用 MySQL TLS")
-		}
+		return errors.New("MySQL TLS 模式仅支持 verify_identity（默认）或 disabled（不加密）")
 	}
 	return nil
 }

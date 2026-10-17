@@ -44,6 +44,7 @@ func TestBrowserTallTimelinePaginationOffline(t *testing.T) {
 		{"posts_reach_limit", "UserTweets", "/alice", "limit_reached", false, false, 60, 60, 2},
 		{"posts_exhaustion", "UserTweets", "/alice", "no_new_posts_observed", false, false, 120, 100, 2},
 		{"incremental_boundary", "UserTweets", "/alice", "known_boundary_reached", false, true, 120, 50, 1},
+		{"incremental_lookup_boundary", "UserTweets", "/alice", "known_boundary_reached", false, true, 120, 50, 1},
 		{"replies_then_originals", "UserRepliesTimeline", "/alice/with_replies", "limit_reached", true, false, 80, 80, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,6 +95,19 @@ let loaded=false;addEventListener('scroll',async()=>{if(loaded||scrollY+innerHei
 				identity = TargetIdentity{UserID: "42", CurrentUsername: "alice", KnownPostIDs: map[string]bool{}}
 				for i := range 50 {
 					identity.KnownPostIDs[fmt.Sprint(1000+i)] = true
+				}
+				if tc.name == "incremental_lookup_boundary" {
+					known := identity.KnownPostIDs
+					identity.KnownPostIDs = nil
+					identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
+						found := map[string]bool{}
+						for _, id := range ids {
+							if known[id] {
+								found[id] = true
+							}
+						}
+						return found, nil
+					}
 				}
 			}
 			result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, tc.limit, tc.replies, func(p Page) error {
