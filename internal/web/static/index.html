@@ -98,6 +98,23 @@
         <div class="settings-tabs" role="tablist" aria-label="连接设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">X 账号</button><button type="button" role="tab" id="settings-tab-network" aria-controls="settings-network" aria-selected="false" data-settings-tab="network" tabindex="-1">网络代理</button><button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="false" data-settings-tab="storage" tabindex="-1">归档存储</button></div>
         <section id="settings-account" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-account">
           <div class="panel"><div class="panel-heading"><div><h2>X 登录凭据</h2><p>仅采集当前 X 账号有权访问的动态。</p></div><span id="cookie-badge" class="badge neutral">未导入</span></div><div class="panel-body"><p id="cookie-status" class="muted"></p><form id="cookie-form"><label for="cookie-content">粘贴 Cookie</label><textarea id="cookie-content" rows="5" placeholder="auth_token=…; ct0=…&#10;也支持 JSON 和 Netscape 格式" autocomplete="off" spellcheck="false"></textarea><div class="file-row"><label class="button secondary file-button">选择 Cookie 文件<input id="cookie-file" type="file" accept=".json,.txt" hidden></label><span id="cookie-file-name" class="muted">或直接粘贴到上方</span></div><p class="field-help">auth_token 与 ct0 明文保存在数据库中，导入后不会回显。锁推账号需要先获准关注。</p><button class="button primary" type="submit">保存 Cookie</button></form></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>从 API 获取 Cookie</h2><p>保存接口配置，手动获取或在登录失效时自动恢复。</p></div></div><div class="panel-body">
+            <form id="cookie-api-form" autocomplete="off"><fieldset id="cookie-api-fields" class="cookie-api-fields">
+              <label for="cookie-api-url">接口地址</label><input id="cookie-api-url" type="url" required maxlength="4096" placeholder="https://example.com/info/x" spellcheck="false">
+              <p class="field-help">使用 GET 请求。返回包含 auth_token、ct0 的 JSON 对象，或浏览器导出的 Cookie 数组。</p>
+              <label for="cookie-api-token">Bearer Token</label><input id="cookie-api-token" type="password" autocomplete="new-password" maxlength="4096" placeholder="填写 Token，无需 Bearer 前缀">
+              <p id="cookie-api-token-help" class="field-help"></p>
+              <label class="check-label"><input id="cookie-api-clear-token" type="checkbox">清除已保存的 Token（接口无需认证时）</label>
+              <label class="check-label"><input id="cookie-api-auto" type="checkbox" checked>Cookie 失效后自动重新获取并重试采集一次</label>
+              <label class="check-label"><input id="cookie-api-proxy" type="checkbox">请求接口时使用已配置的网络代理</label>
+              <p class="field-help">配置与 Token 保存在当前数据库，Token 不回显。获取失败保留原 Cookie；自动恢复再次失败后停止，等待手动更新。</p>
+              <details class="cookie-api-example"><summary>查看 JSON 返回样例</summary><pre>{
+  "auth_token": "YOUR_AUTH_TOKEN",
+  "ct0": "YOUR_CT0"
+}</pre></details>
+              <div class="form-actions"><button class="button secondary" type="submit" value="save">保存接口配置</button><button class="button primary" type="submit" value="fetch">保存并获取 Cookie</button></div>
+            </fieldset><p id="cookie-api-result" class="field-help" role="status" aria-live="polite"></p></form>
+          </div></div>
           <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#monitors">前往监控账号 →</a></p>
         </section>
         <section id="settings-network" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-network" hidden>

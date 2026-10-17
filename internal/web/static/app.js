@@ -22,7 +22,7 @@ function showLogin() {
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','monitor-rows','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
-  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';
+  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('cookie-api-token-help').textContent='';
   document.querySelectorAll('dialog[open]').forEach(d=>d.close());
   $('notification-editor').hidden=true;state.monitors=[];state.users=[];state.settings=null;state.overview=null;state.navRequest++;
 }
@@ -233,8 +233,30 @@ async function refreshSettings() {
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
   $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
   $('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;$('chrome-mode').textContent=s.chrome_headless?'Headless':'有界面模式';$('default-interval').value=s.default_interval_seconds/60;
+  await refreshCookieSource();
   await refreshStorage();
 }
+async function refreshCookieSource() {
+  const c=await api('/cookies/source');
+  $('cookie-api-url').value=c.url||'';$('cookie-api-token').value='';$('cookie-api-clear-token').checked=false;
+  $('cookie-api-auto').checked=c.url?c.auto_refresh:true;$('cookie-api-proxy').checked=!!c.use_proxy;
+  $('cookie-api-token-help').textContent=(c.token_configured?'Token 已保存，留空保留。':'无需认证时可留空。')+'修改接口地址后需重新填写 Token。';
+  $('cookie-api-result').textContent=c.last_error?'最近获取失败：'+c.last_error:c.last_fetched?'最近成功获取：'+date(c.last_fetched):'';
+}
+$('cookie-api-form').addEventListener('submit',event=>{
+  event.preventDefault();const fetchNow=event.submitter?.value==='fetch',fields=$('cookie-api-fields');
+  if(fields.disabled)return;
+  const input={url:$('cookie-api-url').value.trim(),token:$('cookie-api-token').value.trim(),clear_token:$('cookie-api-clear-token').checked,auto_refresh:$('cookie-api-auto').checked,use_proxy:$('cookie-api-proxy').checked};
+  action(null,async()=>{
+    fields.disabled=true;$('cookie-api-result').textContent=fetchNow?'正在保存配置并获取 Cookie…':'正在保存配置…';
+    try {
+      await api('/cookies/source','PUT',input);$('cookie-api-token').value='';
+      const r=fetchNow?await api('/cookies/fetch','POST'): {message:'Cookie API 配置已保存到数据库'};
+      await refreshSettings();await refreshOverview();$('cookie-api-result').textContent=r.message;toast(r.message);
+    } catch(err) { $('cookie-api-result').textContent=err.message;throw err; }
+    finally { fields.disabled=false; }
+  });
+});
 $('proxy-mode').addEventListener('change',()=>$('proxy-fields').hidden=$('proxy-mode').value==='direct');
 $('cookie-file').addEventListener('change',async()=>{const file=$('cookie-file').files[0];if(!file)return;if(file.size>1024*1024){toast('Cookie 文件不能超过 1 MiB',true);$('cookie-file').value='';return;}try{$('cookie-content').value=await file.text();$('cookie-file-name').textContent=file.name;}catch{toast('无法读取文件',true);}});
 $('cookie-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const content=$('cookie-content').value.trim();if(!content)throw new Error('请粘贴 Cookie 或选择文件');const r=await api('/cookies','POST',{content});$('cookie-content').value='';$('cookie-file').value='';$('cookie-file-name').textContent='或直接粘贴到上方';toast(r.message);await refreshSettings();await refreshOverview();});});

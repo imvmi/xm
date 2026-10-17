@@ -84,8 +84,10 @@ func CookieImported(cfg archive.Config) error {
 	if err = migrate(s); err != nil {
 		return err
 	}
-	if err = setState(s.DB, "cookie_blocked", ""); err != nil {
-		return err
+	for _, key := range []string{"cookie_blocked", "cookie_api_attempted", "cookie_api_error"} {
+		if err = setState(s.DB, key, ""); err != nil {
+			return err
+		}
 	}
 	return setState(s.DB, "cookie_imported", time.Now().UTC().Format(time.RFC3339Nano))
 }
@@ -181,6 +183,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
+	mux.HandleFunc("GET /api/cookies/source", a.cookieSource)
+	mux.HandleFunc("PUT /api/cookies/source", a.saveCookieSource)
+	mux.HandleFunc("POST /api/cookies/fetch", a.fetchCookie)
 	mux.HandleFunc("POST /api/proxy-test", a.testProxy)
 	mux.HandleFunc("POST /api/chrome-test", a.testChrome)
 	mux.HandleFunc("GET /api/monitors", func(w http.ResponseWriter, r *http.Request) {
@@ -350,15 +355,8 @@ func (a *App) importCookie(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	if err = a.store.SaveCookies(cookies); err != nil {
-		problem(w, 500, "保存 Cookie 失败")
-		return
-	}
-	if err = setState(a.store.DB, "cookie_blocked", ""); err == nil {
-		err = setState(a.store.DB, "cookie_imported", time.Now().UTC().Format(time.RFC3339Nano))
-	}
-	if err != nil {
-		problem(w, 500, "Cookie 已保存，但更新状态失败，请重新导入")
+	if err = a.saveImportedCookies(cookies, true, false); err != nil {
+		problem(w, 500, err.Error())
 		return
 	}
 	a.scheduler.Wake()

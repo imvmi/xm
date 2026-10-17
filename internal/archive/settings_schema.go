@@ -5,6 +5,7 @@ import "xm/internal/database"
 // Shared logical schema: SQLite and MySQL use the same keys and constraints.
 // Per-service credentials are columns, not one opaque configuration document.
 var settingsSchema = []string{
+	`CREATE TABLE IF NOT EXISTS cookie_sources(id INTEGER PRIMARY KEY CHECK(id=1),endpoint TEXT NOT NULL,bearer_token TEXT NOT NULL,auto_refresh BOOLEAN NOT NULL,use_proxy BOOLEAN NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS schema_meta(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admin_accounts(id INTEGER PRIMARY KEY CHECK(id=1),username VARCHAR(32) NOT NULL UNIQUE,password_salt BLOB NOT NULL CHECK(length(password_salt)=32),password_hash BLOB NOT NULL CHECK(length(password_hash)=32),configuration_locked BOOLEAN NOT NULL CHECK(configuration_locked=1),created_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS storage_profiles(id VARCHAR(64) PRIMARY KEY,name VARCHAR(100) NOT NULL,kind VARCHAR(16) NOT NULL CHECK(kind IN ('local','webdav','s3')),endpoint TEXT NOT NULL,object_prefix TEXT NOT NULL,username TEXT NOT NULL,password TEXT NOT NULL,region TEXT NOT NULL,bucket TEXT NOT NULL,access_key TEXT NOT NULL,secret_key TEXT NOT NULL,session_token TEXT NOT NULL,path_style BOOLEAN NOT NULL,use_proxy BOOLEAN NOT NULL,timeout_seconds INTEGER NOT NULL CHECK(timeout_seconds BETWEEN 5 AND 3600),position INTEGER NOT NULL,updated_at VARCHAR(64) NOT NULL)`,

@@ -211,6 +211,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		s.cancel = cancelTarget
 		s.mu.Unlock()
 		kind, runErr := s.runMonitor(targetCtx, cfg, cookies, cookieGeneration, m, collect)
+		targetCancelled := targetCtx.Err() != nil
 		cancelTarget()
 		s.mu.Lock()
 		s.current = ""
@@ -220,6 +221,11 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		log.Printf("collection finish target=%s kind=%s duration=%s", m.Username, kind, time.Since(startedAt).Round(time.Millisecond))
 		if runErr != nil {
 			return true, runErr
+		}
+		if kind == "auth" && !targetCancelled {
+			if err = a.recoverCookie(batchCtx, cookieGeneration, m.Username); err != nil {
+				return true, err
+			}
 		}
 		if kind == "auth" || kind == "auth_replaced" || kind == "rate" {
 			globalStop = true
@@ -320,6 +326,11 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
+	if collectErr == nil && jobCtx.Err() == nil && state(a.store.DB, "cookie_imported") == cookieGeneration {
+		if err = setState(a.store.DB, "cookie_api_attempted", ""); err != nil {
+			return "", err
+		}
+	}
 	if archive.FailureKind(collectErr) == "auth" && state(a.store.DB, "cookie_imported") == cookieGeneration {
 		if err = setState(a.store.DB, "cookie_blocked", message); err != nil {
 			return "", err

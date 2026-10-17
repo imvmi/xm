@@ -244,3 +244,9 @@
   #view-settings .storage-summary-grid { grid-template-columns:1fr; }
   #view-settings .storage-summary-grid .panel-heading { justify-content:space-between; }
 }
+
+.cookie-api-fields{border:0;padding:0;margin:0;min-width:0}
+.cookie-api-fields:disabled{opacity:.65}
+.cookie-api-example{margin:18px 0;color:var(--muted);font-size:12px}
+.cookie-api-example summary{cursor:pointer;min-height:36px;display:flex;align-items:center}
+.cookie-api-example pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8f5;border-radius:8px;padding:14px;color:var(--ink);font-size:12px}

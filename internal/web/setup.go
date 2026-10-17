@@ -140,7 +140,7 @@ func (s *setupWizard) guardLocalArchive(c archive.Config) error {
 		return errors.New("无法检查现有本地归档")
 	}
 	defer db.Close()
-	for _, table := range []string{"posts", "profiles", "monitors", "runs", "notification_deliveries", "x_cookies", "admin_accounts", "system_settings", "storage_profiles", "notification_channels"} {
+	for _, table := range []string{"posts", "profiles", "monitors", "runs", "notification_deliveries", "x_cookies", "admin_accounts", "system_settings", "storage_profiles", "notification_channels", "cookie_sources"} {
 		var exists, n int
 		if err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); err != nil {
 			return errors.New("无法检查现有本地归档")
