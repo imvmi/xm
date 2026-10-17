@@ -11,7 +11,7 @@ function showStep(next){
  el('step-database').querySelector('.eyebrow').textContent=`STEP 01 / 0${active.length}`;
  el('setup-next').textContent=(existing?['测试数据库并继续 →','验证并接入 →']:['测试数据库并继续 →','测试存储并继续 →','完成设置 →'])[step];
  el('setup-error').textContent='';el('setup-status').textContent='';
- if(step===2){const db=document.querySelector('input[name="db-kind"]:checked').value;el('setup-summary').textContent=`管理员：${el('setup-username').value} · 数据库：${db==='sqlite'?'SQLite':'MySQL / '+el('db-name').value} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}
+ if(step===2){const db=document.querySelector('input[name="db-kind"]:checked').value;el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db==='sqlite'?'SQLite':'MySQL / '+el('db-name').value} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}
  el(active[step]).querySelector('h2').focus({preventScroll:true});
 }
 function databaseChanged(){const mysql=document.querySelector('input[name="db-kind"]:checked').value==='mysql';el('mysql-fields').hidden=!mysql;el('mysql-fields').disabled=!mysql;el('sqlite-note').hidden=mysql;}
@@ -85,5 +85,5 @@ async function loadDefaults(){
  catch(err){el('setup-error').textContent=err.message+' 点击继续以重试读取。';el('setup-status').textContent='';}
  finally{if(busy)setBusy(false);}
 }
-el('setup-username').addEventListener('input',()=>{if(step===2){const db=database();el('setup-summary').textContent=`管理员：${el('setup-username').value} · 数据库：${db.driver==='sqlite'?'SQLite':'MySQL / '+db.name} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}});
+el('setup-username').addEventListener('input',()=>{if(step===2){const db=database();el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db.driver==='sqlite'?'SQLite':'MySQL / '+db.name} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}});
 loadDefaults();
