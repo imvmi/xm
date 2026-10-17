@@ -228,10 +228,10 @@ for(const button of document.querySelectorAll('[data-settings-tab]')){
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;
-  $('database-help').textContent='初始化配置已锁定，数据库与媒体存储无法在管理页面修改。';
+  $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
-  $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已明文保存到数据库${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
+  $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
   $('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;$('chrome-mode').textContent=s.chrome_headless?'Headless':'有界面模式';$('default-interval').value=s.default_interval_seconds/60;
   await refreshStorage();
 }
@@ -245,7 +245,7 @@ $('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{
 const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['未追赶完成','warn'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 async function refreshRuns() {
-  const runs=await api('/runs');$('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];return `<article class="run-row"><span class="avatar">${escape(r.target.slice(0,2).toUpperCase())}</span><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
+  const runs=await api('/runs');$('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
 let refreshing=false;
