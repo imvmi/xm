@@ -8,3 +8,215 @@
 .timeline-loader{display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px 16px 32px;color:#788793;font-size:12px;min-height:100px;text-align:center}.timeline-loader .button{min-height:44px;min-width:132px}.timeline-tabs button:focus-visible{outline:2px solid #1d9bf0;outline-offset:-4px}
 .timeline-posts .post-footer{justify-content:flex-end}
 .avatar:has(.avatar-image){position:relative;overflow:hidden}.avatar-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit}.avatar-fallback{line-height:1}
+
+/* Keep reading views close to the original X timeline, independently of the
+   compact management pages. Scope overrides to avoid changing admin controls. */
+.app>main:has(#view-user:not([hidden])) {
+  background:#fff;
+}
+.app>main:has(#view-user:not([hidden]))>.topbar {
+  display:none;
+}
+#view-user {
+  --line:#eff3f4;
+  --muted:#536471;
+  color:#0f1419;
+}
+#view-user ::selection {
+  background:#cce8fc;
+  color:#0f1419;
+}
+#view-user :is(button,a,input,select):focus-visible {
+  outline:2px solid #1d9bf0;
+  outline-offset:2px;
+}
+#view-user .profile-top {
+  height:60px;
+  border-bottom:0;
+}
+#view-user .profile-top>div {
+  min-width:0;
+}
+#view-user .profile-top h1 {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+#view-user .back-link {
+  flex-shrink:0;
+}
+#view-user .profile-cover {
+  height:auto;
+  aspect-ratio:3 / 1;
+  padding:0;
+}
+#view-user .profile-identity {
+  padding:0 16px 16px;
+}
+#view-user .profile-actions {
+  margin-top:-68px;
+  margin-bottom:12px;
+  align-items:flex-end;
+}
+#view-user .profile-avatar {
+  width:136px;
+  height:136px;
+  flex-shrink:0;
+}
+#view-user .profile-identity h2 {
+  font-size:20px;
+}
+#view-user :is(.user-handle,.profile-bio,.profile-meta,.profile-numbers) {
+  font-size:14px;
+}
+#view-user .profile-bio {
+  line-height:1.55;
+  margin:12px 0;
+}
+#view-user .profile-meta {
+  margin-top:12px;
+  flex-wrap:wrap;
+}
+#view-user .profile-numbers .badge {
+  border-radius:20px;
+  font-size:11px;
+}
+#view-user .button.secondary {
+  border-color:#cfd9de;
+  color:#0f1419;
+  border-radius:999px;
+}
+#view-user .button.secondary:hover {
+  background:#eff3f4;
+}
+#view-user .timeline-tabs button {
+  min-height:52px;
+  font-size:15px;
+}
+#view-user .timeline-filters .search-box:focus-within {
+  border-color:#1d9bf0;
+  box-shadow:0 0 0 1px #1d9bf0;
+  background:#fff;
+}
+#view-user .timeline-filters input:focus {
+  outline:0;
+  box-shadow:none;
+}
+#view-user .post-body {
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr);
+  align-items:start;
+  gap:12px;
+  padding:16px 16px 0;
+}
+#view-user .post-avatar {
+  width:40px;
+  height:40px;
+  font-size:14px;
+}
+#view-user .post-content {
+  min-width:0;
+}
+#view-user .post-header {
+  gap:8px;
+  flex-wrap:wrap;
+  margin:0 0 3px;
+}
+#view-user .timeline-author {
+  display:flex;
+  gap:0 5px;
+  padding:0;
+  line-height:1.45;
+}
+#view-user .timeline-author strong {
+  font-size:15px;
+}
+#view-user .timeline-author>span {
+  font-size:14px;
+}
+#view-user .post-header>.badge {
+  padding:0;
+  background:transparent;
+  color:#536471;
+}
+#view-user .post-main {
+  margin:0;
+}
+#view-user .post-text {
+  font-size:15px;
+  line-height:1.55;
+}
+#view-user .post-text:has(+.expand-text):not(.expanded) {
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:10;
+  max-height:none;
+  overflow:hidden;
+}
+#view-user .post-footer {
+  margin-left:68px;
+  padding:4px 16px 8px 0;
+  font-size:12px;
+}
+#view-user .post-footer a {
+  min-height:36px;
+  display:inline-flex;
+  align-items:center;
+}
+#view-user .quote-card {
+  border-radius:16px;
+  margin-top:12px;
+}
+#view-user .quote-author {
+  font-size:13px;
+  line-height:1.5;
+}
+#view-user .quote-author strong {
+  font-size:14px;
+}
+#view-user .quote-text {
+  font-size:14px;
+}
+#view-user .quote-source {
+  font-size:11px;
+  min-height:36px;
+}
+#view-user .media-grid {
+  border-radius:16px;
+  border-color:#cfd9de;
+}
+#view-user .profile-info {
+  padding:20px;
+}
+#view-user .profile-tip {
+  color:#536471;
+  line-height:1.6;
+}
+@media(max-width:760px) {
+  #view-user .profile-top {
+    top:62px;
+  }
+  #view-user .profile-actions {
+    margin-top:-48px;
+  }
+  #view-user .profile-avatar {
+    width:96px;
+    height:96px;
+    font-size:30px;
+  }
+  #view-user .profile-actions>.button {
+    margin-bottom:0;
+  }
+  #view-user .profile-numbers {
+    gap:8px 16px;
+    font-size:13px;
+  }
+  #view-user .post-body {
+    padding:14px 12px 0;
+    gap:10px;
+  }
+  #view-user .post-footer {
+    margin-left:62px;
+    padding-right:12px;
+  }
+}
