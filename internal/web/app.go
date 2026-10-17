@@ -49,13 +49,10 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err != nil {
 		return nil, err
 	}
-	// Upgrade existing per-account schedules to one shared automatic batch
-	// without postponing the earliest collection that was already planned.
+	// All enabled accounts share one batch schedule. Preserve the earliest due
+	// time so restarting the service never postpones an already planned run.
 	var earliest sql.NullInt64
 	if err = s.DB.QueryRow("SELECT MIN(next_run) FROM monitors WHERE enabled=1").Scan(&earliest); err != nil {
-		return nil, err
-	}
-	if _, err = s.DB.Exec("UPDATE monitors SET interval_seconds=?", cfg.DefaultInterval); err != nil {
 		return nil, err
 	}
 	if earliest.Valid {
@@ -154,6 +151,17 @@ func sameOrigin(r *http.Request) bool {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := a.store.DB.PingContext(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok\n")
+	})
 	mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]bool{"needed": false})
 	})
@@ -316,7 +324,7 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if v.DefaultInterval != nil {
 		next := time.Now().Unix() + int64(*v.DefaultInterval)
-		if _, err := a.store.DB.Exec("UPDATE monitors SET interval_seconds=?,next_run=CASE WHEN enabled=1 THEN ? ELSE next_run END", *v.DefaultInterval, next); err != nil {
+		if _, err := a.store.DB.Exec("UPDATE monitors SET next_run=CASE WHEN enabled=1 THEN ? ELSE next_run END", next); err != nil {
 			problem(w, 500, "全局周期已保存，但无法同步监控计划")
 			return
 		}
@@ -437,12 +445,18 @@ func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]any{"ok": checkErr == nil && cookieErr == nil, "latency_ms": time.Since(start).Milliseconds(), "steps": steps})
 }
 
+type monitorInput struct {
+	Username string `json:"username"`
+	Replies  bool   `json:"replies"`
+	Enabled  bool   `json:"enabled"`
+}
+
 func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
-	var m Monitor
-	if !decode(w, r, &m) {
+	var input monitorInput
+	if !decode(w, r, &input) {
 		return
 	}
-	m.Interval = a.Config().DefaultInterval
+	m := Monitor{Username: input.Username, Replies: input.Replies, Enabled: input.Enabled}
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
@@ -460,7 +474,7 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,interval_seconds,post_limit,replies,enabled,next_run) VALUES(?,?,?,?,?,?)", m.Username, m.Interval, m.Limit, m.Replies, m.Enabled, time.Now().Unix())
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run) VALUES(?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix())
 	if err != nil {
 		problem(w, 409, "添加失败，此账号可能已经在监控列表中")
 		return
@@ -469,19 +483,18 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]bool{"ok": true})
 }
 func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
-	var m Monitor
-	if !decode(w, r, &m) {
+	var input monitorInput
+	if !decode(w, r, &input) {
 		return
 	}
-	m.Username = r.PathValue("username")
-	m.Interval = a.Config().DefaultInterval
+	m := Monitor{Username: r.PathValue("username"), Replies: input.Replies, Enabled: input.Enabled}
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	res, err := a.store.DB.Exec(`UPDATE monitors SET interval_seconds=?,post_limit=?,replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Interval, m.Limit, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
+	res, err := a.store.DB.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
 	if err != nil {
 		problem(w, 500, "修改失败")
 		return

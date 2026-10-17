@@ -37,7 +37,7 @@ retry-media -verify 同时检查已下载文件的 SHA-256，丢失或损坏的�
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := run(ctx, os.Args[1:]); err != nil {
+	if err := run(ctx, os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "错误:", err)
 		os.Exit(1)
 	}

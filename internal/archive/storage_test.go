@@ -184,6 +184,9 @@ func testRemoteUploadRetryAndStorageBinding(t *testing.T, kind string) {
 		t.Fatal(e)
 	}
 	s.MediaResult(j, rel, int64(len(payload)), hash, fmt.Errorf("cached"))
+	if _, e = s.DB.Exec("UPDATE media SET next_attempt=0"); e != nil {
+		t.Fatal(e)
+	}
 	f.mu.Lock()
 	f.fail = true
 	f.mu.Unlock()
@@ -198,6 +201,9 @@ func testRemoteUploadRetryAndStorageBinding(t *testing.T, kind string) {
 	f.mu.Lock()
 	f.fail = false
 	f.mu.Unlock()
+	if _, e = s.DB.Exec("UPDATE media SET next_attempt=0"); e != nil {
+		t.Fatal(e)
+	}
 	result, e = DownloadPending(context.Background(), s, cfg, "alice", false)
 	if e != nil || result.Downloaded != 1 {
 		t.Fatal(result, e)

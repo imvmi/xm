@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -197,11 +198,13 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		if !enabled && !requested {
 			continue
 		}
-		started := time.Now().Unix()
+		startedAt := time.Now()
+		started := startedAt.Unix()
 		if _, err = a.store.DB.Exec("UPDATE monitors SET running=1,requested=0,last_started=?,last_error='' WHERE username=?", started, m.Username); err != nil {
 			return true, err
 		}
 		m.Enabled, m.Requested = enabled, requested
+		log.Printf("collection start target=%s catchup=%t", m.Username, m.Catchup)
 		targetCtx, cancelTarget := context.WithCancel(batchCtx)
 		s.mu.Lock()
 		s.current = m.Username
@@ -214,6 +217,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		s.cancel = nil
 		s.mu.Unlock()
 		processed = append(processed, m.Username)
+		log.Printf("collection finish target=%s kind=%s duration=%s", m.Username, kind, time.Since(startedAt).Round(time.Millisecond))
 		if runErr != nil {
 			return true, runErr
 		}
@@ -223,10 +227,9 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		}
 	}
 	if autoBatch && !globalStop {
-		interval := a.Config().DefaultInterval
-		next := time.Now().Unix() + int64(interval)
+		next := time.Now().Unix() + int64(a.Config().DefaultInterval)
 		for _, target := range processed {
-			if _, err = a.store.DB.Exec("UPDATE monitors SET interval_seconds=?,next_run=? WHERE username=? AND enabled=1", interval, next, target); err != nil {
+			if _, err = a.store.DB.Exec("UPDATE monitors SET next_run=? WHERE username=? AND enabled=1", next, target); err != nil {
 				return true, err
 			}
 		}
@@ -247,12 +250,20 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	identity, collectErr := a.store.TargetIdentity(m.Username)
 	if collectErr == nil {
-		identity.KnownPostIDs, collectErr = a.store.KnownTargetPosts(m.Username, max(m.Limit*4, 500))
+		identity.KnownPostIDs, collectErr = a.store.KnownTargetPosts(m.Username, monitorCollectionLimit*4)
 	}
+	postAnchor, replyAnchor := m.CatchupPost, m.CatchupReply
+	if collectErr == nil && !m.Catchup {
+		postAnchor, replyAnchor, collectErr = a.store.TargetAnchors(m.Username)
+	}
+	identity.Catchup = m.Catchup
+	identity.CatchupPostAnchor = postAnchor
+	identity.CatchupReplyAnchor = replyAnchor
+	identity.CatchupScrollBudget = m.CatchupScrolls
 	var result archive.Collection
 	var latestProfile *archive.Profile
 	if collectErr == nil {
-		result, collectErr = collect(jobCtx, cfg, cookies, m.Username, identity, m.Limit, m.Replies, func(p archive.Page) error {
+		result, collectErr = collect(jobCtx, cfg, cookies, m.Username, identity, monitorCollectionLimit, m.Replies, func(p archive.Page) error {
 			if p.Profile != nil {
 				if err := a.store.SaveTargetProfile(m.Username, *p.Profile); err != nil {
 					return err
@@ -275,6 +286,12 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	ended := time.Now().Unix()
 	status, message := "bounded_complete", result.Stop
+	bounded := result.Stop == "limit_reached" || result.Stop == "max_scrolls_reached"
+	complete := collectErr == nil && !bounded
+	if collectErr == nil && bounded {
+		status = "incomplete"
+		message = incompleteCollectionMessage
+	}
 	failure := collectErr
 	if failure == nil {
 		failure = mediaErr
@@ -320,8 +337,17 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	lastError := ""
 	if failure != nil {
 		lastError = message
+	} else if !complete {
+		lastError = incompleteCollectionMessage
 	}
-	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=? WHERE username=?`, ended, collectErr == nil && jobCtx.Err() == nil, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), m.Username)
+	catchup := !complete
+	catchupScrolls := m.CatchupScrolls
+	if catchup {
+		catchupScrolls = min(max(catchupScrolls+cfg.MaxScrolls, cfg.MaxScrolls), max(1000-cfg.MaxScrolls, 0))
+	} else {
+		postAnchor, replyAnchor, catchupScrolls = "", "", 0
+	}
+	_, err = a.store.DB.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=?,catchup=?,catchup_post_anchor=?,catchup_reply_anchor=?,catchup_scroll_budget=? WHERE username=?`, ended, complete && jobCtx.Err() == nil, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), catchup, postAnchor, replyAnchor, catchupScrolls, m.Username)
 
 	if err != nil {
 		return "", err
@@ -341,7 +367,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		kind = ""
 		batchKind = "auth_replaced"
 	}
-	err = a.recordNotifications(cfg, m, failure == nil, jobCtx.Err() != nil, kind, failures)
+	err = a.recordNotifications(cfg, m, complete && failure == nil, jobCtx.Err() != nil, kind, failures)
 	return batchKind, err
 }
 

@@ -14,10 +14,14 @@ var userIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 
 // TargetIdentity keeps the archive key stable when the public handle changes.
 type TargetIdentity struct {
-	UserID          string          `json:"user_id"`
-	CurrentUsername string          `json:"current_username"`
-	ReferencePostID string          `json:"-"`
-	KnownPostIDs    map[string]bool `json:"-"`
+	UserID              string          `json:"user_id"`
+	CurrentUsername     string          `json:"current_username"`
+	ReferencePostID     string          `json:"-"`
+	KnownPostIDs        map[string]bool `json:"-"`
+	Catchup             bool            `json:"-"`
+	CatchupPostAnchor   string          `json:"-"`
+	CatchupReplyAnchor  string          `json:"-"`
+	CatchupScrollBudget int             `json:"-"`
 }
 
 // KnownTargetPosts returns a bounded set of the target's newest archived IDs.
@@ -44,6 +48,30 @@ func (s *Store) KnownTargetPosts(target string, limit int) (map[string]bool, err
 		known[id] = true
 	}
 	return known, rows.Err()
+}
+
+// TargetAnchors returns the newest archived original post and reply. A catch-up
+// run keeps these pre-run anchors stable until it reaches them, so posts saved by
+// an incomplete run cannot become a false boundary on the next attempt.
+func (s *Store) TargetAnchors(target string) (postID, replyID string, err error) {
+	for _, item := range []struct {
+		reply bool
+		dest  *string
+	}{{false, &postID}, {true, &replyID}} {
+		op := "="
+		if item.reply {
+			op = "<>"
+		}
+		err = s.DB.QueryRow(`SELECT p.id FROM posts p JOIN target_posts t ON t.post_id=p.id WHERE t.target=? AND p.reply_to`+op+`'' ORDER BY length(p.id) DESC,p.id DESC LIMIT 1`, target).Scan(item.dest)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return postID, replyID, nil
 }
 
 func (s *Store) TargetIdentity(target string) (TargetIdentity, error) {

@@ -43,9 +43,24 @@ func setupRequest(t *testing.T, s *setupWizard, route string, v any, origin stri
 func setupValid() setupInput {
 	return setupInput{Username: "owner", Password: "setup888", Database: archive.DatabaseConfig{Driver: "sqlite"}, StorageKind: "local"}
 }
+
+func TestSetupRejectsNonLoopbackListener(t *testing.T) {
+	cfg := archive.DefaultConfig()
+	cfg.DataDir = t.TempDir()
+	_, err := Setup(context.Background(), filepath.Join(t.TempDir(), "config.yaml"), cfg, "0.0.0.0:0", false)
+	if err == nil || !strings.Contains(err.Error(), "回环地址") {
+		t.Fatalf("non-loopback setup listener was accepted: %v", err)
+	}
+}
+
 func TestSetupCompletionLoginAndLockedStorage(t *testing.T) {
 	s := setupFixture(t)
 	v := setupValid()
+	health := httptest.NewRecorder()
+	s.Handler().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "http://localhost/healthz", nil))
+	if health.Code != http.StatusOK || health.Body.String() != "setup\n" {
+		t.Fatalf("setup health response = %d %q", health.Code, health.Body.String())
+	}
 	ok(t, setupRequest(t, s, "defaults", nil, "http://localhost"), 200)
 	ok(t, setupRequest(t, s, "complete", v, "http://evil.example"), 403)
 	w := httptest.NewRecorder()

@@ -51,11 +51,11 @@ CREATE TABLE IF NOT EXISTS media (
  post_id TEXT NOT NULL REFERENCES posts(id), media_id TEXT NOT NULL, kind TEXT NOT NULL,
  source_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', local_path TEXT NOT NULL DEFAULT '',
  bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
- last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+ next_attempt INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
  storage_id TEXT NOT NULL DEFAULT 'local', object_key TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(post_id,media_id)
 );
-CREATE INDEX IF NOT EXISTS media_status ON media(status);
+CREATE INDEX IF NOT EXISTS media_status ON media(status,next_attempt);
 CREATE TABLE IF NOT EXISTS runs (
  id INTEGER PRIMARY KEY, target TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
  status TEXT NOT NULL, posts_seen INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT ''
@@ -86,7 +86,10 @@ func (s *Store) StartRun(target string) (int64, error) {
 	return r.LastInsertId()
 }
 func (s *Store) EndRun(id int64, status string, count int, message string) error {
-	_, err := s.DB.Exec("UPDATE runs SET finished_at=?,status=?,posts_seen=?,message=? WHERE id=?", now(), status, count, message, id)
+	if _, err := s.DB.Exec("UPDATE runs SET finished_at=?,status=?,posts_seen=?,message=? WHERE id=?", now(), status, count, message, id); err != nil {
+		return err
+	}
+	_, err := s.DB.Exec("DELETE FROM runs WHERE id < (SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM runs ORDER BY id DESC LIMIT 1000) recent)")
 	return err
 }
 func (s *Store) SaveProfile(p Profile) error {
@@ -169,7 +172,17 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 		}
 		if !unchanged {
 			for _, a := range p.Assets {
-				_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)`, []string{"post_id", "media_id"}, []string{"source_url", "kind", "updated_at"}), p.ID, a.ID, a.Kind, a.URL, t)
+				result, updateErr := tx.Exec(`UPDATE media SET kind=?,status=CASE WHEN source_url<>? THEN 'pending' ELSE status END,attempts=CASE WHEN source_url<>? THEN 0 ELSE attempts END,next_attempt=CASE WHEN source_url<>? THEN 0 ELSE next_attempt END,last_error=CASE WHEN source_url<>? THEN '' ELSE last_error END,source_url=?,updated_at=? WHERE post_id=? AND media_id=?`, a.Kind, a.URL, a.URL, a.URL, a.URL, a.URL, t, p.ID, a.ID)
+				if updateErr != nil {
+					return updateErr
+				}
+				changed, updateErr := result.RowsAffected()
+				if updateErr != nil {
+					return updateErr
+				}
+				if changed == 0 {
+					_, err = tx.InsertIgnore("INSERT INTO media(post_id,media_id,kind,source_url,updated_at) VALUES(?,?,?,?,?)", "post_id", p.ID, a.ID, a.Kind, a.URL, t)
+				}
 				if err != nil {
 					return err
 				}
@@ -199,13 +212,16 @@ type MediaJob struct {
 	StorageID, ObjectKey                string
 	Bytes                               int64
 	SHA256                              string
+	Attempts                            int
+	NextAttempt                         int64
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
-	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username FROM media JOIN posts ON posts.id=media.post_id WHERE 1=1`
+	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt FROM media JOIN posts ON posts.id=media.post_id WHERE 1=1`
 	var args []any
 	if !includeDone {
-		query += " AND status != 'done'"
+		query += " AND (status='pending' OR (status='failed' AND next_attempt<=?))"
+		args = append(args, time.Now().Unix())
 	}
 	if target != "" {
 		query += ` AND post_id IN (WITH RECURSIVE wanted(id) AS (
@@ -223,7 +239,7 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	var jobs []MediaJob
 	for r.Next() {
 		var j MediaJob
-		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey, &j.AuthorID, &j.Username); err != nil {
+		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey, &j.AuthorID, &j.Username, &j.Attempts, &j.NextAttempt); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -235,11 +251,18 @@ func (s *Store) MediaResult(j MediaJob, path string, size int64, hash string, do
 		j.StorageID = "local"
 	}
 	status, message := "done", ""
+	nextAttempt := int64(0)
 	if downloadErr != nil {
 		status = "failed"
 		message = downloadErr.Error()
+		if IsPermanentMediaError(downloadErr) {
+			status = "permanent"
+		} else {
+			delay := 5 * time.Minute * time.Duration(1<<min(j.Attempts, 8))
+			nextAttempt = time.Now().Add(min(delay, 24*time.Hour)).Unix()
+		}
 	}
-	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, j.StorageID, j.ObjectKey, message, now(), j.PostID, j.ID)
+	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,next_attempt=?,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, j.StorageID, j.ObjectKey, nextAttempt, message, now(), j.PostID, j.ID)
 	return err
 }
 

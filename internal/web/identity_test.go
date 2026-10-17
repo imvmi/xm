@@ -50,7 +50,7 @@ func TestMonitorRenamePreservesArchiveAndNotifications(t *testing.T) {
 		t.Fatal("rename or historical posts notified twice")
 	}
 	b := login(t, a)
-	ok(t, b.request("POST", "/api/monitors", Monitor{Username: "newalice", Interval: 60, Limit: 10, Enabled: true}, "http://localhost", true), 409)
+	ok(t, b.request("POST", "/api/monitors", monitorInput{Username: "newalice", Enabled: true}, "http://localhost", true), 409)
 	authorID, current, postID = "99", "alice", "102"
 	runCollection(t, a)
 	list, err = monitors(a.store.DB)

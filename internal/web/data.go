@@ -17,7 +17,6 @@ type Monitor struct {
 	CurrentUsername string `json:"current_username"`
 	Username        string `json:"username"`
 	Interval        int    `json:"interval_seconds"`
-	Limit           int    `json:"limit"`
 	Replies         bool   `json:"replies"`
 	Enabled         bool   `json:"enabled"`
 	Requested       bool   `json:"requested"`
@@ -31,19 +30,29 @@ type Monitor struct {
 	Posts           int    `json:"posts"`
 	LastPosts       int    `json:"last_posts"`
 	NewPosts        int    `json:"new_posts"`
+	LastStatus      string `json:"last_status"`
+	Catchup         bool   `json:"catchup"`
+	CatchupPost     string `json:"-"`
+	CatchupReply    string `json:"-"`
+	CatchupScrolls  int    `json:"-"`
 }
+
+const monitorCollectionLimit = 1000
+
+const incompleteCollectionMessage = "本轮已到达安全边界，系统将在后续批次继续追赶旧归档位置"
 
 func migrate(s *archive.Store) error {
 	if s.DB.Dialect == "mysql" {
 		return MigrateStore(s.DB)
 	}
 	_, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS monitors (
- username TEXT PRIMARY KEY, interval_seconds INTEGER NOT NULL, post_limit INTEGER NOT NULL,
- replies INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, requested INTEGER NOT NULL DEFAULT 0,
+ username TEXT PRIMARY KEY, replies INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, requested INTEGER NOT NULL DEFAULT 0,
  running INTEGER NOT NULL DEFAULT 0, next_run INTEGER NOT NULL, last_started INTEGER NOT NULL DEFAULT 0,
  last_finished INTEGER NOT NULL DEFAULT 0, last_success INTEGER NOT NULL DEFAULT 0,
  last_error TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
- last_posts INTEGER NOT NULL DEFAULT 0, new_posts INTEGER NOT NULL DEFAULT 0
+ last_posts INTEGER NOT NULL DEFAULT 0, new_posts INTEGER NOT NULL DEFAULT 0,
+ catchup INTEGER NOT NULL DEFAULT 0, catchup_post_anchor TEXT NOT NULL DEFAULT '',
+ catchup_reply_anchor TEXT NOT NULL DEFAULT '', catchup_scroll_budget INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS web_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS monitors_due ON monitors(next_run);
@@ -54,13 +63,13 @@ CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,m.interval_seconds,m.post_limit,m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
-	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Limit, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts)
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls)
 	return m, err
 }
 func monitors(db *database.DB) ([]Monitor, error) {
@@ -85,12 +94,6 @@ func validateMonitor(m *Monitor) error {
 		return err
 	}
 	m.Username = u
-	if m.Interval < 60 || m.Interval > 604800 {
-		return errors.New("轮询周期必须为 1 分钟到 7 天")
-	}
-	if m.Limit < 1 || m.Limit > 1000 {
-		return errors.New("每轮采集上限必须为 1～1000 条")
-	}
 	return nil
 }
 func state(db *database.DB, key string) string {
@@ -270,8 +273,8 @@ type UserView struct {
 
 func archiveUsers(db *database.DB) ([]UserView, error) {
 	rows, err := db.Query(`WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
- SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.interval_seconds,0),COALESCE(m.last_finished,0)
- FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id LEFT JOIN monitors m ON m.username=u.username GROUP BY u.username,m.username,m.enabled,m.interval_seconds,m.last_finished ORDER BY u.username`)
+ SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(m.last_finished,0)
+ FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id LEFT JOIN monitors m ON m.username=u.username GROUP BY u.username,m.username,m.enabled,m.last_finished ORDER BY u.username`)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +337,7 @@ func recentRuns(db *database.DB) ([]map[string]any, error) {
 
 func counts(db *database.DB) (map[string]int64, error) {
 	result := map[string]int64{}
-	queries := map[string]string{"posts": "SELECT COUNT(*) FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)", "media": "SELECT COUNT(*) FROM media WHERE status='done'", "media_failed": "SELECT COUNT(*) FROM media WHERE status='failed'", "media_bytes": "SELECT COALESCE(SUM(bytes),0) FROM media WHERE status='done'", "monitors": "SELECT COUNT(*) FROM monitors", "active": "SELECT COUNT(*) FROM monitors WHERE enabled=1", "today": "SELECT COUNT(*) FROM posts p WHERE first_seen>=? AND EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"}
+	queries := map[string]string{"posts": "SELECT COUNT(*) FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)", "media": "SELECT COUNT(*) FROM media WHERE status='done'", "media_failed": "SELECT COUNT(*) FROM media WHERE status IN ('failed','permanent')", "media_bytes": "SELECT COALESCE(SUM(bytes),0) FROM media WHERE status='done'", "monitors": "SELECT COUNT(*) FROM monitors", "active": "SELECT COUNT(*) FROM monitors WHERE enabled=1", "today": "SELECT COUNT(*) FROM posts p WHERE first_seen>=? AND EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"}
 	for key, q := range queries {
 		var n int64
 		var args []any

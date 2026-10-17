@@ -31,9 +31,12 @@ func Setup(ctx context.Context, path string, cfg archive.Config, address string,
 		return cfg, err
 	}
 	defer l.Close()
+	if tcp, ok := l.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
+		return cfg, errors.New("首次设置仅允许监听本机回环地址；请使用 127.0.0.1 并通过本机或 SSH 隧道访问")
+	}
 	wizard := newSetup(path, cfg)
 	fmt.Fprintln(os.Stderr, "XM 首次设置 · Local: http://"+l.Addr().String())
-	server := &http.Server{Handler: wizard.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return ctx }}
+	server := &http.Server{Handler: wizard.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return ctx }}
 	errs := make(chan error, 1)
 	go func() { errs <- server.Serve(l) }()
 	var result archive.Config
@@ -224,6 +227,11 @@ func (s *setupWizard) checkStorage(ctx context.Context, c archive.Config) error 
 }
 func (s *setupWizard) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintln(w, "setup")
+	})
 	mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]bool{"needed": true}) })
 	mux.HandleFunc("POST /api/setup/defaults", func(w http.ResponseWriter, r *http.Request) {
 		db := s.cfg.Database

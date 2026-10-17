@@ -26,7 +26,7 @@ func Serve(ctx context.Context, path string, cfg archive.Config, s *archive.Stor
 	fmt.Fprintln(os.Stderr, "XM 管理页面 · Local: http://"+l.Addr().String())
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return ctx }}
+	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return ctx }}
 	serverErr := make(chan error, 1)
 	workerErr := make(chan error, 1)
 	go func() { serverErr <- server.Serve(l) }()

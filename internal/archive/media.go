@@ -16,6 +16,17 @@ import (
 	"time"
 )
 
+type permanentMediaError struct{ message string }
+
+func (e *permanentMediaError) Error() string { return e.message }
+
+func permanentMedia(message string) error { return &permanentMediaError{message: message} }
+
+func IsPermanentMediaError(err error) bool {
+	var target *permanentMediaError
+	return errors.As(err, &target)
+}
+
 func mediaURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" && u.Port() != "443" {
@@ -31,11 +42,11 @@ func mediaURL(raw string) (*url.URL, error) {
 // Download sends no account Cookie or Authorization to media hosts.
 func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max int64) (string, int64, string, error) {
 	if j.URL == "" {
-		return "", 0, "", errors.New("该媒体未提供可下载的图片/MP4 地址；HLS 暂不支持")
+		return "", 0, "", permanentMedia("该媒体未提供可下载的图片/MP4 地址；HLS 暂不支持")
 	}
 	u, err := mediaURL(j.URL)
 	if err != nil {
-		return "", 0, "", err
+		return "", 0, "", permanentMedia(err.Error())
 	}
 	client := *c
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
@@ -58,7 +69,7 @@ func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max i
 		return "", 0, "", fmt.Errorf("媒体下载返回 HTTP %d；可重新采集刷新链接后重试", resp.StatusCode)
 	}
 	if resp.ContentLength > max {
-		return "", 0, "", errors.New("媒体超过配置的大小上限")
+		return "", 0, "", permanentMedia("媒体超过配置的大小上限")
 	}
 	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	ext := ""
@@ -79,7 +90,7 @@ func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max i
 		ext = ".mp4"
 	}
 	if ext == "" {
-		return "", 0, "", errors.New("媒体响应类型不匹配，未保存可能的错误页")
+		return "", 0, "", permanentMedia("媒体响应类型不匹配，未保存可能的错误页")
 	}
 	rel, err := mediaRelativePath(j, ext)
 	if err != nil {
@@ -101,7 +112,7 @@ func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max i
 		return "", 0, "", errors.New("媒体读取或写入失败，临时文件已移除")
 	}
 	if n > max {
-		return "", 0, "", errors.New("媒体超过配置的大小上限")
+		return "", 0, "", permanentMedia("媒体超过配置的大小上限")
 	}
 	if n == 0 {
 		return "", 0, "", errors.New("媒体内容为空")

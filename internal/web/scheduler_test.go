@@ -26,7 +26,7 @@ func seedMonitor(t *testing.T, a *App, name string) {
 	if err := a.store.SaveCookies(archive.Cookies{AuthToken: "synthetic", CSRF: "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,interval_seconds,post_limit,enabled,next_run) VALUES(?,60,20,1,0)", name)
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,enabled,next_run) VALUES(?,1,0)", name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestSchedulerSuccessDedupAndPause(t *testing.T) {
 	a.scheduler.collect = func(ctx context.Context, cfg archive.Config, c archive.Cookies, name string, identity archive.TargetIdentity, n int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
 		calls++
 		err := save(archive.Page{Posts: []archive.Post{{ID: "100", AuthorID: "42", Username: name, Text: "saved", Raw: json.RawMessage(`{}`)}}})
-		return archive.Collection{Posts: 1, Stop: "limit_reached"}, err
+		return archive.Collection{Posts: 1, Stop: "known_boundary_reached"}, err
 	}
 	worked, err := a.scheduler.step(context.Background())
 	if !worked || err != nil {
@@ -107,6 +107,74 @@ func TestSchedulerLoadsIncrementalBoundary(t *testing.T) {
 	worked, err := a.scheduler.step(context.Background())
 	if !worked || err != nil {
 		t.Fatal(worked, err)
+	}
+}
+
+func TestSchedulerUsesFixedSafetyLimitAndMarksIncomplete(t *testing.T) {
+	a := testApp(t)
+	seedMonitor(t, a, "alice")
+	gotLimit := 0
+	a.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, _ archive.TargetIdentity, limit int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
+		gotLimit = limit
+		return archive.Collection{Posts: limit, Stop: "limit_reached"}, nil
+	}
+	worked, err := a.scheduler.step(context.Background())
+	if !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	list, err := monitors(a.store.DB)
+	if err != nil || len(list) != 1 {
+		t.Fatal(err, list)
+	}
+	m := list[0]
+	if gotLimit != monitorCollectionLimit || m.LastStatus != "incomplete" || m.LastError != incompleteCollectionMessage || m.LastSuccess != 0 || m.Failures != 0 {
+		t.Fatalf("safety-limit result was treated as complete: limit=%d monitor=%+v", gotLimit, m)
+	}
+	var status, message string
+	if err = a.store.DB.QueryRow("SELECT status,message FROM runs ORDER BY id DESC LIMIT 1").Scan(&status, &message); err != nil {
+		t.Fatal(err)
+	}
+	if status != "incomplete" || message != incompleteCollectionMessage {
+		t.Fatal(status, message)
+	}
+}
+
+func TestSchedulerPersistsAndClearsCatchupBoundary(t *testing.T) {
+	a := testApp(t)
+	seedMonitor(t, a, "alice")
+	if err := a.store.SavePosts("alice", []archive.Post{{ID: "100", AuthorID: "42", Username: "alice", Raw: json.RawMessage(`{}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	a.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, identity archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
+		calls++
+		if calls == 1 {
+			if identity.Catchup {
+				t.Fatal("first bounded run unexpectedly started in catch-up mode")
+			}
+			return archive.Collection{Stop: "max_scrolls_reached", Scrolls: 40}, nil
+		}
+		if !identity.Catchup || identity.CatchupPostAnchor != "100" || identity.CatchupScrollBudget == 0 {
+			t.Fatalf("catch-up state not restored: %+v", identity)
+		}
+		return archive.Collection{Stop: "known_boundary_reached"}, nil
+	}
+	if worked, err := a.scheduler.step(context.Background()); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	list, _ := monitors(a.store.DB)
+	if !list[0].Catchup || list[0].LastStatus != "incomplete" || list[0].CatchupPost != "100" {
+		t.Fatalf("incomplete boundary not persisted: %+v", list[0])
+	}
+	if _, err := a.store.DB.Exec("UPDATE monitors SET next_run=0"); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := a.scheduler.step(context.Background()); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	list, _ = monitors(a.store.DB)
+	if list[0].Catchup || list[0].CatchupPost != "" || list[0].CatchupScrolls != 0 || list[0].LastStatus != "bounded_complete" {
+		t.Fatalf("completed catch-up state not cleared: %+v", list[0])
 	}
 }
 
@@ -275,9 +343,9 @@ func TestSchedulerManualRunKeepsBatchSchedule(t *testing.T) {
 	}
 }
 
-func TestNewSynchronizesLegacyMonitorSchedules(t *testing.T) {
+func TestNewSynchronizesMonitorSchedules(t *testing.T) {
 	a := testApp(t)
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,interval_seconds,post_limit,enabled,next_run) VALUES('alice',60,20,1,200),('bob',3600,20,1,100),('paused',7200,20,0,300)")
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,enabled,next_run) VALUES('alice',1,200),('bob',1,100),('paused',0,300)")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,6 +39,7 @@ func Username(input string) (string, error) {
 type Collection struct {
 	Posts       int
 	Pages       int
+	Scrolls     int
 	Unavailable int
 	Stop        string
 	Protected   *bool
@@ -48,9 +49,41 @@ type responseMeta struct {
 	status    int64
 }
 type captured struct {
-	meta responseMeta
-	data []byte
-	err  error
+	sequence uint64
+	meta     responseMeta
+	data     []byte
+	err      error
+}
+
+func orderedCaptures(ctx context.Context, input <-chan captured) <-chan captured {
+	output := make(chan captured)
+	go func() {
+		defer close(output)
+		pending := map[uint64]captured{}
+		var next uint64
+		for {
+			if item, ok := pending[next]; ok {
+				select {
+				case output <- item:
+					delete(pending, next)
+					next++
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			select {
+			case item, ok := <-input:
+				if !ok {
+					return
+				}
+				pending[item.sequence] = item
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return output
 }
 
 // BrowserSession owns one Chrome process that can collect several targets in
@@ -160,7 +193,7 @@ func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target
 }
 
 func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
-	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.CollectionTimeout)*time.Second)
+	ctx, cancel := context.WithTimeout(parent, collectionTimeout(cfg, identity))
 	defer cancel()
 	saveFailed := false
 	checkedSave := func(p Page) error {
@@ -176,6 +209,18 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 	}
 	identity.CurrentUsername = ""
 	return collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
+}
+
+func collectionTimeout(cfg Config, identity TargetIdentity) time.Duration {
+	timeout := time.Duration(cfg.CollectionTimeout) * time.Second
+	if identity.Catchup {
+		budget := max(cfg.MaxScrolls, cfg.MaxScrolls+identity.CatchupScrollBudget)
+		needed := time.Duration(budget*cfg.ScrollDelay+60) * time.Second
+		if needed > timeout {
+			timeout = min(needed, time.Hour)
+		}
+	}
+	return timeout
 }
 
 func collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
@@ -194,7 +239,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	if limit < 1 || limit > 10000 {
 		return result, errors.New("limit 必须在 1～10000 之间")
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.CollectionTimeout)*time.Second)
+	ctx, cancel := context.WithTimeout(parent, collectionTimeout(cfg, identity))
 	defer cancel()
 	var browser context.Context
 	var err error
@@ -231,11 +276,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		defer stop()
 		defer closeBrowser()
 	}
-	events := make(chan captured, 128)
+	unordered := make(chan captured, 128)
 	var overflow atomic.Bool
 	send := func(c captured) {
 		select {
-		case events <- c:
+		case unordered <- c:
 		case <-browser.Done():
 		default:
 			overflow.Store(true)
@@ -267,6 +312,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	}
 	responses := chromedp.Events(browser, network.ResponseReceived)
 	go func() {
+		var sequence uint64
 		for e, err := range responses {
 			if err != nil {
 				return
@@ -276,9 +322,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				continue
 			}
 			meta := responseMeta{operation: op, status: e.Response.Status}
-			go func(id network.RequestID, meta responseMeta) {
+			current := sequence
+			sequence++
+			go func(id network.RequestID, meta responseMeta, sequence uint64) {
 				if meta.status != 200 {
-					send(captured{meta: meta})
+					send(captured{sequence: sequence, meta: meta})
 					return
 				}
 				// The response event precedes body completion. Read only after CDP makes
@@ -293,19 +341,20 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						return err
 					}))
 					if err == nil {
-						send(captured{meta: meta, data: body})
+						send(captured{sequence: sequence, meta: meta, data: body})
 						return
 					}
 					select {
 					case <-readCtx.Done():
-						send(captured{meta: meta, err: errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")})
+						send(captured{sequence: sequence, meta: meta, err: errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")})
 						return
 					case <-time.After(250 * time.Millisecond):
 					}
 				}
-			}(e.RequestID, meta)
+			}(e.RequestID, meta, current)
 		}
 	}()
+	events := orderedCaptures(browser, unordered)
 	path := "https://x.com/" + target
 	resolvingPost := expectedID != "" && identity.CurrentUsername == "" && userIDPattern.MatchString(identity.ReferencePostID)
 	if expectedID != "" {
@@ -335,10 +384,16 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	verifiedUsername := ""
 	var pending []Page
 	replyNavigation := expectedID != "" && identity.CurrentUsername != "" && replies
-	scrolls, idle, lastCount, lastPages := 0, 0, 0, 0
+	scrolls, totalScrolls, idle, lastCount, lastPages := 0, 0, 0, 0, 0
 	phaseStartPages := 0
 	hitScrollLimit := false
 	knownStreak := 0
+	newPosts := 0
+	boundaryReached := false
+	maxScrolls := cfg.MaxScrolls
+	if identity.Catchup {
+		maxScrolls = min(maxScrolls+identity.CatchupScrollBudget, 1000)
+	}
 	lastTop, lastHeight := -1.0, -1.0
 	ticker := time.NewTicker(time.Duration(cfg.ScrollDelay) * time.Second)
 	defer ticker.Stop()
@@ -348,6 +403,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		phaseStartPages = result.Pages
 		scrolls, idle, knownStreak = 0, 0, 0
 		lastTop, lastHeight = -1, -1
+		boundaryReached = false
 		return chromedp.Do(browser, chromedp.Navigate("https://x.com/"+verifiedUsername))
 	}
 	for {
@@ -357,7 +413,10 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		select {
 		case <-browser.Done():
 			return result, errors.New("浏览器已关闭或采集超时；已入库内容保留，可重新采集")
-		case c := <-events:
+		case c, ok := <-events:
+			if !ok {
+				return result, errors.New("浏览器响应流已关闭；已入库内容保留，可重新采集")
+			}
 			if c.err != nil {
 				return result, c.err
 			}
@@ -452,15 +511,30 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				for _, p := range page.Posts {
 					// Author ID is authoritative. Historical posts may still
 					// carry an old handle; quoted authors remain separate.
-					if p.AuthorID != verifiedID || seen[p.ID] || len(seen) >= limit {
+					if p.AuthorID != verifiedID || seen[p.ID] {
 						continue
 					}
-					if len(identity.KnownPostIDs) > 0 {
+					known := identity.KnownPostIDs[p.ID]
+					if identity.Catchup {
+						anchor := identity.CatchupPostAnchor
+						if replies {
+							anchor = identity.CatchupReplyAnchor
+						}
+						if anchor != "" && p.ID == anchor {
+							boundaryReached = true
+						}
+					} else if len(identity.KnownPostIDs) > 0 {
 						if identity.KnownPostIDs[p.ID] {
 							knownStreak++
 						} else {
 							knownStreak = 0
 						}
+					}
+					if !known {
+						if newPosts >= limit {
+							continue
+						}
+						newPosts++
 					}
 					seen[p.ID] = true
 					filtered = append(filtered, p)
@@ -474,10 +548,24 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				if page.Timeline {
 					result.Pages++
 				}
-				if result.Posts >= limit {
+				if newPosts >= limit {
 					result.Stop = "limit_reached"
 					return result, nil
 				}
+			}
+			if identity.Catchup && boundaryReached {
+				if replies {
+					if err = startOriginalTimeline(); err != nil {
+						return result, errors.New("回复追赶边界已到达，但无法打开普通推文时间线")
+					}
+					continue
+				}
+				if hitScrollLimit {
+					result.Stop = "max_scrolls_reached"
+					return result, nil
+				}
+				result.Stop = "known_boundary_reached"
+				return result, nil
 			}
 			// A run still starts at the top so new posts cannot be skipped. Once
 			// eight consecutive timeline entries are already archived, older pages
@@ -488,6 +576,10 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						return result, errors.New("回复增量边界已到达，但无法打开普通推文时间线")
 					}
 					continue
+				}
+				if hitScrollLimit {
+					result.Stop = "max_scrolls_reached"
+					return result, nil
 				}
 				result.Stop = "known_boundary_reached"
 				return result, nil
@@ -521,7 +613,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			lastCount = result.Posts
 			lastPages = result.Pages
 			lastTop, lastHeight = state.Top, state.Height
-			if scrolls >= cfg.MaxScrolls || idle >= 8 {
+			if scrolls >= maxScrolls || idle >= 8 {
 				if verifiedID == "" {
 					return result, fail("identity", "未能确认目标用户 ID，未保存推文")
 				}
@@ -531,7 +623,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				if result.Posts == 0 && result.Unavailable > 0 {
 					return result, errors.New("时间线仅返回不可访问的内容，无法归档")
 				}
-				if scrolls >= cfg.MaxScrolls {
+				if scrolls >= maxScrolls {
 					hitScrollLimit = true
 				}
 				if replies {
@@ -556,6 +648,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				return result, errors.New("页面滚动失败")
 			}
 			scrolls++
+			totalScrolls++
+			result.Scrolls = totalScrolls
 		}
 	}
 }

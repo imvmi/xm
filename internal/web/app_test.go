@@ -18,6 +18,15 @@ import (
 
 const testPassword = "test-password-for-local-tests"
 
+func TestHealthEndpointIsPublicAndChecksDatabase(t *testing.T) {
+	a := testApp(t)
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "ok\n" {
+		t.Fatalf("health response = %d %q", w.Code, w.Body.String())
+	}
+}
+
 func writeTestAdmin(t *testing.T, store *archive.Store, cfg archive.Config) {
 	t.Helper()
 	if err := archive.PrivateDir(cfg.DataDir); err != nil {
@@ -173,12 +182,10 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	if err != nil || !cfg.PollingPaused || cfg.DefaultInterval != 1200 || !strings.Contains(cfg.Proxy, "proxy-secret") {
 		t.Fatal("settings did not persist", err)
 	}
-	input := map[string]any{"username": "@Alice", "interval_seconds": 60, "limit": 20, "replies": true, "enabled": true}
+	input := map[string]any{"username": "@Alice", "replies": true, "enabled": true}
 	ok(t, b.request("POST", "/api/monitors", input, "http://localhost", true), 201)
 	ok(t, b.request("POST", "/api/monitors", input, "http://localhost", true), 409)
-	input["interval_seconds"] = 1
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
-	input["interval_seconds"] = 300
 	input["enabled"] = false
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	// MySQL reports zero affected rows when an identical update changes nothing.
@@ -186,6 +193,11 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	list, err := monitors(a.store.DB)
 	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 1200 {
 		t.Fatal("monitor update failed", err)
+	}
+	w = b.request("GET", "/api/monitors", nil, "", false)
+	ok(t, w, 200)
+	if strings.Contains(w.Body.String(), `"limit"`) {
+		t.Fatal("internal collection limit leaked as account configuration", w.Body.String())
 	}
 	ok(t, b.request("POST", "/api/monitors/alice/run", nil, "http://localhost", true), 202)
 	ok(t, b.request("POST", "/api/monitors/alice/run", nil, "http://localhost", true), 409)

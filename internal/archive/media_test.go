@@ -115,9 +115,9 @@ func TestStoreIdempotencyAndRetryState(t *testing.T) {
 	if err = s.MediaResult(jobs[0], "", 0, "", errors.New("temporary failure")); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err = s.MediaJobs("alice", false)
+	jobs, err = s.MediaJobs("alice", true)
 	if err != nil || len(jobs) != 3 {
-		t.Fatal("retry job lost", err)
+		t.Fatal("failed job was not retained", err)
 	}
 	if err = s.MediaResult(jobs[0], "media/test.jpg", 3, "sha", nil); err != nil {
 		t.Fatal(err)
