@@ -13,6 +13,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -37,16 +38,21 @@ func Username(input string) (string, error) {
 }
 
 type Collection struct {
-	Posts       int
-	Pages       int
-	Scrolls     int
-	Unavailable int
-	Stop        string
-	Protected   *bool
+	Posts              int
+	Pages              int
+	Scrolls            int
+	Unavailable        int
+	Stop               string
+	Protected          *bool
+	NeedsHeadRefresh   bool
+	RefreshPostAnchor  string
+	RefreshReplyAnchor string
 }
 type responseMeta struct {
 	operation string
 	status    int64
+	retryAt   time.Time
+	cursor    string
 }
 type captured struct {
 	sequence uint64
@@ -204,7 +210,7 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 		return err
 	}
 	result, err := collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
-	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" {
+	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" || FailureKind(err) == "checkpoint" || FailureKind(err) == "budget" || FailureKind(err) == "budget_storage" {
 		return result, err
 	}
 	identity.CurrentUsername = ""
@@ -233,6 +239,25 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
 	var result Collection
 	expectedID := identity.UserID
+	progress := identity.Progress
+	checkpointing := identity.DurableProgress || progress.UserID != ""
+	resuming := progress.Posts.Cursor != "" || progress.Replies.Cursor != "" || progress.Posts.Done || progress.Replies.Done
+	finish := func() Collection {
+		result.NeedsHeadRefresh = resuming
+		result.RefreshPostAnchor = progress.Posts.Head
+		result.RefreshReplyAnchor = progress.Replies.Head
+		return result
+	}
+	if progress.UserID != "" && progress.UserID != expectedID {
+		return result, checkpointFailure()
+	}
+	if progress.Replies.Done {
+		replies = false
+	}
+	if progress.Posts.Done && (!replies || progress.Replies.Done) {
+		result.Stop = "known_boundary_reached"
+		return finish(), nil
+	}
 	if expectedID != "" && !userIDPattern.MatchString(expectedID) {
 		return result, fail("identity", "无效的绑定用户 ID")
 	}
@@ -294,6 +319,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		if _, e := cdp.Call(c, t, network.SetCacheDisabled, network.SetCacheDisabledParams{CacheDisabled: true}); e != nil {
 			return e
 		}
+		if progress.Posts.Cursor != "" || progress.Replies.Cursor != "" {
+			if _, e := cdp.Call(c, t, cdppage.AddScriptToEvaluateOnNewDocument, cdppage.AddScriptToEvaluateOnNewDocumentParams{Source: resumeScript(progress)}); e != nil {
+				return e
+			}
+		}
 		for _, v := range []struct{ name, value string }{{"auth_token", cookies.AuthToken}, {"ct0", cookies.CSRF}} {
 			secure, httponly := true, v.name == "auth_token"
 			if _, e := cdp.Call(c, t, network.SetCookie, network.SetCookieParams{Name: v.name, Value: v.value, Domain: ".x.com", Path: "/", Secure: &secure, HTTPOnly: &httponly}); e != nil {
@@ -304,6 +334,13 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	}))
 	if err != nil {
 		return result, errors.New("无法启动 Chrome 或导入 Cookie；请检查 chrome_path 和 Chrome 运行环境")
+	}
+	budgetErrors := make(chan error, 1)
+	// Offline fixtures own Fetch interception and call the same admission helper.
+	if identity.RequestBudget != nil && setup == nil {
+		if err = installRequestBudget(browser, identity.RequestBudget, budgetErrors); err != nil {
+			return result, err
+		}
 	}
 	if setup != nil {
 		if err = setup(browser); err != nil {
@@ -321,7 +358,20 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			if op == "" {
 				continue
 			}
-			meta := responseMeta{operation: op, status: e.Response.Status}
+			meta := responseMeta{operation: op, status: e.Response.Status, retryAt: rateLimitRetryAt(e.Response.Headers, time.Now()), cursor: requestCursor(e.Response.URL)}
+			if e.Response.Status == localBudgetStatus {
+				if until, ok := headerNumber(e.Response.Headers, "x-xm-budget-until"); ok {
+					meta.retryAt = time.Unix(until, 0)
+				}
+			} else if identity.RequestBudget != nil {
+				if err := identity.RequestBudget.Observe(op, e.Response.Status, e.Response.Headers); err != nil {
+					select {
+					case budgetErrors <- err:
+					default:
+					}
+					return
+				}
+			}
 			current := sequence
 			sequence++
 			go func(id network.RequestID, meta responseMeta, sequence uint64) {
@@ -390,6 +440,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	knownStreak := 0
 	newPosts := 0
 	boundaryReached := false
+	phaseFirstResponse := true
+	resumeCursor := progress.Posts.Cursor
+	if replies {
+		resumeCursor = progress.Replies.Cursor
+	}
 	maxScrolls := cfg.MaxScrolls
 	if identity.Catchup {
 		maxScrolls = min(maxScrolls+identity.CatchupScrollBudget, 1000)
@@ -398,12 +453,23 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	ticker := time.NewTicker(time.Duration(cfg.ScrollDelay) * time.Second)
 	defer ticker.Stop()
 	startOriginalTimeline := func() error {
+		progress.UserID = verifiedID
+		if !hitScrollLimit {
+			progress.Replies.Done = true
+		}
+		if checkpointing {
+			if err := save(Page{Progress: &progress}); err != nil {
+				return err
+			}
+		}
 		replies = false
 		pending = nil
 		phaseStartPages = result.Pages
 		scrolls, idle, knownStreak = 0, 0, 0
 		lastTop, lastHeight = -1, -1
 		boundaryReached = false
+		phaseFirstResponse = true
+		resumeCursor = progress.Posts.Cursor
 		return chromedp.Do(browser, chromedp.Navigate("https://x.com/"+verifiedUsername))
 	}
 	for {
@@ -411,6 +477,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			return result, errors.New("浏览器响应队列溢出，本次采集不完整，请降低采集量")
 		}
 		select {
+		case err := <-budgetErrors:
+			return result, err
 		case <-browser.Done():
 			return result, errors.New("浏览器已关闭或采集超时；已入库内容保留，可重新采集")
 		case c, ok := <-events:
@@ -430,14 +498,22 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				return result, fail("auth", "Cookie 登录态失效，请重新导入")
 			case 403:
 				return result, fail("access", "X "+c.meta.operation+" 拒绝访问：可能无查看权限、账号受限或需要浏览器验证")
+			case localBudgetStatus:
+				return result, budgetFailure(c.meta.retryAt)
 			case 429:
-				return result, fail("rate", "X 请求限流，请等待后重试")
+				return result, rateLimitFailure(c.meta)
 			default:
+				if c.meta.cursor != "" {
+					return result, checkpointFailure()
+				}
 				return result, fmt.Errorf("X 数据请求返回 HTTP %d", c.meta.status)
 			}
 			if resolvingPost {
 				p, e := IdentityFromPost(c.data, identity.ReferencePostID)
 				if e != nil {
+					if FailureKind(e) == "rate" {
+						e = rateLimitFailure(c.meta)
+					}
 					return result, e
 				}
 				if p.ID != expectedID {
@@ -463,8 +539,20 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			}
 			page, e := ParsePage(c.data, c.meta.operation)
 			if e != nil {
+				if FailureKind(e) == "rate" {
+					e = rateLimitFailure(c.meta)
+				} else if c.meta.cursor != "" && FailureKind(e) == "transient" {
+					e = checkpointFailure()
+				}
 				return result, e
 			}
+			if page.Timeline && phaseFirstResponse {
+				if resumeCursor != "" && c.meta.cursor != resumeCursor {
+					return result, checkpointFailure()
+				}
+				phaseFirstResponse = false
+			}
+			page.RequestCursor = c.meta.cursor
 			if page.Profile != nil {
 				p := page.Profile
 				if !userIDPattern.MatchString(p.ID) || !usernamePattern.MatchString(p.Username) {
@@ -507,6 +595,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				pages = append(pages, page)
 			}
 			for _, page := range pages {
+				truncated := false
+				emptyPage := len(page.Posts) == 0
 				knownPosts := identity.KnownPostIDs
 				if identity.LookupKnownPosts != nil {
 					ids := make([]string, 0, len(page.Posts))
@@ -545,6 +635,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					}
 					if !known {
 						if newPosts >= limit {
+							truncated = true
 							continue
 						}
 						newPosts++
@@ -553,6 +644,35 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					filtered = append(filtered, p)
 				}
 				page.Posts = filtered
+				if page.Timeline {
+					progress.UserID = verifiedID
+					phase := &progress.Posts
+					if replies {
+						phase = &progress.Replies
+					}
+					if phase.Head == "" && page.RequestCursor == "" {
+						for _, p := range filtered {
+							if len(p.ID) > len(phase.Head) || len(p.ID) == len(phase.Head) && p.ID > phase.Head {
+								phase.Head = p.ID
+							}
+						}
+					}
+					if !truncated && page.NextCursor != "" {
+						if page.NextCursor == page.RequestCursor {
+							if !emptyPage {
+								return result, checkpointFailure()
+							}
+							phase.Done = true
+						}
+						phase.Cursor = page.NextCursor
+					}
+					if !truncated && (page.End || boundaryReached || !identity.Catchup && knownStreak >= knownBoundaryPosts) {
+						phase.Done = true
+					}
+					if checkpointing {
+						page.Progress = &progress
+					}
+				}
 				if err = save(page); err != nil {
 					return result, err
 				}
@@ -565,11 +685,32 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					result.Stop = "limit_reached"
 					return result, nil
 				}
+				// Check inside the loop as several responses can be buffered while
+				// the profile request is still verifying this user's identity.
+				if checkpointing && result.Pages >= checkpointPageBudget {
+					phase := progress.Posts
+					if replies {
+						phase = progress.Replies
+					}
+					if phase.Done && !replies && !hitScrollLimit {
+						result.Stop = "known_boundary_reached"
+						return finish(), nil
+					}
+					if !phase.Done && phase.Cursor == "" {
+						return result, checkpointFailure()
+					}
+					result.Stop = "page_budget_reached"
+					return result, nil
+				}
 			}
-			if identity.Catchup && boundaryReached {
+			phaseDone := progress.Posts.Done
+			if replies {
+				phaseDone = progress.Replies.Done
+			}
+			if phaseDone {
 				if replies {
 					if err = startOriginalTimeline(); err != nil {
-						return result, errors.New("回复追赶边界已到达，但无法打开普通推文时间线")
+						return result, err
 					}
 					continue
 				}
@@ -578,26 +719,15 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					return result, nil
 				}
 				result.Stop = "known_boundary_reached"
-				return result, nil
-			}
-			// A run still starts at the top so new posts cannot be skipped. Once
-			// eight consecutive timeline entries are already archived, older pages
-			// are outside the incremental window and need not be fetched again.
-			if !identity.Catchup && knownStreak >= knownBoundaryPosts {
-				if replies {
-					if err = startOriginalTimeline(); err != nil {
-						return result, errors.New("回复增量边界已到达，但无法打开普通推文时间线")
-					}
-					continue
-				}
-				if hitScrollLimit {
-					result.Stop = "max_scrolls_reached"
-					return result, nil
-				}
-				result.Stop = "known_boundary_reached"
-				return result, nil
+				return finish(), nil
 			}
 		case <-ticker.C:
+			// Pacing can hold a fetch longer than the normal idle threshold. It
+			// must never be mistaken for the end of a timeline or spend scrolls.
+			if identity.RequestBudget != nil && identity.RequestBudget.pending.Load() > 0 {
+				idle = 0
+				continue
+			}
 			type pageState struct {
 				Path   string  `json:"path"`
 				Denied bool    `json:"denied"`
@@ -638,6 +768,12 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				}
 				if scrolls >= maxScrolls {
 					hitScrollLimit = true
+					// With a durable cursor, continue this stream next time instead
+					// of pretending it finished and starting another full timeline.
+					if checkpointing && (progress.Posts.Cursor != "" || progress.Replies.Cursor != "") {
+						result.Stop = "max_scrolls_reached"
+						return result, nil
+					}
 				}
 				if replies {
 					// Modern reply timelines do not contain all original posts.
@@ -649,10 +785,19 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					continue
 				}
 				result.Stop = "no_new_posts_observed"
+				if !hitScrollLimit {
+					progress.UserID = verifiedID
+					progress.Posts.Done = true
+					if checkpointing {
+						if err = save(Page{Progress: &progress}); err != nil {
+							return result, err
+						}
+					}
+				}
 				if hitScrollLimit {
 					result.Stop = "max_scrolls_reached"
 				}
-				return result, nil
+				return finish(), nil
 			}
 			// Reach the loaded timeline's end to trigger its next page. Small fixed
 			// scrolls can consume the entire budget inside a single media-heavy page.

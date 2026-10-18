@@ -318,7 +318,7 @@ func archiveUsers(db *database.DB) ([]UserView, error) {
 }
 
 func recentRuns(db *database.DB) ([]map[string]any, error) {
-	r, err := db.Query("SELECT id,target,started_at,COALESCE(finished_at,''),status,posts_seen,message FROM runs ORDER BY id DESC LIMIT 20")
+	r, err := db.Query("SELECT r.id,r.target,r.started_at,COALESCE(r.finished_at,''),r.status,COALESCE(m.posts_read,r.posts_seen),r.message,m.new_posts FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id ORDER BY r.id DESC LIMIT 20")
 	if err != nil {
 		return nil, err
 	}
@@ -326,11 +326,12 @@ func recentRuns(db *database.DB) ([]map[string]any, error) {
 	result := []map[string]any{}
 	for r.Next() {
 		var id, posts int
+		var added sql.NullInt64
 		var target, start, end, status, message string
-		if err = r.Scan(&id, &target, &start, &end, &status, &posts, &message); err != nil {
+		if err = r.Scan(&id, &target, &start, &end, &status, &posts, &message, &added); err != nil {
 			return nil, err
 		}
-		result = append(result, map[string]any{"id": id, "target": target, "started_at": start, "finished_at": end, "status": status, "posts": posts, "message": message})
+		result = append(result, map[string]any{"id": id, "target": target, "started_at": start, "finished_at": end, "status": status, "posts": posts, "message": message, "new_posts": nullableCount(added)})
 	}
 	return result, r.Err()
 }
@@ -392,6 +393,13 @@ func (a *App) missingMonitor(result sql.Result, name string) error {
 	}
 	if count == 0 {
 		return fmt.Errorf("监控账号不存在")
+	}
+	return nil
+}
+
+func nullableCount(n sql.NullInt64) any {
+	if n.Valid {
+		return n.Int64
 	}
 	return nil
 }

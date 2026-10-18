@@ -115,6 +115,7 @@
               <div class="form-actions"><button class="button secondary" type="submit" value="save">保存接口配置</button><button class="button primary" type="submit" value="fetch">保存并获取 Cookie</button></div>
             </fieldset><p id="cookie-api-result" class="field-help" role="status" aria-live="polite"></p></form>
           </div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>限流状态</h2><p>手动清除 XM 的冷却等待和共享请求预算。</p></div></div><div class="panel-body"><p class="field-help">清空后，已启用的任务将按自动轮询和暂停设置继续执行。归档数据、分页断点和排队任务会保留。此操作不能解除 X 服务器端的限制，仍可能再次收到限流。</p><button id="reset-rate-limit" class="button secondary" type="button">清空限流状态</button><p id="rate-limit-reset-result" class="field-help" role="status" aria-live="polite"></p></div></div>
           <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#monitors">前往监控账号 →</a></p>
         </section>
         <section id="settings-network" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-network" hidden>

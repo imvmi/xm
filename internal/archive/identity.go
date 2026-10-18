@@ -15,6 +15,7 @@ var userIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 
 // TargetIdentity keeps the archive key stable when the public handle changes.
 type TargetIdentity struct {
+	RequestBudget       *RequestBudget                          `json:"-"`
 	UserID              string                                  `json:"user_id"`
 	CurrentUsername     string                                  `json:"current_username"`
 	ReferencePostID     string                                  `json:"-"`
@@ -24,6 +25,8 @@ type TargetIdentity struct {
 	CatchupPostAnchor   string                                  `json:"-"`
 	CatchupReplyAnchor  string                                  `json:"-"`
 	CatchupScrollBudget int                                     `json:"-"`
+	Progress            CollectionProgress                      `json:"-"`
+	DurableProgress     bool                                    `json:"-"`
 }
 
 // KnownTargetPostIDs checks only the current response's IDs against the entire

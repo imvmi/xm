@@ -40,10 +40,14 @@ type Profile struct {
 }
 
 type Page struct {
-	Profile     *Profile
-	Posts       []Post
-	Timeline    bool
-	Unavailable int
+	Profile       *Profile
+	Posts         []Post
+	Timeline      bool
+	Unavailable   int
+	NextCursor    string
+	RequestCursor string
+	End           bool
+	Progress      *CollectionProgress
 }
 type object = map[string]any
 
@@ -126,6 +130,9 @@ func ParsePage(data []byte, operation string) (Page, error) {
 		if content == nil {
 			return
 		}
+		if strings.EqualFold(str(at(content, "cursorType")), "Bottom") {
+			page.NextCursor = str(at(content, "value"))
+		}
 		if r := at(content, "tweet_results", "result"); r != nil {
 			if wrapped := at(r, "tweet"); wrapped != nil {
 				r = wrapped
@@ -158,6 +165,9 @@ func ParsePage(data []byte, operation string) (Page, error) {
 		}
 	}
 	for _, instruction := range instructions {
+		if str(at(instruction, "type")) == "TimelineTerminateTimeline" && strings.EqualFold(str(at(instruction, "direction")), "Bottom") {
+			page.End = true
+		}
 		for _, entry := range array(at(instruction, "entries")) {
 			item(at(entry, "content"))
 		}

@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +111,20 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		a.changeMu.Unlock()
 		return false, nil
 	}
+	budget, err := a.store.LoadRequestBudget(cookies)
+	if err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
+	budgetUntil := budget.Until()
+	if err = setState(a.store.DB, "request_budget_until", strconv.FormatInt(budgetUntil.Unix(), 10)); err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
+	if budgetUntil.After(time.Now()) {
+		a.changeMu.Unlock()
+		return false, nil
+	}
 	// Settings/import operations and claiming a job are serialized. A replacement
 	// cookie or proxy always takes effect for the next job, never halfway through one.
 	cookieGeneration := state(a.store.DB, "cookie_imported")
@@ -126,7 +142,23 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	if autoBatch {
 		condition = "m.enabled=1 OR m.requested=1"
 	}
-	rows, err := a.store.DB.Query("SELECT " + monitorColumns + " FROM monitors m WHERE m.running=0 AND (" + condition + ") ORDER BY m.requested DESC,m.username")
+	var jobArgs []any
+	if autoBatch {
+		var pending []string
+		if raw := state(a.store.DB, "budget_batch_pending"); raw != "" {
+			if err = json.Unmarshal([]byte(raw), &pending); err != nil {
+				a.changeMu.Unlock()
+				return false, err
+			}
+		}
+		if len(pending) > 0 {
+			condition = "m.requested=1 OR (m.enabled=1 AND m.username IN (" + strings.TrimRight(strings.Repeat("?,", len(pending)), ",") + "))"
+			for _, target := range pending {
+				jobArgs = append(jobArgs, target)
+			}
+		}
+	}
+	rows, err := a.store.DB.Query("SELECT "+monitorColumns+" FROM monitors m WHERE m.running=0 AND ("+condition+") ORDER BY m.requested DESC,m.last_started,m.username", jobArgs...)
 	if err != nil {
 		a.changeMu.Unlock()
 		return false, err
@@ -148,8 +180,11 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if len(jobs) == 0 {
+		if autoBatch {
+			err = setState(a.store.DB, "budget_batch_pending", "")
+		}
 		a.changeMu.Unlock()
-		return false, nil
+		return false, err
 	}
 	s.mu.Lock()
 	s.active = true
@@ -185,9 +220,18 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		defer session.Close()
 	}
 
+	baseCollect := collect
+	collect = func(ctx context.Context, cfg archive.Config, cookies archive.Cookies, target string, identity archive.TargetIdentity, limit int, replies bool, save func(archive.Page) error) (archive.Collection, error) {
+		identity.RequestBudget = budget
+		return baseCollect(ctx, cfg, cookies, target, identity, limit, replies, save)
+	}
 	processed := []string{}
 	globalStop := false
-	for _, m := range jobs {
+	rateStopped := false
+	budgetStopped := false
+	batchSuccessful := true
+	batchHadFailure := autoBatch && state(a.store.DB, "budget_batch_failed") == "1"
+	for jobIndex, m := range jobs {
 		var enabled, requested bool
 		if err = a.store.DB.QueryRow("SELECT enabled,requested FROM monitors WHERE username=?", m.Username).Scan(&enabled, &requested); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -218,26 +262,95 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		s.cancel = nil
 		s.mu.Unlock()
 		processed = append(processed, m.Username)
+		if kind != "" || targetCancelled {
+			batchSuccessful = false
+			if kind != "budget" || targetCancelled {
+				batchHadFailure = true
+			}
+		}
 		log.Printf("collection finish target=%s kind=%s duration=%s", m.Username, kind, time.Since(startedAt).Round(time.Millisecond))
 		if runErr != nil {
 			return true, runErr
+		}
+		if kind == "budget_storage" {
+			return true, errors.New("共享请求预算无法保存，已停止发送采集请求")
 		}
 		if kind == "auth" && !targetCancelled {
 			if err = a.recoverCookie(batchCtx, cookieGeneration, m.Username); err != nil {
 				return true, err
 			}
 		}
-		if kind == "auth" || kind == "auth_replaced" || kind == "rate" {
+		if until := budget.Until(); until.After(time.Now()) || kind == "budget" {
+			if err = setState(a.store.DB, "request_budget_until", strconv.FormatInt(until.Unix(), 10)); err != nil {
+				return true, err
+			}
+			budgetStopped = true
+			if autoBatch {
+				pending := []string{}
+				if kind == "budget" {
+					pending = append(pending, m.Username)
+				}
+				for _, job := range jobs[jobIndex+1:] {
+					pending = append(pending, job.Username)
+				}
+				raw, _ := json.Marshal(pending)
+				if err = setState(a.store.DB, "budget_batch_pending", string(raw)); err != nil {
+					return true, err
+				}
+				if len(pending) > 0 {
+					batchSuccessful = false
+				}
+			} else {
+				batchSuccessful = false
+			}
+		}
+		if kind == "auth" || kind == "auth_replaced" || kind == "rate" || budgetStopped {
 			globalStop = true
+			rateStopped = kind == "rate"
 			break
 		}
 	}
-	if autoBatch && !globalStop {
+	if autoBatch && budgetStopped {
+		value := "0"
+		if batchHadFailure {
+			value = "1"
+		}
+		if err = setState(a.store.DB, "budget_batch_failed", value); err != nil {
+			return true, err
+		}
+	}
+	if autoBatch && !budgetStopped {
+		if err = setState(a.store.DB, "budget_batch_failed", ""); err != nil {
+			return true, err
+		}
+		if err = setState(a.store.DB, "budget_batch_pending", ""); err != nil {
+			return true, err
+		}
+	}
+	if autoBatch && (!globalStop || rateStopped || budgetStopped) {
 		next := time.Now().Unix() + int64(a.Config().DefaultInterval)
+		if rateStopped {
+			until, _ := strconv.ParseInt(state(a.store.DB, "cooldown_until"), 10, 64)
+			next = max(next, until)
+		}
 		for _, target := range processed {
 			if _, err = a.store.DB.Exec("UPDATE monitors SET next_run=? WHERE username=? AND enabled=1", next, target); err != nil {
 				return true, err
 			}
+		}
+	}
+	// A single manual success is not evidence that the whole batch can run.
+	if autoBatch && batchSuccessful && !batchHadFailure && len(processed) > 0 {
+		tx, err := a.store.DB.Begin()
+		if err != nil {
+			return true, err
+		}
+		defer tx.Rollback()
+		if err = saveRateLimit(tx, 0, 0); err != nil {
+			return true, err
+		}
+		if err = tx.Commit(); err != nil {
+			return true, err
 		}
 	}
 	return true, nil
@@ -254,7 +367,13 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0 WHERE username=?", m.Username)
 		return "", err
 	}
+	if _, err = a.store.DB.Exec("INSERT INTO run_metrics(run_id,new_posts,posts_read) VALUES(?,0,0)", id); err != nil {
+		return "", err
+	}
 	identity, collectErr := a.store.TargetIdentity(m.Username)
+	if collectErr == nil && m.Catchup {
+		identity.Progress, collectErr = a.store.LoadCollectionProgress(m.Username, identity.UserID)
+	}
 	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
 		return a.store.KnownTargetPostIDs(jobCtx, m.Username, ids)
 	}
@@ -269,6 +388,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		}
 	}
 	identity.Catchup = m.Catchup
+	identity.DurableProgress = true
 	identity.CatchupPostAnchor = postAnchor
 	identity.CatchupReplyAnchor = replyAnchor
 	identity.CatchupScrollBudget = m.CatchupScrolls
@@ -283,7 +403,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 				profile := *p.Profile
 				latestProfile = &profile
 			}
-			return a.store.SavePosts(m.Username, p.Posts)
+			return a.store.SaveCollectionPage(m.Username, id, p)
 		})
 	}
 	if jobCtx.Err() == nil && latestProfile != nil && latestProfile.AvatarURL != "" {
@@ -298,11 +418,19 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	ended := time.Now().Unix()
 	status, message := "bounded_complete", result.Stop
-	bounded := result.Stop == "limit_reached" || result.Stop == "max_scrolls_reached"
-	complete := collectErr == nil && !bounded
+	bounded := result.Stop == "limit_reached" || result.Stop == "max_scrolls_reached" || result.Stop == "page_budget_reached"
+	refreshHead := collectErr == nil && !bounded && result.NeedsHeadRefresh
+	complete := collectErr == nil && !bounded && !refreshHead
 	if collectErr == nil && bounded {
 		status = "incomplete"
 		message = incompleteCollectionMessage
+		if result.Stop == "page_budget_reached" {
+			message = "本轮已保存分页断点，下轮从未完成的位置继续"
+		}
+	}
+	if refreshHead {
+		status, message = "incomplete", "历史断点已追赶完成，下轮检查补采期间的新推文"
+		postAnchor, replyAnchor = result.RefreshPostAnchor, result.RefreshReplyAnchor
 	}
 	failure := collectErr
 	if failure == nil {
@@ -324,6 +452,11 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	if failure != nil {
 		failures = m.Failures + 1
 	}
+	budgetWaiting := archive.FailureKind(collectErr) == "budget" && jobCtx.Err() == nil
+	if budgetWaiting {
+		status = "budget_wait"
+		failures = m.Failures
+	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	if collectErr == nil && jobCtx.Err() == nil && state(a.store.DB, "cookie_imported") == cookieGeneration {
@@ -336,15 +469,15 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			return "", err
 		}
 	}
-	if archive.FailureKind(collectErr) == "access" || archive.FailureKind(collectErr) == "identity" {
+	if archive.FailureKind(collectErr) == "access" || archive.FailureKind(collectErr) == "identity" || archive.FailureKind(collectErr) == "checkpoint" {
 		if _, err = a.store.DB.Exec("UPDATE monitors SET enabled=0,requested=0 WHERE username=?", m.Username); err != nil {
 			return "", err
 		}
 	}
+	rateUntil, rateFailures := int64(0), 0
 	if archive.FailureKind(collectErr) == "rate" {
-		if err = setState(a.store.DB, "cooldown_until", strconv.FormatInt(ended+900, 10)); err != nil {
-			return "", err
-		}
+		previous, _ := strconv.Atoi(state(a.store.DB, "rate_limit_failures"))
+		rateUntil, rateFailures = rateLimitDeadline(ended, a.Config().DefaultInterval, previous, collectErr)
 	}
 	var count int
 	_ = a.store.DB.QueryRow("SELECT COUNT(*) FROM target_posts WHERE target=?", m.Username).Scan(&count)
@@ -352,20 +485,41 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	if failure != nil {
 		lastError = message
 	} else if !complete {
-		lastError = incompleteCollectionMessage
+		lastError = message
 	}
 	catchup := !complete
 	catchupScrolls := m.CatchupScrolls
-	if catchup {
+	if catchup && collectErr == nil && result.Stop == "max_scrolls_reached" && jobCtx.Err() == nil {
 		catchupScrolls = min(max(catchupScrolls+cfg.MaxScrolls, cfg.MaxScrolls), max(1000-cfg.MaxScrolls, 0))
-	} else {
+	} else if !catchup {
 		postAnchor, replyAnchor, catchupScrolls = "", "", 0
+	}
+	if refreshHead {
+		catchupScrolls = 0
 	}
 	tx, err := a.store.DB.Begin()
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
+	if (complete || refreshHead) && jobCtx.Err() == nil {
+		if _, err = tx.Exec("DELETE FROM collection_progress WHERE target=?", m.Username); err != nil {
+			return "", err
+		}
+	}
+	if rateUntil > 0 {
+		if err = saveRateLimit(tx, rateUntil, rateFailures); err != nil {
+			return "", err
+		}
+		if _, err = tx.Exec("UPDATE monitors SET next_run=CASE WHEN next_run<? THEN ? ELSE next_run END WHERE username=?", rateUntil, rateUntil, m.Username); err != nil {
+			return "", err
+		}
+	}
+	if budgetWaiting && m.Requested {
+		if _, err = tx.Exec("UPDATE monitors SET requested=1 WHERE username=?", m.Username); err != nil {
+			return "", err
+		}
+	}
 	if err = archive.EndRunTx(tx, id, status, result.Posts, message); err != nil {
 		return "", err
 	}
@@ -376,6 +530,9 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	if err = tx.Commit(); err != nil {
 		return "", err
+	}
+	if rateUntil > 0 {
+		log.Printf("collection rate limit target=%s failures=%d retry_at=%s detail=%s", m.Username, rateFailures, time.Unix(rateUntil, 0).UTC().Format(time.RFC3339), message)
 	}
 	kind := ""
 	batchKind := ""
@@ -392,7 +549,11 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		kind = ""
 		batchKind = "auth_replaced"
 	}
-	err = a.recordNotifications(cfg, m, complete && failure == nil, jobCtx.Err() != nil, kind, failures)
+	notificationKind := kind
+	if budgetWaiting {
+		notificationKind = ""
+	}
+	err = a.recordNotifications(cfg, m, complete && failure == nil, jobCtx.Err() != nil, notificationKind, failures)
 	return batchKind, err
 }
 

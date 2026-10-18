@@ -32,6 +32,9 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 | `media` | `(post_id, media_id)` | 媒体来源、下载状态、本地路径/远程对象键、存储 ID、SHA-256、大小、重试次数及下次重试时间 |
 | `media_directories` | `owner_key` | 作者身份到唯一媒体目录的固定映射 |
 | `runs` | 自增 `id` | 每轮采集的目标、起止时间、状态、数量及错误摘要 |
+| `run_metrics` | `run_id` | 每页提交的读取与新增关联计数；旧记录缺失时不推算 |
+| `request_budgets` | `scope` | 登录凭据 SHA-256 摘要、滚动请求时间、接口响应额度与主动等待时间；不存 Cookie 或请求 URL |
+| `collection_progress` | `target` | 绑定用户 ID、两条时间线的分页游标、完成状态和补采前顶部边界 |
 
 `target_posts.post_id` 和 `media.post_id` 外键引用 `posts.id`。引用推文与主推文使用同一张 `posts` 表，同一事务递归保存；引用本身不额外加入目标时间线。`reply_to`、`quote_id`、`repost_id` 允许指向未返回或无权限读取的内容，因此不设强制外键。
 
@@ -59,3 +62,5 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 ## 备份
 
 备份数据库、自动生成的启动 YAML，以及本地媒体或远程对象。SQLite 应停服后复制数据目录，或使用一致性备份工具；MySQL 需要数据库快照或一致性导出。仅备份 YAML 不能恢复配置、Cookie 或归档内容。
+
+分页断点、推文和本轮计数在同一事务中提交；记录不含请求 URL、Cookie 或认证头。`run_metrics` 随采集记录清理，`collection_progress` 在任务完成或显式重置后删除。

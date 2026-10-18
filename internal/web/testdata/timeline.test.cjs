@@ -10,7 +10,7 @@ function fixture(){
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html=''},insertAdjacentHTML(_,html){this.html+=html},querySelector(){return $('heading')}});return nodes.get(id)};
  const state={authenticated:true,view:'user',target:'alice',timelineTab:'posts',postRequest:0,postIDs:new Set(),postsLoading:false,postsError:false,hasMore:false,offset:0,total:0};
  const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',toast:()=>{},api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
- vm.runInContext(source.slice(source.indexOf('function postHTML('),source.indexOf("$('posts').addEventListener")),ctx);
+ vm.runInContext(source.slice(source.indexOf('function quoteHTML('),source.indexOf("$('posts').addEventListener")),ctx);
  const page=(ids,total)=>({total,items:ids.map(id=>({id,username:'alice',text:`post-${id}`,media:[]}))});
  return {ctx,state,$,requests,observer,page};
 }
@@ -51,4 +51,17 @@ test('an empty final page stops loading even when the count changed',async()=>{
  const f=fixture();const pending=f.ctx.refreshPosts();f.requests[0].resolve(f.page([],10));await pending;
  assert.equal(f.state.hasMore,false);assert.equal(f.$('post-empty').hidden,false);
  await f.ctx.loadMorePosts();assert.equal(f.requests.length,1);
+});
+test('the author handle opens the source post without redundant reply controls',()=>{
+ const f=fixture();
+ const html=f.ctx.postHTML({id:'42',username:'Vickiehavefun',name:'Vickie',created_at:1,text:'reply',reply_to:'41',media:[]});
+ assert.match(html,/<a class="timeline-handle" href="https:\/\/x\.com\/i\/status\/42"[^>]*>@Vickiehavefun<\/a>/);
+ assert.doesNotMatch(html,/>\s*回复\s*</);
+ assert.doesNotMatch(html,/查看原推文|post-footer/);
+});
+test('an archived quote links its handle without a separate source footer',()=>{
+ const f=fixture();
+ const html=f.ctx.quoteHTML({quote_id:'77',quote:{id:'77',username:'fishball173',name:'fishball',created_at:1,text:'quoted',media:[]}});
+ assert.match(html,/<a class="quote-handle" href="https:\/\/x\.com\/i\/status\/77"[^>]*>@fishball173<\/a>/);
+ assert.doesNotMatch(html,/已归档的引用推文|quote-source/);
 });

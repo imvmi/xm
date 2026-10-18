@@ -2,9 +2,12 @@ package archive
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
@@ -17,16 +20,20 @@ func TestBrowserCollectionOffline(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
 		t.Skip("set XM_BROWSER_TEST=1 to run real-Chrome fixture integration")
 	}
+	retryAt := time.Now().UTC().Add(12 * time.Hour).Truncate(time.Second)
 	for _, test := range []struct {
 		name, body, operation string
 		wantErr               bool
+		status                int64
+		retryHeader           string
 	}{
-		{"authorized", string(fixture(t, "timeline.json")), "UserTweets", false},
-		{"originals_timeline", string(fixture(t, "timeline.json")), "UserOriginalsTimeline", false},
-		{"replies_timeline", string(fixture(t, "timeline.json")), "UserRepliesTimeline", false},
-		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true},
-		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true},
-		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true},
+		{"authorized", string(fixture(t, "timeline.json")), "UserTweets", false, 200, ""},
+		{"originals_timeline", string(fixture(t, "timeline.json")), "UserOriginalsTimeline", false, 200, ""},
+		{"replies_timeline", string(fixture(t, "timeline.json")), "UserRepliesTimeline", false, 200, ""},
+		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true, 200, ""},
+		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true, 200, ""},
+		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true, 200, "x-rate-limit-reset"},
+		{"http_429", "", "UserOriginalsTimeline", true, 429, "Retry-After"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -51,6 +58,8 @@ func TestBrowserCollectionOffline(t *testing.T) {
 							return
 						}
 						body, ct := "", "text/html"
+						status := int64(200)
+						headers := []*fetch.HeaderEntry{}
 						switch {
 						case strings.Contains(e.Request.URL, "/UserByScreenName"):
 							ct = "application/json"
@@ -58,11 +67,18 @@ func TestBrowserCollectionOffline(t *testing.T) {
 						case strings.HasSuffix(e.Request.URL, "/"+test.operation):
 							ct = "application/json"
 							body = test.body
+							status = test.status
+							if test.retryHeader == "Retry-After" {
+								headers = append(headers, &fetch.HeaderEntry{Name: test.retryHeader, Value: retryAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")})
+							} else if test.retryHeader != "" {
+								headers = append(headers, &fetch.HeaderEntry{Name: test.retryHeader, Value: strconv.FormatInt(retryAt.Unix(), 10)})
+							}
 						case strings.HasSuffix(e.Request.URL, "/alice") || strings.HasSuffix(e.Request.URL, "/alice/with_replies"):
 							body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{await fetch('/i/api/graphql/fixture/UserByScreenName');await new Promise(r=>setTimeout(r,300));await fetch('/i/api/graphql/fixture/` + test.operation + `');})()</script></body></html>`
 						}
+						headers = append(headers, &fetch.HeaderEntry{Name: "Content-Type", Value: ct})
 						_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
-							_, err := cdp.Call(c, target, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: 200, ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: ct}}, Body: []byte(body)})
+							_, err := cdp.Call(c, target, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: status, ResponseHeaders: headers, Body: []byte(body)})
 							return err
 						}))
 					}
@@ -80,6 +96,12 @@ func TestBrowserCollectionOffline(t *testing.T) {
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("expected explicit failure")
+				}
+				if test.retryHeader != "" {
+					var failure *Failure
+					if !errors.As(err, &failure) || failure.Kind != "rate" || !failure.RetryAt.Equal(retryAt) || !strings.Contains(failure.Message, test.operation) {
+						t.Fatalf("lost rate-limit deadline/operation: %#v", err)
+					}
 				}
 				var n int
 				s.DB.QueryRow("SELECT count(*) FROM posts").Scan(&n)

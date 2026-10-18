@@ -22,7 +22,7 @@ function showLogin() {
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','monitor-rows','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
-  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('cookie-api-token-help').textContent='';
+  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('rate-limit-reset-result').textContent='';$('cookie-api-token-help').textContent='';
   document.querySelectorAll('dialog[open]').forEach(d=>d.close());
   $('notification-editor').hidden=true;state.monitors=[];state.users=[];state.settings=null;state.overview=null;state.navRequest++;
 }
@@ -39,15 +39,16 @@ $('logout').addEventListener('click',()=>action($('logout'),async()=>{await api(
 async function refreshOverview() {
   const o=await api('/overview');state.overview=o;const c=o.counts;
   $('nav-count').textContent=number(c.posts);$('stat-posts').textContent=number(c.posts);$('stat-today').textContent=number(c.today);$('stat-monitors').textContent=number(c.monitors);$('stat-active').textContent=number(c.active);$('stat-media').textContent=number(c.media);$('stat-bytes').textContent=bytes(c.media_bytes);
-  const cooling=Number(o.cooldown_until)>o.server_time;
-  let label=o.running?`正在采集 @${o.running}`:o.cookie_blocked?'登录状态待处理':!o.cookie_ready?'等待导入 Cookie':cooling?'限流冷却中':o.paused?'自动轮询已暂停':'服务运行中';
+  const cooling=Number(o.cooldown_until)>o.server_time, budgeting=Number(o.request_budget_until)>o.server_time;
+  let label=o.running?`正在采集 @${o.running}`:o.cookie_blocked?'登录状态待处理':!o.cookie_ready?'等待导入 Cookie':cooling?'限流冷却中':budgeting?'请求预算等待中':o.paused?'自动轮询已暂停':'服务运行中';
   $('service-state').replaceChildren();const dot=document.createElement('span');dot.className='status-dot';$('service-state').append(dot,document.createTextNode(label));
   $('pause-all').textContent=o.paused?'恢复自动轮询':'暂停自动轮询';
   const banner=$('connection-banner');banner.hidden=true;banner.replaceChildren();
   let warning='';
   if(o.cookie_blocked)warning=`采集已暂停：${o.cookie_blocked}。请重新导入 Cookie。`;
   else if(!o.cookie_ready)warning='还没有可用的 Cookie。先完成连接设置，监控任务才能开始采集。';
-  else if(cooling)warning=`X 请求限流，全部采集将在 ${date(Number(o.cooldown_until),true)} 后恢复。`;
+  else if(cooling)warning=`X 请求限流，全部采集已进入冷却，最早于 ${date(Number(o.cooldown_until),true)} 重试；实际恢复以 X 响应为准。`;
+  else if(budgeting)warning=`为避免触发限流，采集已主动等待，最早于 ${date(Number(o.request_budget_until),true)} 继续；已保存的分页断点会保留。`;
   else if(o.scheduler_error)warning=o.scheduler_error;
   if(warning){banner.hidden=false;banner.append(document.createTextNode(warning+' '));const link=document.createElement('a');link.href='#settings';link.textContent='前往连接设置 →';banner.append(link);}
 }
@@ -116,9 +117,10 @@ function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
  if(!p.quote||depth>=4)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
  const q=p.quote;
- return `<div class="quote-card"><div class="quote-content"><div class="quote-author">${avatar(q.username,'tiny-quote',state.users?.find(u=>(u.current_username||u.username)===q.username)?.avatar_url)}<strong>${escape(q.name||q.username)}</strong><span>@${escape(q.username)}</span><span>· ${escape(date(q.created_at,true))}</span></div><div class="post-text quote-text">${escape(q.text)}</div>${q.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div><a class="quote-source" href="https://x.com/i/status/${encodeURIComponent(q.id)}" target="_blank" rel="noopener noreferrer">已归档的引用推文 ${icon('arrow')}</a></div>`;
+ const source=`https://x.com/i/status/${encodeURIComponent(q.id)}`;
+ return `<div class="quote-card"><div class="quote-content"><div class="quote-author">${avatar(q.username,'tiny-quote',state.users?.find(u=>(u.current_username||u.username)===q.username)?.avatar_url)}<strong>${escape(q.name||q.username)}</strong><a class="quote-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(q.username)} 的这条引用推文">@${escape(q.username)}</a><span>· ${escape(date(q.created_at,true))}</span></div><div class="post-text quote-text">${escape(q.text)}</div>${q.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div></div>`;
 }
-function postHTML(p){return `<article class="post"><div class="post-body">${avatar(p.username,'post-avatar',state.users?.find(u=>(u.current_username||u.username)===p.username)?.avatar_url)}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${escape(p.name||p.username)}</strong><span class="timeline-meta"><span class="timeline-handle">@${escape(p.username)}</span><span class="timeline-date"> · ${escape(date(p.created_at,true))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':p.reply_to?'<span class="badge neutral">回复</span>':''}</div><div class="post-main"><div class="post-text">${escape(p.text)}</div>${p.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div></div><footer class="post-footer"><a href="https://x.com/i/status/${encodeURIComponent(p.id)}" target="_blank" rel="noopener noreferrer">查看原推文${icon('arrow')}</a></footer></article>`;}
+function postHTML(p){const source=`https://x.com/i/status/${encodeURIComponent(p.id)}`;return `<article class="post"><div class="post-body">${avatar(p.username,'post-avatar',state.users?.find(u=>(u.current_username||u.username)===p.username)?.avatar_url)}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${escape(p.name||p.username)}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at,true))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}</div><div class="post-main"><div class="post-text">${escape(p.text)}</div>${p.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div></div></article>`;}
 const timelineObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{
  if(entries.some(e=>e.isIntersecting)&&!state.postsError)loadMorePosts();
 },{rootMargin:'0px 0px 320px 0px'}):null;
@@ -172,7 +174,7 @@ $('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),as
 $('refresh-user').addEventListener('click',()=>action($('refresh-user'),async()=>{await refreshOverview();await refreshUsers();renderProfile();await refreshPosts();}));
 
 
-function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested)return ['等待执行','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='incomplete')return ['未追赶完成','warn'];if(m.last_error)return ['等待重试','error'];return ['监控中','']; }
+function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested)return ['等待执行','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(Number(state.overview?.request_budget_until)>state.overview?.server_time)return ['预算等待','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='budget_wait')return ['等待下次采集','neutral'];if(m.last_status==='incomplete')return ['未追赶完成','warn'];if(m.last_error)return ['等待重试','error'];return ['监控中','']; }
 async function refreshMonitors() {
   const list=await api('/monitors');if(!state.authenticated)return;state.monitors=list;
   if(!state.settings)state.settings=await api('/settings');
@@ -184,7 +186,7 @@ function renderMonitors(){
   const list=state.monitors.filter(m=>(m.username+' '+handle(m)).toLowerCase().includes(q)&&(filter==='all'||(filter==='enabled'?m.enabled:!m.enabled)));
   $('monitor-empty').hidden=state.monitors.length>0;$('monitor-no-match').hidden=!state.monitors.length||list.length>0;
   $('monitor-count').textContent=list.length+' / '+state.monitors.length+' 个账号';
-  $('monitor-rows').innerHTML=list.map(m=>{const [label,cls]=monitorStatus(m);return `<tr><td class="monitor-identity" data-label="账号"><div class="user-cell"><span class="avatar">${escape(handle(m).slice(0,2).toUpperCase())}</span><div><a href="${userURL(m.username)}"><strong>@${escape(handle(m))}</strong></a>${m.replies?'<div class="table-sub">包含回复</div>':''}${m.current_username&&m.current_username!==m.username?`<div class="table-sub">原 @${escape(m.username)} · 归档已延续</div>`:''}</div></div></td><td data-label="统一周期">${number(m.interval_seconds/60)} 分钟</td><td class="monitor-status" data-label="运行状态"><span class="badge ${cls}">${label}</span>${m.last_error?`<div class="table-sub ${m.last_status==='incomplete'?'':'error'}">${escape(m.last_error)}</div>`:''}</td><td data-label="最近 / 下次批次"><div>${escape(date(m.last_finished,true))}</div><div class="table-sub">${m.enabled?'计划 '+escape(date(m.next_run,true)):'自动轮询已暂停'}</div></td><td data-label="已归档"><strong>${number(m.posts)}</strong><div class="table-sub">上轮新增 ${m.new_posts} 条</div></td><td class="monitor-actions" data-label="操作"><div class="row-actions"><button class="text-button" data-monitor="${m.username}" data-op="${m.running||m.requested?'stop':'run'}">${m.running?'停止':m.requested?'取消排队':'立即采集'}</button><button class="text-button" data-monitor="${m.username}" data-op="edit">编辑</button><button class="text-button" data-monitor="${m.username}" data-op="toggle">${m.enabled?'暂停':'启用'}</button><button class="text-button delete" data-monitor="${m.username}" data-op="delete" ${m.running?'disabled':''}>移除</button></div></td></tr>`;}).join('');
+  $('monitor-rows').innerHTML=list.map(m=>{const [label,cls]=monitorStatus(m);return `<tr><td class="monitor-identity" data-label="账号"><div class="user-cell"><span class="avatar">${escape(handle(m).slice(0,2).toUpperCase())}</span><div><a href="${userURL(m.username)}"><strong>@${escape(handle(m))}</strong></a>${m.replies?'<div class="table-sub">包含回复</div>':''}${m.current_username&&m.current_username!==m.username?`<div class="table-sub">原 @${escape(m.username)} · 归档已延续</div>`:''}</div></div></td><td data-label="统一周期">${number(m.interval_seconds/60)} 分钟</td><td class="monitor-status" data-label="运行状态"><span class="badge ${cls}">${label}</span>${m.last_error?`<div class="table-sub ${['incomplete','budget_wait'].includes(m.last_status)?'':'error'}">${escape(m.last_error)}</div>`:''}</td><td data-label="最近 / 下次批次"><div>${escape(date(m.last_finished,true))}</div><div class="table-sub">${m.enabled?'计划 '+escape(date(m.next_run,true)):'自动轮询已暂停'}</div></td><td data-label="已归档"><strong>${number(m.posts)}</strong><div class="table-sub">上轮新增 ${m.new_posts} 条</div></td><td class="monitor-actions" data-label="操作"><div class="row-actions"><button class="text-button" data-monitor="${m.username}" data-op="${m.running||m.requested?'stop':'run'}">${m.running?'停止':m.requested?'取消排队':'立即采集'}</button>${m.last_error?.includes('请重置断点')?`<button class="text-button" data-monitor="${m.username}" data-op="reset-progress">重置断点并重试</button>`:''}<button class="text-button" data-monitor="${m.username}" data-op="edit">编辑</button><button class="text-button" data-monitor="${m.username}" data-op="toggle">${m.enabled?'暂停':'启用'}</button><button class="text-button delete" data-monitor="${m.username}" data-op="delete" ${m.running?'disabled':''}>移除</button></div></td></tr>`;}).join('');
 }
 $('monitor-search').addEventListener('input',renderMonitors);
 $('monitor-filter').addEventListener('change',renderMonitors);
@@ -203,6 +205,7 @@ $('monitor-form').addEventListener('submit',event=>{event.preventDefault();actio
 });});
 $('monitor-rows').addEventListener('click',event=>{const b=event.target.closest('[data-op]');if(!b)return;const m=state.monitors.find(m=>m.username===b.dataset.monitor);if(!m)return;action(b,async()=>{
   switch(b.dataset.op){
+    case 'reset-progress':await api('/monitors/'+encodeURIComponent(m.username)+'/reset-progress','POST');toast('断点已重置，等待采集；仍遵守限流冷却');break;
     case 'edit':await openMonitor(m);return;
     case 'delete':state.deleting=m.username;$('confirm-text').textContent='将停止监控 @'+m.username+'。';$('confirm-dialog').showModal();return;
     case 'toggle':await api('/monitors/'+m.username,'PUT',{...monitorPayload(m),enabled:!m.enabled});toast(m.enabled?'监控已暂停':'监控已启用，将按周期执行');break;
@@ -258,16 +261,24 @@ $('cookie-api-form').addEventListener('submit',event=>{
   });
 });
 $('proxy-mode').addEventListener('change',()=>$('proxy-fields').hidden=$('proxy-mode').value==='direct');
+$('reset-rate-limit').addEventListener('click',()=>action($('reset-rate-limit'),async()=>{
+  $('rate-limit-reset-result').textContent='正在清空本地限流状态…';
+  try {
+    const r=await api('/rate-limit/reset','POST');
+    $('rate-limit-reset-result').textContent=r.message;toast(r.message);
+    await refreshOverview();
+  } catch(err) { $('rate-limit-reset-result').textContent=err.message;throw err; }
+}));
 $('cookie-file').addEventListener('change',async()=>{const file=$('cookie-file').files[0];if(!file)return;if(file.size>1024*1024){toast('Cookie 文件不能超过 1 MiB',true);$('cookie-file').value='';return;}try{$('cookie-content').value=await file.text();$('cookie-file-name').textContent=file.name;}catch{toast('无法读取文件',true);}});
 $('cookie-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const content=$('cookie-content').value.trim();if(!content)throw new Error('请粘贴 Cookie 或选择文件');const r=await api('/cookies','POST',{content});$('cookie-content').value='';$('cookie-file').value='';$('cookie-file-name').textContent='或直接粘贴到上方';toast(r.message);await refreshSettings();await refreshOverview();});});
 function proxyChange() { if($('proxy-mode').value==='direct')return {proxy:''};const p=$('proxy-url').value.trim();if(p)return {proxy:p};if(!state.settings?.proxy_configured)throw new Error('请输入代理地址');return {}; }
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{await api('/settings','PUT',proxyChange());toast('代理设置已保存，下一个采集任务生效');await refreshSettings();});});
 $('test-proxy').addEventListener('click',()=>action($('test-proxy'),async()=>{$('proxy-result').textContent='正在连接 X…';try{const r=await api('/proxy-test','POST',proxyChange());$('proxy-result').textContent=`收到 HTTP ${r.status} · ${r.latency_ms} ms。${r.message}`;}catch(err){$('proxy-result').textContent=err.message;throw err;}}));
 $('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{$('chrome-result').classList.remove('error');$('chrome-result').textContent='正在检查 Chrome、Cookie、X 网络和登录状态…';try{const r=await api('/chrome-test','POST');const mark={passed:'✓',failed:'✕',skipped:'○'};$('chrome-result').textContent=r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;$('chrome-result').classList.toggle('error',!r.ok);}catch(err){$('chrome-result').textContent=err.message;$('chrome-result').classList.add('error');throw err;}}));
-const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['未追赶完成','warn'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
+const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['未追赶完成','warn'],budget_wait:['预算等待','warn'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 async function refreshRuns() {
-  const runs=await api('/runs');$('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
+  const runs=await api('/runs');$('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
 let refreshing=false;

@@ -1,12 +1,16 @@
 package archive
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Failure identifies conditions requiring scheduler action, without inspecting
 // localized error text or exposing raw upstream responses.
 type Failure struct {
 	Kind    string
 	Message string
+	RetryAt time.Time
 }
 
 func (e *Failure) Error() string      { return e.Message }

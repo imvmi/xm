@@ -49,6 +49,9 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err != nil {
 		return nil, err
 	}
+	if err = upgradeRateLimitState(s.DB, cfg.DefaultInterval, time.Now().Unix()); err != nil {
+		return nil, err
+	}
 	// All enabled accounts share one batch schedule. Preserve the earliest due
 	// time so restarting the service never postpones an already planned run.
 	var earliest sql.NullInt64
@@ -176,6 +179,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", a.overview)
 	mux.HandleFunc("GET /api/settings", a.settings)
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
+	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
 	mux.HandleFunc("GET /api/notifications", a.notificationSettings)
 	mux.HandleFunc("POST /api/notifications/channels", a.saveNotificationChannel)
 	mux.HandleFunc("DELETE /api/notifications/channels/{id}", a.deleteNotificationChannel)
@@ -201,6 +205,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/monitors/{username}", a.deleteMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/run", a.runMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
+	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
 	mux.HandleFunc("GET /api/posts", a.posts)
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +279,7 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 	current, lastError := a.scheduler.Current()
 	cfg := a.Config()
 	_, cookieErr := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"counts": c, "running": current, "scheduler_error": lastError, "paused": cfg.PollingPaused, "cookie_ready": cookieErr == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cooldown_until": state(a.store.DB, "cooldown_until"), "server_time": time.Now().Unix()})
+	respond(w, 200, map[string]any{"counts": c, "running": current, "scheduler_error": lastError, "paused": cfg.PollingPaused, "cookie_ready": cookieErr == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cooldown_until": state(a.store.DB, "cooldown_until"), "request_budget_until": state(a.store.DB, "request_budget_until"), "server_time": time.Now().Unix()})
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 	cfg := a.Config()
@@ -525,7 +530,48 @@ func (a *App) deleteMonitor(w http.ResponseWriter, r *http.Request) {
 		problem(w, 404, err.Error())
 		return
 	}
+	if _, err = a.store.DB.Exec("DELETE FROM collection_progress WHERE target=?", target); err != nil {
+		problem(w, 500, "清理分页断点失败")
+		return
+	}
 	respond(w, 200, map[string]string{"message": "已移除监控，归档内容保留"})
+}
+
+func (a *App) resetProgress(w http.ResponseWriter, r *http.Request) {
+	target, err := archive.Username(r.PathValue("username"))
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	a.changeMu.Lock()
+	defer a.changeMu.Unlock()
+	var running bool
+	if err = a.store.DB.QueryRow("SELECT running FROM monitors WHERE username=?", target).Scan(&running); err != nil {
+		problem(w, 404, "监控账号不存在")
+		return
+	}
+	if running {
+		problem(w, 409, "请先停止当前采集，再重置断点")
+		return
+	}
+	tx, err := a.store.DB.Begin()
+	if err != nil {
+		problem(w, 500, "重置断点失败")
+		return
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("DELETE FROM collection_progress WHERE target=?", target); err == nil {
+		_, err = tx.Exec("UPDATE monitors SET requested=1,last_error='',catchup_scroll_budget=0 WHERE username=?", target)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		problem(w, 500, "重置断点失败")
+		return
+	}
+	a.scheduler.Wake()
+	respond(w, 200, map[string]string{"message": "断点已重置，已归档内容保留；任务仍遵守限流冷却"})
 }
 func (a *App) runMonitor(w http.ResponseWriter, r *http.Request) {
 	if err := a.scheduler.queue(r.PathValue("username")); err != nil {

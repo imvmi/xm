@@ -3,6 +3,7 @@ package archive
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,6 +104,9 @@ func EndRunTx(tx *database.Tx, id int64, status string, count int, message strin
 		return err
 	}
 	_, err := tx.Exec("DELETE FROM runs WHERE status<>'running' AND id < (SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM runs ORDER BY id DESC LIMIT 1000) recent)")
+	if err == nil {
+		_, err = tx.Exec("DELETE FROM run_metrics WHERE run_id NOT IN (SELECT id FROM runs)")
+	}
 	return err
 }
 func (s *Store) SaveProfile(p Profile) error {
@@ -110,6 +114,13 @@ func (s *Store) SaveProfile(p Profile) error {
 	return err
 }
 func (s *Store) SavePosts(target string, posts []Post) error {
+	return s.SaveCollectionPage(target, 0, Page{Posts: posts})
+}
+
+// Commit the entire page, its next cursor and its run counters together. A
+// failed save can only replay the current page; it cannot skip unsaved posts.
+func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error {
+	posts := page.Posts
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -206,14 +217,38 @@ func (s *Store) SavePosts(target string, posts []Post) error {
 		}
 		return nil
 	}
+	added := 0
 	for _, p := range posts {
 		if err := save(p, 0); err != nil {
 			return err
 		}
 		if target != "" {
-			if _, err := tx.InsertIgnore("INSERT INTO target_posts VALUES(?,?)", "target", target, p.ID); err != nil {
+			r, err := tx.InsertIgnore("INSERT INTO target_posts VALUES(?,?)", "target", target, p.ID)
+			if err != nil {
 				return err
 			}
+			n, err := r.RowsAffected()
+			if err != nil {
+				return err
+			}
+			added += int(n)
+		}
+	}
+	if page.Progress != nil {
+		if !userIDPattern.MatchString(page.Progress.UserID) {
+			return errors.New("无效的分页断点身份")
+		}
+		raw, err := json.Marshal(page.Progress)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO collection_progress(target,state) VALUES(?,?)", []string{"target"}, []string{"state"}), target, string(raw)); err != nil {
+			return err
+		}
+	}
+	if runID > 0 {
+		if _, err = tx.Exec("UPDATE run_metrics SET new_posts=new_posts+?,posts_read=posts_read+? WHERE run_id=?", added, len(posts), runID); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()

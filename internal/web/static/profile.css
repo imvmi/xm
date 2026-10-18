@@ -134,6 +134,19 @@
 #view-user .timeline-author>span {
   font-size:14px;
 }
+#view-user .timeline-handle:hover {
+  color:#1d9bf0;
+  text-decoration:underline;
+  text-underline-offset:2px;
+}
+#view-user .quote-handle {
+  overflow-wrap:anywhere;
+}
+#view-user .quote-handle:hover {
+  color:#1d9bf0;
+  text-decoration:underline;
+  text-underline-offset:2px;
+}
 #view-user .post-header>.badge {
   padding:0;
   background:transparent;
