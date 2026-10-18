@@ -26,15 +26,18 @@ import (
 var static embed.FS
 
 type App struct {
-	store       *archive.Store
-	configPath  string
-	configMu    sync.RWMutex
-	config      archive.Config
-	changeMu    sync.Mutex
-	auth        *auth
-	scheduler   *Scheduler
-	notifier    *Notifier
-	checkChrome func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
+	store        *archive.Store
+	configPath   string
+	configMu     sync.RWMutex
+	config       archive.Config
+	changeMu     sync.Mutex
+	auth         *auth
+	scheduler    *Scheduler
+	notifier     *Notifier
+	checkChrome  func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
+	cacheLockMu  sync.Mutex
+	cacheLocks   map[string]*cacheEntryLock
+	cachePruneMu sync.Mutex
 }
 
 func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, error) {
@@ -186,6 +189,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/channels/{id}/test", a.testNotificationChannel)
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
+	mux.HandleFunc("PUT /api/storage/cache", a.updateRemoteMediaCache)
+	mux.HandleFunc("DELETE /api/storage/cache", a.clearRemoteMediaCache)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
 	mux.HandleFunc("GET /api/cookies/source", a.cookieSource)
 	mux.HandleFunc("PUT /api/cookies/source", a.saveCookieSource)
@@ -261,7 +266,7 @@ func (a *App) Handler() http.Handler {
 				problem(w, 403, "会话校验失败，请刷新页面")
 				return
 			}
-			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") {
+			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") && r.URL.Path != "/api/storage/cache" {
 				problem(w, 403, "初始化已完成，数据库与存储配置已锁定，无法修改")
 				return
 			}
@@ -642,11 +647,11 @@ func (a *App) targets(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, v)
 }
 func (a *App) media(w http.ResponseWriter, r *http.Request) {
-	var path, storageID, objectKey string
+	var path, storageID, objectKey, hash string
 	var size int64
-	err := a.store.DB.QueryRow("SELECT local_path,storage_id,object_key,bytes FROM media WHERE post_id=? AND media_id=? AND status='done'", r.PathValue("post"), r.PathValue("asset")).Scan(&path, &storageID, &objectKey, &size)
+	err := a.store.DB.QueryRow("SELECT local_path,storage_id,object_key,bytes,sha256 FROM media WHERE post_id=? AND media_id=? AND status='done'", r.PathValue("post"), r.PathValue("asset")).Scan(&path, &storageID, &objectKey, &size, &hash)
 	if err == nil && storageID != "local" {
-		a.remoteMedia(w, r, storageID, objectKey, size)
+		a.remoteMedia(w, r, storageID, objectKey, size, hash)
 		return
 	}
 	if err != nil || !strings.HasPrefix(path, "media/") {

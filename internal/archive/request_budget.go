@@ -23,7 +23,6 @@ import (
 // window covers all collection endpoints and all targets using the same login.
 const requestBudgetWindow = 15 * time.Minute
 const requestBudgetLimit = 30
-const requestBudgetSpacing = 10 * time.Second
 
 type endpointBudget struct {
 	Limit     int   `json:"limit"`
@@ -50,7 +49,11 @@ type RequestBudget struct {
 func (s *Store) LoadRequestBudget(cookies Cookies) (*RequestBudget, error) {
 	digest := sha256.Sum256([]byte(cookies.AuthToken))
 	scope := hex.EncodeToString(digest[:])
-	b := &RequestBudget{now: time.Now, spacing: requestBudgetSpacing}
+	// Do not pace individual Fetch-intercepted requests. X pages issue several
+	// GraphQL requests together and cancel requests held by the browser for too
+	// long. The rolling window and observed endpoint headers provide the safety
+	// boundary without keeping Chrome interception IDs suspended.
+	b := &RequestBudget{now: time.Now}
 	var raw string
 	err := s.DB.QueryRow("SELECT state FROM request_budgets WHERE scope=?", scope).Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

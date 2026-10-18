@@ -4,6 +4,19 @@ import (
 	"testing"
 )
 
+func TestAdvanceReachedAtUsesTimelineTailAndOnlyMovesBackward(t *testing.T) {
+	posts := []Post{
+		{CreatedAt: "Thu Oct 15 12:00:00 +0000 2026"},
+		{CreatedAt: "Fri Oct 16 12:00:00 +0000 2026"},
+	}
+	if got := advanceReachedAt("", posts); got != "2026-10-16T12:00:00Z" {
+		t.Fatal(got)
+	}
+	if got := advanceReachedAt("2026-10-14T12:00:00Z", posts); got != "2026-10-14T12:00:00Z" {
+		t.Fatal("progress moved forward", got)
+	}
+}
+
 func TestCollectionPageCommitsPostsCursorAndCounters(t *testing.T) {
 	s, err := OpenStore(t.TempDir())
 	if err != nil {
@@ -25,7 +38,7 @@ func TestCollectionPageCommitsPostsCursorAndCounters(t *testing.T) {
 		}
 	}
 	got, err := s.LoadCollectionProgress("alice", "42")
-	if err != nil || got.Posts.Cursor != "page-1" {
+	if err != nil || got.Posts.Cursor != "page-1" || got.SavedAt == 0 {
 		t.Fatal(got, err)
 	}
 	var added, read int

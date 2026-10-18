@@ -657,6 +657,9 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 							}
 						}
 					}
+					if !truncated {
+						phase.ReachedAt = advanceReachedAt(phase.ReachedAt, filtered)
+					}
 					if !truncated && page.NextCursor != "" {
 						if page.NextCursor == page.RequestCursor {
 							if !emptyPage {

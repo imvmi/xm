@@ -2,8 +2,8 @@ package archive
 
 import (
 	"context"
-	"github.com/chromedp/cdproto/fetch"
-	"github.com/chromedp/chromedp"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +11,29 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto"
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/chromedp"
 )
+
+func TestIgnoreCanceledInterception(t *testing.T) {
+	for _, message := range []string{"Invalid InterceptionId", "Invalid InterceptionId."} {
+		err := fmt.Errorf("continue request: %w", &cdproto.Error{Code: -32602, Message: message})
+		if ignored := ignoreCanceledInterception(err); ignored != nil {
+			t.Fatalf("did not ignore canceled request %q: %v", message, ignored)
+		}
+	}
+	for _, err := range []error{
+		&cdproto.Error{Code: -32602, Message: "Invalid parameters"},
+		&cdproto.Error{Code: -32000, Message: "Invalid InterceptionId."},
+		errors.New("Invalid InterceptionId. (-32602)"),
+	} {
+		if got := ignoreCanceledInterception(err); got != err {
+			t.Fatalf("ignored unrelated protocol error: %v", err)
+		}
+	}
+}
 
 func TestBrowserSharedBudgetSavesCursorAndResumesOffline(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {

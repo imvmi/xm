@@ -1,16 +1,104 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"xm/internal/archive"
 )
+
+func TestRemoteMediaCacheAvoidsRepeatedStorageReads(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	payload := []byte("cached remote media")
+	var heads, gets atomic.Int64
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			heads.Add(1)
+		case http.MethodGet:
+			gets.Add(1)
+		}
+		http.ServeContent(w, r, "cached.jpg", time.Time{}, strings.NewReader(string(payload)))
+	}))
+	defer remote.Close()
+	p := archive.StorageProfile{ID: "cache-fixture", Name: "Cache fixture", Kind: "webdav", Endpoint: remote.URL, Prefix: "archive", Timeout: 5}
+	cfg := a.Config()
+	cfg.StorageProfiles = []archive.StorageProfile{p}
+	cfg.MediaStorage = p.ID
+	if err := a.store.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a.config = cfg
+	if err := a.store.SavePosts("alice", []archive.Post{{ID: "20", Assets: []archive.Asset{{ID: "photo", Kind: "photo"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	if err := a.store.MediaResult(archive.MediaJob{PostID: "20", ID: "photo", StorageID: p.ID, ObjectKey: "archive/media/cached.jpg"}, "", int64(len(payload)), hex.EncodeToString(sum[:]), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	ok(t, b.request("PUT", "/api/storage/cache", map[string]any{"enabled": true, "max_bytes": int64(64 << 20)}, "http://localhost", true), 200)
+	first := b.request("GET", "/media/20/photo", nil, "", false)
+	ok(t, first, 200)
+	if first.Body.String() != string(payload) || first.Header().Get("X-XM-Media-Cache") != "hit" || heads.Load() == 0 || gets.Load() == 0 {
+		t.Fatal("first request did not populate cache", first.Body.String(), heads.Load(), gets.Load())
+	}
+	remoteCalls := heads.Load() + gets.Load()
+	second := b.request("GET", "/media/20/photo", nil, "", false)
+	ok(t, second, 200)
+	if second.Body.String() != string(payload) || second.Header().Get("X-XM-Media-Cache") != "hit" || heads.Load()+gets.Load() != remoteCalls {
+		t.Fatal("cache hit contacted remote storage", heads.Load(), gets.Load())
+	}
+	settings := b.request("GET", "/api/storage", nil, "", false)
+	ok(t, settings, 200)
+	if !strings.Contains(settings.Body.String(), `"enabled":true`) || !strings.Contains(settings.Body.String(), `"used_bytes":19`) {
+		t.Fatal("cache status missing", settings.Body.String())
+	}
+	ok(t, b.request("PUT", "/api/storage/cache", map[string]any{"enabled": true, "max_bytes": 1}, "http://localhost", true), 400)
+	ok(t, b.request("DELETE", "/api/storage/cache", nil, "http://localhost", true), 200)
+	used, err := remoteMediaCacheUsage(a.Config().DataDir)
+	if err != nil || used != 0 {
+		t.Fatal("cache was not cleared", used, err)
+	}
+}
+
+func TestRemoteMediaCachePrunesLeastRecentlyUsedFiles(t *testing.T) {
+	a := testApp(t)
+	root := remoteMediaCacheRoot(a.Config().DataDir)
+	if err := archive.PrivateDir(root); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(root, "old.jpg")
+	newPath := filepath.Join(root, "new.jpg")
+	if err := os.WriteFile(oldPath, []byte("12345678"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, []byte("abcdefgh"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(oldPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.pruneRemoteMediaCache(8, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatal("oldest entry was not evicted", err)
+	}
+	if data, err := os.ReadFile(newPath); err != nil || string(data) != "abcdefgh" {
+		t.Fatal("newest entry was removed", err)
+	}
+}
 
 func TestStorageSettingsAndRemoteMedia(t *testing.T) {
 	a := testApp(t)

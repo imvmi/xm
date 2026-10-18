@@ -238,7 +238,9 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		if !userIDPattern.MatchString(page.Progress.UserID) {
 			return errors.New("无效的分页断点身份")
 		}
-		raw, err := json.Marshal(page.Progress)
+		progress := *page.Progress
+		progress.SavedAt = time.Now().Unix()
+		raw, err := json.Marshal(&progress)
 		if err != nil {
 			return err
 		}

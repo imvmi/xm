@@ -2,6 +2,7 @@ package web
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,28 +14,35 @@ import (
 )
 
 type Monitor struct {
-	UserID          string `json:"user_id"`
-	CurrentUsername string `json:"current_username"`
-	Username        string `json:"username"`
-	Interval        int    `json:"interval_seconds"`
-	Replies         bool   `json:"replies"`
-	Enabled         bool   `json:"enabled"`
-	Requested       bool   `json:"requested"`
-	Running         bool   `json:"running"`
-	NextRun         int64  `json:"next_run"`
-	LastStarted     int64  `json:"last_started"`
-	LastFinished    int64  `json:"last_finished"`
-	LastSuccess     int64  `json:"last_success"`
-	LastError       string `json:"last_error"`
-	Failures        int    `json:"failures"`
-	Posts           int    `json:"posts"`
-	LastPosts       int    `json:"last_posts"`
-	NewPosts        int    `json:"new_posts"`
-	LastStatus      string `json:"last_status"`
-	Catchup         bool   `json:"catchup"`
-	CatchupPost     string `json:"-"`
-	CatchupReply    string `json:"-"`
-	CatchupScrolls  int    `json:"-"`
+	UserID          string          `json:"user_id"`
+	CurrentUsername string          `json:"current_username"`
+	Username        string          `json:"username"`
+	Interval        int             `json:"interval_seconds"`
+	Replies         bool            `json:"replies"`
+	Enabled         bool            `json:"enabled"`
+	Requested       bool            `json:"requested"`
+	Running         bool            `json:"running"`
+	NextRun         int64           `json:"next_run"`
+	LastStarted     int64           `json:"last_started"`
+	LastFinished    int64           `json:"last_finished"`
+	LastSuccess     int64           `json:"last_success"`
+	LastError       string          `json:"last_error"`
+	Failures        int             `json:"failures"`
+	Posts           int             `json:"posts"`
+	LastPosts       int             `json:"last_posts"`
+	NewPosts        int             `json:"new_posts"`
+	LastStatus      string          `json:"last_status"`
+	Catchup         bool            `json:"catchup"`
+	CatchupPost     string          `json:"-"`
+	CatchupReply    string          `json:"-"`
+	CatchupScrolls  int             `json:"-"`
+	Checkpoint      *CheckpointView `json:"checkpoint,omitempty"`
+}
+
+type CheckpointView struct {
+	Phase     string `json:"phase"`
+	ReachedAt string `json:"reached_at,omitempty"`
+	SavedAt   int64  `json:"saved_at,omitempty"`
 }
 
 const monitorCollectionLimit = 1000
@@ -63,13 +71,26 @@ CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),'')`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
-	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls)
+	var checkpoint string
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &checkpoint)
+	if err == nil && checkpoint != "" {
+		var progress archive.CollectionProgress
+		if json.Unmarshal([]byte(checkpoint), &progress) == nil {
+			phase := "posts"
+			reachedAt := progress.Posts.ReachedAt
+			if m.Replies && !progress.Replies.Done {
+				phase = "replies"
+				reachedAt = progress.Replies.ReachedAt
+			}
+			m.Checkpoint = &CheckpointView{Phase: phase, ReachedAt: reachedAt, SavedAt: progress.SavedAt}
+		}
+	}
 	return m, err
 }
 func monitors(db *database.DB) ([]Monitor, error) {

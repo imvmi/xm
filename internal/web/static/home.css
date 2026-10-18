@@ -142,6 +142,9 @@
 #view-monitors .monitor-table td { padding:20px 16px; font-size:12px; }
 #view-monitors .monitor-table .table-sub { color:#7b8777; line-height:1.7; margin-top:5px; }
 #view-monitors .monitor-table .table-sub.error { color:#b36c51; }
+#view-monitors .monitor-table .checkpoint-status { color:#526f5b; font-weight:600; margin-top:8px; }
+#view-monitors .monitor-table .checkpoint-reached { color:#47584d; }
+#view-monitors .monitor-table .checkpoint-reached span,#view-monitors .monitor-table .checkpoint-saved { color:#879285; }
 #view-monitors .user-cell { align-items:flex-start; }
 #view-monitors .user-cell>div { min-width:0; overflow-wrap:anywhere; }
 #view-monitors .row-actions { gap:4px 8px; }

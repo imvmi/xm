@@ -1,13 +1,7 @@
 package web
 
 import (
-	"mime"
 	"net/http"
-	"path/filepath"
-	"strings"
-	"time"
-
-	"xm/internal/archive"
 )
 
 // Only these fields can leave the server. Never embed the credential-bearing
@@ -33,38 +27,9 @@ func (a *App) storageSettings(w http.ResponseWriter, r *http.Request) {
 	cfg := a.Config()
 	profiles := []storageView{}
 	for _, p := range cfg.StorageProfiles {
-		profiles = append(profiles, storageView{p.ID, p.Name, p.Kind, p.Endpoint, p.Prefix, p.Username, p.Region, p.Bucket, p.PathStyle, p.UseProxy, p.Timeout, p.Password != "", p.AccessKey != "" && p.SecretKey != "", p.SessionToken != ""})
+		profiles = append(profiles, storageView{ID: p.ID, Name: p.Name, Kind: p.Kind, Endpoint: p.Endpoint, Prefix: p.Prefix, Username: p.Username, Region: p.Region, Bucket: p.Bucket, PathStyle: p.PathStyle, UseProxy: p.UseProxy, Timeout: p.Timeout, PasswordSet: p.Password != "", KeysSet: p.AccessKey != "" && p.SecretKey != "", TokenSet: p.SessionToken != ""})
 	}
-	respond(w, 200, map[string]any{"active": cfg.ActiveStorage(), "profiles": profiles, "locked": true})
-}
-func (a *App) remoteMedia(w http.ResponseWriter, r *http.Request, id, key string, size int64) {
-	ext := strings.ToLower(filepath.Ext(key))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".mp4":
-	default:
-		http.NotFound(w, r)
-		return
-	}
-	b, err := archive.NewRemote(a.Config(), id)
-	if err != nil {
-		problem(w, 502, err.Error())
-		return
-	}
-	defer b.Close()
-	n, err := b.Size(r.Context(), key)
-	if err != nil || n != size {
-		problem(w, 502, "远程媒体不可用或长度不一致，请检查存储连接")
-		return
-	}
-	reader := &archive.RemoteReader{Remote: b, Context: r.Context(), Key: key, Length: size}
-	defer reader.Close()
-	if r.Method != http.MethodHead {
-		if err = reader.Prepare(); err != nil {
-			problem(w, 502, err.Error())
-			return
-		}
-	}
-	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
-	w.Header().Set("Content-Disposition", "inline")
-	http.ServeContent(w, r, filepath.Base(key), time.Time{}, reader)
+	cache := a.remoteMediaCacheSettings()
+	used, _ := remoteMediaCacheUsage(cfg.DataDir)
+	respond(w, 200, map[string]any{"active": cfg.ActiveStorage(), "profiles": profiles, "locked": true, "cache": map[string]any{"enabled": cache.Enabled, "max_bytes": cache.MaxBytes, "used_bytes": used}})
 }

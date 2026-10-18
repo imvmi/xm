@@ -95,6 +95,32 @@ func TestCheckpointResetPreservesHistoryAndCooldown(t *testing.T) {
 	}
 }
 
+func TestMonitorExposesCheckpointProgressWithoutCursor(t *testing.T) {
+	a := testApp(t)
+	seedMonitor(t, a, "alice")
+	p := archive.CollectionProgress{
+		UserID: "42",
+		Replies: archive.TimelineProgress{
+			Cursor:    "secret-opaque-cursor",
+			ReachedAt: "2026-10-10T01:28:00Z",
+		},
+	}
+	if err := a.store.SaveCollectionPage("alice", 0, archive.Page{Progress: &p}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.DB.Exec("UPDATE monitors SET replies=1,catchup=1 WHERE username='alice'"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := monitors(a.store.DB)
+	if err != nil || len(list) != 1 || list[0].Checkpoint == nil {
+		t.Fatal(list, err)
+	}
+	checkpoint := list[0].Checkpoint
+	if checkpoint.Phase != "replies" || checkpoint.ReachedAt != "2026-10-10T01:28:00Z" || checkpoint.SavedAt == 0 {
+		t.Fatal(checkpoint)
+	}
+}
+
 func TestCheckpointFailurePausesMonitor(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")

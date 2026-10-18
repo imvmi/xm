@@ -1,0 +1,37 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const vm=require('node:vm');
+const fs=require('node:fs');
+const path=require('node:path');
+
+const source=fs.readFileSync(path.join(__dirname,'../static/storage.js'),'utf8');
+
+function fixture(){
+ const nodes=new Map(),calls=[];
+ const node=id=>{
+  if(!nodes.has(id))nodes.set(id,{id,hidden:false,checked:false,value:'',textContent:'',className:'',listeners:{},addEventListener(name,fn){this.listeners[name]=fn}});
+  return nodes.get(id);
+ };
+ let storage={active:'remote',profiles:[{id:'remote',kind:'webdav',name:'NAS',endpoint:'https://storage.example'}],cache:{enabled:true,max_bytes:2147483648,used_bytes:1048576}};
+ const api=async(route,method='GET',body)=>{calls.push({route,method,body});if(method==='PUT')storage.cache={...body,used_bytes:storage.cache.used_bytes};if(method==='DELETE')storage.cache.used_bytes=0;return route==='/storage'?storage:{ok:true}};
+ const context=vm.createContext({$:node,api,bytes:n=>n+' B',toast(){},action:async(_button,work)=>work()});
+ vm.runInContext(source,context);
+ return {node,calls,context,setStorage:value=>storage=value};
+}
+
+test('remote storage exposes persistent cache controls and saves byte capacity',async()=>{
+ const f=fixture();
+ await f.context.refreshStorage();
+ assert.equal(f.node('remote-cache-panel').hidden,false);
+ assert.equal(f.node('remote-cache-enabled').checked,true);
+ assert.equal(f.node('remote-cache-size').value,2048);
+ f.node('remote-cache-enabled').checked=false;
+ f.node('remote-cache-size').value='512';
+ f.node('remote-cache-form').listeners.submit({preventDefault(){},submitter:{}});
+ await new Promise(setImmediate);
+ const update=f.calls.find(call=>call.method==='PUT');
+ assert.equal(JSON.stringify(update.body),JSON.stringify({enabled:false,max_bytes:512*1024**2}));
+ f.setStorage({active:'local',profiles:[],cache:{enabled:false,max_bytes:2147483648,used_bytes:0}});
+ await f.context.refreshStorage();
+ assert.equal(f.node('remote-cache-panel').hidden,true);
+});

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/chromedp"
@@ -13,6 +14,17 @@ import (
 // A local response travels through the same ordered response/body pipeline as
 // real pages. The collector saves preceding pages before stopping for budget.
 const localBudgetStatus = 470
+
+func ignoreCanceledInterception(err error) error {
+	var protocolErr *cdproto.Error
+	if !errors.As(err, &protocolErr) || protocolErr.Code != -32602 {
+		return err
+	}
+	if protocolErr.Message != "Invalid InterceptionId" && protocolErr.Message != "Invalid InterceptionId." {
+		return err
+	}
+	return nil
+}
 
 func admitBudgetRequest(ctx context.Context, b *RequestBudget, e *fetch.EventRequestPaused) (bool, error) {
 	op := operation(e.Request.URL)
@@ -29,7 +41,7 @@ func admitBudgetRequest(ctx context.Context, b *RequestBudget, e *fetch.EventReq
 	}
 	err = chromedp.Do(ctx, chromedp.Func(func(c context.Context, t *chromedp.Target) error {
 		_, err := cdp.Call(c, t, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: localBudgetStatus, ResponsePhrase: "Local Request Budget", ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: "application/json"}, {Name: "x-xm-budget-until", Value: strconv.FormatInt(failure.RetryAt.Unix(), 10)}}, Body: []byte(`{}`)})
-		return err
+		return ignoreCanceledInterception(err)
 	}))
 	return false, err
 }
@@ -61,7 +73,7 @@ func installRequestBudget(ctx context.Context, b *RequestBudget, failures chan<-
 				}
 				err = chromedp.Do(ctx, chromedp.Func(func(c context.Context, t *chromedp.Target) error {
 					_, err := cdp.Call(c, t, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: e.RequestID})
-					return err
+					return ignoreCanceledInterception(err)
 				}))
 				report(err)
 			}(&e)

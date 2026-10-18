@@ -25,6 +25,27 @@ func testBudget(t *testing.T) (*Store, *RequestBudget, *time.Time) {
 	b.spacing = 0
 	return s, b, &now
 }
+func TestRequestBudgetDefaultAllowsBrowserBurst(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b, err := s.LoadRequestBudget(Cookies{AuthToken: "browser-burst"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	b.now = func() time.Time { return now }
+	for i := 0; i < 5; i++ {
+		if err = b.Acquire(context.Background(), "UserTweets"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(b.state.Requests) != 5 {
+		t.Fatal("browser burst was paced or dropped", b.state.Requests)
+	}
+}
 func TestRequestBudgetSharedRollingWindowPersists(t *testing.T) {
 	s, b, now := testBudget(t)
 	for i := 0; i < requestBudgetLimit; i++ {
