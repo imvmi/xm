@@ -1,6 +1,14 @@
 package archive
 
-import "xm/internal/database"
+import (
+	"strings"
+
+	"xm/internal/database"
+)
+
+const systemSettingsColumns = "id,proxy,chrome_path,headless,request_timeout_seconds,collection_timeout_seconds,scroll_delay_seconds,scroll_jitter_seconds,max_scrolls,max_posts_per_run,page_budget,timeline_idle_seconds,known_boundary_posts,max_media_bytes,default_interval_seconds,queue_interval_seconds,request_interval_seconds,request_jitter_seconds,request_budget_mode,rate_limit_mode,browser_max_age_seconds,browser_max_tasks,media_retry_initial_seconds,media_retry_max_seconds,polling_paused,active_storage_id,updated_at"
+
+const systemSettingsDDL = `CREATE TABLE IF NOT EXISTS system_settings(id INTEGER PRIMARY KEY CHECK(id=1),proxy TEXT NOT NULL,chrome_path TEXT NOT NULL,headless BOOLEAN NOT NULL,request_timeout_seconds INTEGER NOT NULL CHECK(request_timeout_seconds>0),collection_timeout_seconds INTEGER NOT NULL CHECK(collection_timeout_seconds>0),scroll_delay_seconds INTEGER NOT NULL CHECK(scroll_delay_seconds>0),scroll_jitter_seconds INTEGER NOT NULL DEFAULT 0 CHECK(scroll_jitter_seconds>=0),max_scrolls INTEGER NOT NULL CHECK(max_scrolls>0),max_posts_per_run INTEGER NOT NULL DEFAULT 1000 CHECK(max_posts_per_run BETWEEN 1 AND 10000),page_budget INTEGER NOT NULL DEFAULT 15 CHECK(page_budget BETWEEN 1 AND 100),timeline_idle_seconds INTEGER NOT NULL DEFAULT 24 CHECK(timeline_idle_seconds BETWEEN 1 AND 300),known_boundary_posts INTEGER NOT NULL DEFAULT 8 CHECK(known_boundary_posts BETWEEN 1 AND 100),max_media_bytes BIGINT NOT NULL CHECK(max_media_bytes>0),default_interval_seconds INTEGER NOT NULL CHECK(default_interval_seconds BETWEEN 3600 AND 604800),queue_interval_seconds INTEGER NOT NULL DEFAULT 0 CHECK(queue_interval_seconds BETWEEN 0 AND 3600),request_interval_seconds INTEGER NOT NULL DEFAULT 5 CHECK(request_interval_seconds>=5),request_jitter_seconds INTEGER NOT NULL DEFAULT 0 CHECK(request_jitter_seconds>=0),request_budget_mode VARCHAR(16) NOT NULL DEFAULT 'balanced' CHECK(request_budget_mode IN ('conservative','balanced','fast','turbo')),rate_limit_mode VARCHAR(16) NOT NULL DEFAULT 'balanced' CHECK(rate_limit_mode IN ('conservative','balanced','fast')),browser_max_age_seconds INTEGER NOT NULL DEFAULT 21600 CHECK(browser_max_age_seconds BETWEEN 300 AND 86400),browser_max_tasks INTEGER NOT NULL DEFAULT 100 CHECK(browser_max_tasks BETWEEN 1 AND 1000),media_retry_initial_seconds INTEGER NOT NULL DEFAULT 300 CHECK(media_retry_initial_seconds BETWEEN 60 AND 86400),media_retry_max_seconds INTEGER NOT NULL DEFAULT 86400 CHECK(media_retry_max_seconds BETWEEN 60 AND 604800),polling_paused BOOLEAN NOT NULL,active_storage_id VARCHAR(64) NOT NULL,updated_at VARCHAR(64) NOT NULL,FOREIGN KEY(active_storage_id) REFERENCES storage_profiles(id))`
 
 // Shared logical schema: SQLite and MySQL use the same keys and constraints.
 // Per-service credentials are columns, not one opaque configuration document.
@@ -12,7 +20,7 @@ var settingsSchema = []string{
 	`CREATE TABLE IF NOT EXISTS schema_meta(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS admin_accounts(id INTEGER PRIMARY KEY CHECK(id=1),username VARCHAR(32) NOT NULL UNIQUE,password_salt BLOB NOT NULL CHECK(length(password_salt)=32),password_hash BLOB NOT NULL CHECK(length(password_hash)=32),configuration_locked BOOLEAN NOT NULL CHECK(configuration_locked=1),created_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS storage_profiles(id VARCHAR(64) PRIMARY KEY,name VARCHAR(100) NOT NULL,kind VARCHAR(16) NOT NULL CHECK(kind IN ('local','webdav','s3')),endpoint TEXT NOT NULL,object_prefix TEXT NOT NULL,username TEXT NOT NULL,password TEXT NOT NULL,region TEXT NOT NULL,bucket TEXT NOT NULL,access_key TEXT NOT NULL,secret_key TEXT NOT NULL,session_token TEXT NOT NULL,path_style BOOLEAN NOT NULL,use_proxy BOOLEAN NOT NULL,timeout_seconds INTEGER NOT NULL CHECK(timeout_seconds BETWEEN 5 AND 3600),position INTEGER NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
-	`CREATE TABLE IF NOT EXISTS system_settings(id INTEGER PRIMARY KEY CHECK(id=1),proxy TEXT NOT NULL,chrome_path TEXT NOT NULL,headless BOOLEAN NOT NULL,request_timeout_seconds INTEGER NOT NULL CHECK(request_timeout_seconds>0),collection_timeout_seconds INTEGER NOT NULL CHECK(collection_timeout_seconds>0),scroll_delay_seconds INTEGER NOT NULL CHECK(scroll_delay_seconds>0),max_scrolls INTEGER NOT NULL CHECK(max_scrolls>0),max_media_bytes BIGINT NOT NULL CHECK(max_media_bytes>0),default_interval_seconds INTEGER NOT NULL CHECK(default_interval_seconds BETWEEN 60 AND 604800),polling_paused BOOLEAN NOT NULL,active_storage_id VARCHAR(64) NOT NULL,updated_at VARCHAR(64) NOT NULL,FOREIGN KEY(active_storage_id) REFERENCES storage_profiles(id))`,
+	systemSettingsDDL,
 	`CREATE TABLE IF NOT EXISTS notification_channels(id VARCHAR(64) PRIMARY KEY,name VARCHAR(100) NOT NULL,kind VARCHAR(16) NOT NULL CHECK(kind IN ('telegram','webhook')),enabled BOOLEAN NOT NULL,updates BOOLEAN NOT NULL,alerts BOOLEAN NOT NULL,use_proxy BOOLEAN NOT NULL,bot_token TEXT NOT NULL,chat_id VARCHAR(128) NOT NULL,thread_id BIGINT NOT NULL CHECK(thread_id>=0),webhook_url TEXT NOT NULL,bearer_token TEXT NOT NULL,position INTEGER NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS media_directories(owner_key VARCHAR(128) PRIMARY KEY,directory_name VARCHAR(128) NOT NULL UNIQUE,created_at VARCHAR(64) NOT NULL)`,
 }
@@ -26,7 +34,152 @@ func migrateSettings(db *database.DB) error {
 			return err
 		}
 	}
-	_, err := db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 2, now())
+	// Column discovery works on both SQLite and MySQL, including installations
+	// created before request pacing was configurable.
+	rows, err := db.Query("SELECT * FROM system_settings WHERE 1=0")
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	has := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		has[column] = true
+	}
+	hadScrollJitter := has["scroll_jitter_seconds"]
+	for _, migration := range []struct{ name, definition string }{
+		{"scroll_jitter_seconds", "INTEGER NOT NULL DEFAULT 0 CHECK(scroll_jitter_seconds>=0)"},
+		{"queue_interval_seconds", "INTEGER NOT NULL DEFAULT 0 CHECK(queue_interval_seconds BETWEEN 0 AND 3600)"},
+		{"request_interval_seconds", "INTEGER NOT NULL DEFAULT 5 CHECK(request_interval_seconds>=5)"},
+		{"request_jitter_seconds", "INTEGER NOT NULL DEFAULT 0 CHECK(request_jitter_seconds>=0)"},
+		{"max_posts_per_run", "INTEGER NOT NULL DEFAULT 1000 CHECK(max_posts_per_run BETWEEN 1 AND 10000)"},
+		{"page_budget", "INTEGER NOT NULL DEFAULT 15 CHECK(page_budget BETWEEN 1 AND 100)"},
+		{"timeline_idle_seconds", "INTEGER NOT NULL DEFAULT 24 CHECK(timeline_idle_seconds BETWEEN 1 AND 300)"},
+		{"known_boundary_posts", "INTEGER NOT NULL DEFAULT 8 CHECK(known_boundary_posts BETWEEN 1 AND 100)"},
+		{"request_budget_mode", "VARCHAR(16) NOT NULL DEFAULT 'balanced' CHECK(request_budget_mode IN ('conservative','balanced','fast','turbo'))"},
+		{"rate_limit_mode", "VARCHAR(16) NOT NULL DEFAULT 'balanced' CHECK(rate_limit_mode IN ('conservative','balanced','fast'))"},
+		{"browser_max_age_seconds", "INTEGER NOT NULL DEFAULT 21600 CHECK(browser_max_age_seconds BETWEEN 300 AND 86400)"},
+		{"browser_max_tasks", "INTEGER NOT NULL DEFAULT 100 CHECK(browser_max_tasks BETWEEN 1 AND 1000)"},
+		{"media_retry_initial_seconds", "INTEGER NOT NULL DEFAULT 300 CHECK(media_retry_initial_seconds BETWEEN 60 AND 86400)"},
+		{"media_retry_max_seconds", "INTEGER NOT NULL DEFAULT 86400 CHECK(media_retry_max_seconds BETWEEN 60 AND 604800)"},
+	} {
+		if !has[migration.name] {
+			if _, err = db.Exec("ALTER TABLE system_settings ADD COLUMN " + migration.name + " " + migration.definition); err != nil {
+				return err
+			}
+		}
+	}
+	if !hadScrollJitter {
+		// Give upgraded installations natural variation without making a
+		// one-second legacy scroll delay invalid.
+		if _, err = db.Exec("UPDATE system_settings SET scroll_jitter_seconds=CASE WHEN scroll_delay_seconds>1 THEN 1 ELSE 0 END"); err != nil {
+			return err
+		}
+	}
+	if err = upgradeRequestBudgetModeConstraint(db); err != nil {
+		return err
+	}
+	if _, err = db.Exec("UPDATE system_settings SET default_interval_seconds=3600 WHERE default_interval_seconds<3600"); err != nil {
+		return err
+	}
+	_, err = db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 11, now())
+	return err
+}
+
+func upgradeRequestBudgetModeConstraint(db *database.DB) error {
+	if db.Dialect == "mysql" {
+		return upgradeMySQLRequestBudgetModeConstraint(db)
+	}
+	var schema string
+	if err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='system_settings'").Scan(&schema); err != nil {
+		return err
+	}
+	if strings.Contains(schema, "'turbo'") {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	const temporary = "system_settings_budget_upgrade"
+	if _, err = tx.Exec("DROP TABLE IF EXISTS " + temporary); err != nil {
+		return err
+	}
+	create := strings.Replace(systemSettingsDDL, "CREATE TABLE IF NOT EXISTS system_settings", "CREATE TABLE "+temporary, 1)
+	if _, err = tx.Exec(create); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("INSERT INTO " + temporary + "(" + systemSettingsColumns + ") SELECT " + systemSettingsColumns + " FROM system_settings"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DROP TABLE system_settings"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("ALTER TABLE " + temporary + " RENAME TO system_settings"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upgradeMySQLRequestBudgetModeConstraint(db *database.DB) error {
+	rows, err := db.Query(`SELECT tc.CONSTRAINT_NAME,cc.CHECK_CLAUSE
+FROM information_schema.TABLE_CONSTRAINTS tc
+JOIN information_schema.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME
+WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='system_settings' AND tc.CONSTRAINT_TYPE='CHECK'`)
+	if err != nil {
+		return err
+	}
+	var old []string
+	for rows.Next() {
+		var name, clause string
+		if err = rows.Scan(&name, &clause); err != nil {
+			rows.Close()
+			return err
+		}
+		if !strings.Contains(strings.ToLower(clause), "request_budget_mode") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(clause), "'turbo'") {
+			rows.Close()
+			return nil
+		}
+		old = append(old, name)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	alter := make([]string, 0, len(old)+1)
+	for _, name := range old {
+		quoted := strings.ReplaceAll(name, "`", "``")
+		alter = append(alter, "DROP CHECK `"+quoted+"`")
+	}
+	alter = append(alter, "ADD CONSTRAINT system_settings_request_budget_mode CHECK(request_budget_mode IN ('conservative','balanced','fast','turbo'))")
+	_, err = db.Exec("ALTER TABLE system_settings " + strings.Join(alter, ","))
+	return err
+}
+
+func ensureRunJobColumn(db *database.DB) error {
+	rows, err := db.Query("SELECT * FROM runs WHERE 1=0")
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, column := range columns {
+		if column == "job_id" {
+			return nil
+		}
+	}
+	_, err = db.Exec("ALTER TABLE runs ADD COLUMN job_id BIGINT NOT NULL DEFAULT 0")
 	return err
 }
 func ensureArchiveIndexes(db *database.DB) error {
@@ -36,6 +189,7 @@ func ensureArchiveIndexes(db *database.DB) error {
 		{"target_identity_handle", "target_identities", "current_username"},
 		{"media_storage", "media", "storage_id"},
 		{"runs_target", "runs", "target,id"},
+		{"runs_job", "runs", "job_id"},
 		{"target_posts_post", "target_posts", "post_id"},
 	} {
 		var n int

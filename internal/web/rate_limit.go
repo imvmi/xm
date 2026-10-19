@@ -12,10 +12,21 @@ import (
 
 // Keep the counter across batches and restarts: a successful target before a
 // rate-limited target must not return every retry to the shortest delay.
-func rateLimitDeadline(now int64, interval, previousFailures int, err error) (int64, int) {
+func rateLimitDeadline(now int64, interval, previousFailures int, err error, modes ...string) (int64, int) {
+	mode := "balanced"
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	minimum, maximum, margin := int64(15*60), int64(6*60*60), 5*time.Second
+	switch mode {
+	case "conservative":
+		minimum, maximum, margin = 30*60, 12*60*60, 10*time.Second
+	case "fast":
+		minimum, maximum, margin = 5*60, 2*60*60, 3*time.Second
+	}
 	failures := min(max(previousFailures, 0), 15) + 1
-	delay := int64(max(interval, 15*60))
-	ceiling := max(delay, int64(6*60*60))
+	delay := int64(max(interval, int(minimum)))
+	ceiling := max(delay, maximum)
 	for n := 1; n < failures && delay < ceiling; n++ {
 		delay = min(delay*2, ceiling)
 	}
@@ -23,7 +34,7 @@ func rateLimitDeadline(now int64, interval, previousFailures int, err error) (in
 	var failure *archive.Failure
 	if errors.As(err, &failure) && !failure.RetryAt.IsZero() {
 		// Leave a small margin around upstream reset times.
-		until = max(until, failure.RetryAt.Add(5*time.Second).Unix())
+		until = max(until, failure.RetryAt.Add(margin).Unix())
 	}
 	return until, failures
 }
@@ -42,7 +53,7 @@ func saveRateLimit(tx *database.Tx, until int64, failures int) error {
 
 // Carry an active cooldown from the old fixed-15-minute policy into the new
 // policy on upgrade. Never shorten it, or revive a stale, expired cooldown.
-func upgradeRateLimitState(db *database.DB, interval int, now int64) error {
+func upgradeRateLimitState(db *database.DB, interval int, mode string, now int64) error {
 	if state(db, "rate_limit_failures") != "" {
 		return nil
 	}
@@ -50,7 +61,7 @@ func upgradeRateLimitState(db *database.DB, interval int, now int64) error {
 	if oldUntil <= now {
 		return nil
 	}
-	until, failures := rateLimitDeadline(oldUntil-900, interval, 0, nil)
+	until, failures := rateLimitDeadline(oldUntil-900, interval, 0, nil, mode)
 	tx, err := db.Begin()
 	if err != nil {
 		return err

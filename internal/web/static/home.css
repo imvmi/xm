@@ -151,7 +151,22 @@
 #view-monitors .row-actions .text-button { padding:4px 0; font-size:12px; background:transparent; }
 #view-monitors .row-actions .text-button::before { display:none; }
 #view-monitors #monitor-empty { border:0; }
-/* Collection history is one quiet list, with status kept visible. */
+/* The task center separates live queue state from immutable run history. */
+#view-activity .activity-wait { margin-bottom:22px; }
+#view-activity .activity-section { margin-bottom:30px; }
+#view-activity .activity-heading { display:flex; align-items:center; gap:9px; margin-bottom:13px; }
+#view-activity .activity-heading h2 { font-size:15px; font-weight:600; }
+#view-activity .activity-heading .muted { margin-left:auto; font-size:11px; }
+#view-activity .job-list { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
+#view-activity .job-row { display:flex; align-items:flex-start; gap:16px; padding:20px 22px; border-bottom:1px solid var(--line); }
+#view-activity .job-row:last-child { border-bottom:0; }
+#view-activity .job-row.current { background:#fbfdf9; border-color:#d9e5d5; }
+#view-activity .job-position { width:30px; height:30px; flex:0 0 30px; display:flex; align-items:center; justify-content:center; border-radius:50%; background:#eef3ea; color:#60765c; font-size:11px; font-weight:650; }
+#view-activity .job-position svg { width:15px; height:15px; }
+#view-activity .job-row>.badge { flex-shrink:0; margin-top:2px; }
+#view-activity .job-actions { display:flex; flex:0 0 auto; align-items:center; gap:12px; }
+#view-activity .job-actions .text-button { min-height:28px; }
+#view-activity .activity-empty { padding:22px; color:#829080; font-size:12px; }
 #view-activity .runs-list:has(.run-row) { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
 #view-activity .run-row { display:flex; flex-wrap:nowrap; gap:20px; padding:22px 24px; border:0; border-bottom:1px solid var(--line); border-radius:0; }
 #view-activity .run-row:last-child { border-bottom:0; }
@@ -197,6 +212,12 @@
 #view-settings .settings-tabs button { flex:0 1 auto; padding:12px 0; min-height:44px; border-radius:0; border-bottom:2px solid transparent; color:#798577; font-size:13px; }
 #view-settings .settings-tabs button[aria-selected=true] { color:var(--green); border-bottom-color:var(--green); background:transparent; box-shadow:none; }
 #view-settings .settings-section { max-width:760px; }
+#view-settings .advanced-settings { margin:24px 0; padding:18px 0; border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+#view-settings .advanced-settings summary { cursor:pointer; width:fit-content; color:var(--green); font-size:13px; font-weight:550; }
+#view-settings .advanced-settings summary:focus-visible { outline:3px solid #b6cdb9; outline-offset:3px; border-radius:3px; }
+#view-settings .advanced-settings[open] summary { margin-bottom:16px; }
+#view-settings .advanced-settings .field-pair { margin-top:0; margin-bottom:18px; }
+#view-settings .advanced-settings>.field-help { margin-bottom:18px; }
 #view-settings .settings-caption { margin:18px 0; font-size:12px; color:#798577; }
 #view-settings .file-row .muted { font-size:11px; }
 #view-settings .storage-lock-note { background:transparent; border:0; border-radius:0; padding:0; margin:0 0 24px; gap:10px; font-size:13px; }

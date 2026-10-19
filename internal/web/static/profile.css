@@ -66,6 +66,16 @@
 #view-user .profile-identity h2 {
   font-size:20px;
 }
+#view-user .profile-x-link {
+  display:table;
+  color:#536471;
+  overflow-wrap:anywhere;
+}
+#view-user .profile-x-link:hover {
+  color:#1d9bf0;
+  text-decoration:underline;
+  text-underline-offset:2px;
+}
 #view-user :is(.user-handle,.profile-bio,.profile-meta,.profile-numbers) {
   font-size:14px;
 }
@@ -76,6 +86,17 @@
 #view-user .profile-meta {
   margin-top:12px;
   flex-wrap:wrap;
+}
+#view-user .profile-actions>.profile-archive-status {
+  min-height:40px;
+  margin:0 0 8px;
+  padding:8px 15px;
+  border:1px solid #cfd9de;
+  border-radius:999px;
+  background:#fff;
+  color:#536471;
+  font-weight:600;
+  white-space:nowrap;
 }
 #view-user .profile-numbers .badge {
   border-radius:20px;
@@ -271,9 +292,14 @@
     height:96px;
     font-size:30px;
   }
-  #view-user .profile-actions>.button {
+  #view-user .profile-actions>.profile-archive-status {
+    max-width:calc(100% - 112px);
     margin-bottom:0;
-    padding:7px 15px;
+    padding:7px 12px;
+    justify-content:flex-end;
+    text-align:right;
+    white-space:normal;
+    font-size:12px;
   }
   #view-user .profile-bio {
     font-size:15px;

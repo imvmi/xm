@@ -27,6 +27,7 @@ type TargetIdentity struct {
 	CatchupScrollBudget int                                     `json:"-"`
 	Progress            CollectionProgress                      `json:"-"`
 	DurableProgress     bool                                    `json:"-"`
+	CollectionMode      string                                  `json:"-"`
 }
 
 // KnownTargetPostIDs checks only the current response's IDs against the entire

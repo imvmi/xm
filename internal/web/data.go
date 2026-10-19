@@ -14,29 +14,35 @@ import (
 )
 
 type Monitor struct {
-	UserID          string          `json:"user_id"`
-	CurrentUsername string          `json:"current_username"`
-	Username        string          `json:"username"`
-	Interval        int             `json:"interval_seconds"`
-	Replies         bool            `json:"replies"`
-	Enabled         bool            `json:"enabled"`
-	Requested       bool            `json:"requested"`
-	Running         bool            `json:"running"`
-	NextRun         int64           `json:"next_run"`
-	LastStarted     int64           `json:"last_started"`
-	LastFinished    int64           `json:"last_finished"`
-	LastSuccess     int64           `json:"last_success"`
-	LastError       string          `json:"last_error"`
-	Failures        int             `json:"failures"`
-	Posts           int             `json:"posts"`
-	LastPosts       int             `json:"last_posts"`
-	NewPosts        int             `json:"new_posts"`
-	LastStatus      string          `json:"last_status"`
-	Catchup         bool            `json:"catchup"`
-	CatchupPost     string          `json:"-"`
-	CatchupReply    string          `json:"-"`
-	CatchupScrolls  int             `json:"-"`
-	Checkpoint      *CheckpointView `json:"checkpoint,omitempty"`
+	UserID           string          `json:"user_id"`
+	CurrentUsername  string          `json:"current_username"`
+	Username         string          `json:"username"`
+	Interval         int             `json:"interval_seconds"`
+	Replies          bool            `json:"replies"`
+	Enabled          bool            `json:"enabled"`
+	Requested        bool            `json:"requested"`
+	Running          bool            `json:"running"`
+	NextRun          int64           `json:"next_run"`
+	LastStarted      int64           `json:"last_started"`
+	LastFinished     int64           `json:"last_finished"`
+	LastSuccess      int64           `json:"last_success"`
+	LastError        string          `json:"last_error"`
+	Failures         int             `json:"failures"`
+	Posts            int             `json:"posts"`
+	LastPosts        int             `json:"last_posts"`
+	NewPosts         int             `json:"new_posts"`
+	LastStatus       string          `json:"last_status"`
+	Catchup          bool            `json:"catchup"`
+	CatchupPost      string          `json:"-"`
+	CatchupReply     string          `json:"-"`
+	CatchupScrolls   int             `json:"-"`
+	BaselineStatus   string          `json:"baseline_status"`
+	PostsBaseline    string          `json:"posts_baseline_status"`
+	RepliesBaseline  string          `json:"replies_baseline_status"`
+	BaselineStarted  int64           `json:"baseline_started"`
+	BaselineFinished int64           `json:"baseline_finished"`
+	BaselineStop     string          `json:"baseline_stop_reason,omitempty"`
+	Checkpoint       *CheckpointView `json:"checkpoint,omitempty"`
 }
 
 type CheckpointView struct {
@@ -45,9 +51,16 @@ type CheckpointView struct {
 	SavedAt   int64  `json:"saved_at,omitempty"`
 }
 
-const monitorCollectionLimit = 1000
-
 const incompleteCollectionMessage = "本轮已到达安全边界，系统将在后续批次继续追赶旧归档位置"
+
+func displayCollectionMessage(message string) string {
+	// Preserve the historical run, but explain this one known pre-upgrade
+	// internal-parameter failure without exposing a meaningless implementation name.
+	if message == "limit 必须在 1～10000 之间" {
+		return "旧版本内部采集上限配置冲突，任务未启动；升级后已修复"
+	}
+	return message
+}
 
 func migrate(s *archive.Store) error {
 	if s.DB.Dialect == "mysql" {
@@ -60,25 +73,46 @@ func migrate(s *archive.Store) error {
  last_error TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
  last_posts INTEGER NOT NULL DEFAULT 0, new_posts INTEGER NOT NULL DEFAULT 0,
  catchup INTEGER NOT NULL DEFAULT 0, catchup_post_anchor TEXT NOT NULL DEFAULT '',
- catchup_reply_anchor TEXT NOT NULL DEFAULT '', catchup_scroll_budget INTEGER NOT NULL DEFAULT 0
+ catchup_reply_anchor TEXT NOT NULL DEFAULT '', catchup_scroll_budget INTEGER NOT NULL DEFAULT 0,
+ baseline_status TEXT NOT NULL DEFAULT 'not_started', posts_baseline_status TEXT NOT NULL DEFAULT 'not_started',
+ replies_baseline_status TEXT NOT NULL DEFAULT 'not_enabled', baseline_started INTEGER NOT NULL DEFAULT 0,
+ baseline_finished INTEGER NOT NULL DEFAULT 0, baseline_stop_reason TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS web_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS collection_jobs (
+ id INTEGER PRIMARY KEY, target TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL,
+ queued_at INTEGER NOT NULL, queue_order INTEGER NOT NULL, started_at INTEGER NOT NULL DEFAULT 0, finished_at INTEGER NOT NULL DEFAULT 0,
+ run_id INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0,
+ retry_count INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '',
+ mode TEXT NOT NULL DEFAULT 'incremental'
+);
+CREATE INDEX IF NOT EXISTS collection_jobs_queue ON collection_jobs(finished_at,status,queue_order,id);
+CREATE INDEX IF NOT EXISTS collection_jobs_target ON collection_jobs(target,finished_at);
 CREATE INDEX IF NOT EXISTS monitors_due ON monitors(next_run);
 CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	if err != nil {
 		return err
 	}
+	if err = ensureRunJobColumn(s.DB); err != nil {
+		return err
+	}
+	if err = ensureCollectionModeSchema(s.DB); err != nil {
+		return err
+	}
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),'')`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,m.baseline_status,m.posts_baseline_status,m.replies_baseline_status,m.baseline_started,m.baseline_finished,m.baseline_stop_reason,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),'')`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
 	var checkpoint string
-	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &checkpoint)
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint)
+	if err == nil {
+		m.LastError = displayCollectionMessage(m.LastError)
+	}
 	if err == nil && checkpoint != "" {
 		var progress archive.CollectionProgress
 		if json.Unmarshal([]byte(checkpoint), &progress) == nil {
@@ -339,7 +373,7 @@ func archiveUsers(db *database.DB) ([]UserView, error) {
 }
 
 func recentRuns(db *database.DB) ([]map[string]any, error) {
-	r, err := db.Query("SELECT r.id,r.target,r.started_at,COALESCE(r.finished_at,''),r.status,COALESCE(m.posts_read,r.posts_seen),r.message,m.new_posts FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id ORDER BY r.id DESC LIMIT 20")
+	r, err := db.Query("SELECT r.id,r.target,r.started_at,COALESCE(r.finished_at,''),r.status,COALESCE(m.posts_read,r.posts_seen),r.message,m.new_posts,r.job_id,COALESCE(j.source,'legacy'),COALESCE(j.queued_at,0),COALESCE(j.mode,'incremental') FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN collection_jobs j ON j.id=r.job_id ORDER BY r.id DESC LIMIT 20")
 	if err != nil {
 		return nil, err
 	}
@@ -347,12 +381,14 @@ func recentRuns(db *database.DB) ([]map[string]any, error) {
 	result := []map[string]any{}
 	for r.Next() {
 		var id, posts int
+		var jobID, queuedAt int64
 		var added sql.NullInt64
-		var target, start, end, status, message string
-		if err = r.Scan(&id, &target, &start, &end, &status, &posts, &message, &added); err != nil {
+		var target, start, end, status, message, source, mode string
+		if err = r.Scan(&id, &target, &start, &end, &status, &posts, &message, &added, &jobID, &source, &queuedAt, &mode); err != nil {
 			return nil, err
 		}
-		result = append(result, map[string]any{"id": id, "target": target, "started_at": start, "finished_at": end, "status": status, "posts": posts, "message": message, "new_posts": nullableCount(added)})
+		message = displayCollectionMessage(message)
+		result = append(result, map[string]any{"id": id, "target": target, "started_at": start, "finished_at": end, "status": status, "posts": posts, "message": message, "new_posts": nullableCount(added), "job_id": jobID, "source": source, "queued_at": queuedAt, "mode": mode})
 	}
 	return result, r.Err()
 }

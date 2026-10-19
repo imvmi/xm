@@ -20,7 +20,7 @@ import (
 func setupFixture(t *testing.T) *setupWizard {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 900}
+	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 3600}
 	if err := archive.PrivateDir(cfg.DataDir); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestSetupCompletionLoginAndLockedStorage(t *testing.T) {
 		t.Fatal("lock not exposed to UI")
 	}
 	ok(t, b.request("PUT", "/api/settings", map[string]any{"database": map[string]string{"driver": "mysql"}}, "http://localhost", true), 400)
-	ok(t, b.request("PUT", "/api/settings", map[string]any{"default_interval_seconds": 1200}, "http://localhost", true), 200)
+	ok(t, b.request("PUT", "/api/settings", map[string]any{"default_interval_seconds": 7200}, "http://localhost", true), 200)
 	ok(t, b.request("POST", "/api/cookies", map[string]string{"content": "auth_token=fixture; ct0=fixture"}, "http://localhost", true), 200)
 	a2, err := New(s.path, c, store, false)
 	if err != nil || !a2.auth.record.ConfigurationLocked {

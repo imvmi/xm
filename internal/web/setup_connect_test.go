@@ -71,7 +71,7 @@ func setupDatabaseSnapshot(t *testing.T, a *App) map[string]string {
 func TestSetupConnectPreservesExistingDatabase(t *testing.T) {
 	s, a, input := existingSetupFixture(t)
 	cfg := a.Config()
-	cfg.DefaultInterval, cfg.PollingPaused = 1800, true
+	cfg.DefaultInterval, cfg.PollingPaused = 7200, true
 	cfg.Proxy = "http://127.0.0.1:7890"
 	cfg.StorageProfiles = []archive.StorageProfile{{ID: "existing", Name: "Existing storage", Kind: "webdav", Endpoint: "https://storage.invalid/archive", Username: "owner", Password: "storage-secret", Timeout: 120}}
 	cfg.MediaStorage = "existing"

@@ -3,17 +3,12 @@ package archive
 import (
 	"context"
 	"errors"
-	"strconv"
 
 	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/chromedp"
 )
-
-// A local response travels through the same ordered response/body pipeline as
-// real pages. The collector saves preceding pages before stopping for budget.
-const localBudgetStatus = 470
 
 func ignoreCanceledInterception(err error) error {
 	var protocolErr *cdproto.Error
@@ -31,19 +26,10 @@ func admitBudgetRequest(ctx context.Context, b *RequestBudget, e *fetch.EventReq
 	if op == "" {
 		return true, nil
 	}
-	err := b.Acquire(ctx, op)
-	if err == nil {
-		return true, nil
-	}
-	var failure *Failure
-	if !errors.As(err, &failure) || failure.Kind != "budget" {
+	if err := b.AcquireBrowser(ctx, op); err != nil {
 		return false, err
 	}
-	err = chromedp.Do(ctx, chromedp.Func(func(c context.Context, t *chromedp.Target) error {
-		_, err := cdp.Call(c, t, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: localBudgetStatus, ResponsePhrase: "Local Request Budget", ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: "application/json"}, {Name: "x-xm-budget-until", Value: strconv.FormatInt(failure.RetryAt.Unix(), 10)}}, Body: []byte(`{}`)})
-		return ignoreCanceledInterception(err)
-	}))
-	return false, err
+	return true, nil
 }
 func installRequestBudget(ctx context.Context, b *RequestBudget, failures chan<- error) error {
 	events := chromedp.Events(ctx, fetch.RequestPaused)

@@ -1,6 +1,6 @@
 # 数据库结构
 
-SQLite 与 MySQL 使用相同的逻辑表结构。当前为开发版本，不提供旧表结构、旧 JSON 配置或旧媒体目录的升级迁移；部署此版本时重新初始化。`migrate-mysql` 只用于同版本 SQLite 到 MySQL 的数据导入。
+SQLite 与 MySQL 使用相同的逻辑表结构。当前为开发版本，不提供任意旧表结构、旧 JSON 配置或旧媒体目录的升级迁移。本次采集设置与任务队列变更支持原有数据库原地升级：新增滚动随机浮动、时间线边界、限流预设、浏览器生命周期、媒体重试、正式任务队列、任务模式、历史基线状态及运行记录关联字段，将不足 1 小时的自动采集周期提升至 1 小时，其他设置和历史记录保留。`migrate-mysql` 只用于同版本 SQLite 到 MySQL 的数据导入。
 
 ## 启动与配置
 
@@ -12,7 +12,7 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 |---|---|---|
 | `schema_meta` | `id=1` | 当前数据库结构版本和更新时间 |
 | `admin_accounts` | `id=1` | 管理员用户名、32 字节密码盐与哈希、初始化锁定标记 |
-| `system_settings` | `id=1` | 代理、浏览器参数、采集限制、默认周期、全局暂停、当前存储 ID |
+| `system_settings` | `id=1` | 代理、浏览器参数与生命周期、单次任务最大时间、滚动基础等待与随机浮动、空闲等待、已归档边界、429 限流策略、队列任务间隔、媒体大小与重试、自动采集周期、全局暂停、当前存储 ID；旧版条数/页数/滚动上限列为兼容保留，不参与新任务调度 |
 | `storage_profiles` | `id` | 本地/WebDAV/S3 连接及各自凭据，内置 `local` 记录 |
 | `notification_channels` | `id` | Telegram/Webhook 渠道、接收位置、凭据和启用事件 |
 | `x_cookies` | `id=1` | 明文 `auth_token`、`ct0` 及更新时间 |
@@ -31,10 +31,10 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 | `target_posts` | `(target, post_id)` | 目标时间线与推文的多对多关系 |
 | `media` | `(post_id, media_id)` | 媒体来源、下载状态、本地路径/远程对象键、存储 ID、SHA-256、大小、重试次数及下次重试时间 |
 | `media_directories` | `owner_key` | 作者身份到唯一媒体目录的固定映射 |
-| `runs` | 自增 `id` | 每轮采集的目标、起止时间、状态、数量及错误摘要 |
+| `runs` | 自增 `id` | 每轮真实执行的目标、关联 `job_id`、起止时间、状态、数量及错误摘要 |
 | `run_metrics` | `run_id` | 每页提交的读取与新增关联计数；旧记录缺失时不推算 |
-| `request_budgets` | `scope` | 登录凭据 SHA-256 摘要、滚动请求时间、接口响应额度与主动等待时间；不存 Cookie 或请求 URL |
-| `collection_progress` | `target` | 绑定用户 ID、两条时间线的分页游标、完成状态和补采前顶部边界 |
+| `request_budgets` | `scope` | 旧版本请求节流状态；新版本不再读取或写入，仅在清空限流状态时兼容清理，不存 Cookie 或请求 URL |
+| `collection_progress` | `target` | 绑定用户 ID、两条时间线的分页游标、完成/明确耗尽状态和补采前顶部边界 |
 
 `target_posts.post_id` 和 `media.post_id` 外键引用 `posts.id`。引用推文与主推文使用同一张 `posts` 表，同一事务递归保存；引用本身不额外加入目标时间线。`reply_to`、`quote_id`、`repost_id` 允许指向未返回或无权限读取的内容，因此不设强制外键。
 
@@ -46,7 +46,8 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 
 | 表 | 主键/唯一键 | 职责 |
 |---|---|---|
-| `monitors` | `username`（稳定归档键） | 启用状态、下次执行、最近结果，以及跨批次追赶使用的普通推文/回复锚点 |
+| `monitors` | `username`（稳定归档键） | 启用状态、下次执行、最近结果、普通推文/回复基线状态，以及跨批次补采使用的锚点 |
+| `collection_jobs` | 自增 `id` | 手动、自动及重试任务的持久化 FIFO 队列；记录 `incremental` / `backfill` / `rescan` 模式、入队/开始/结束时间、状态、尝试次数、分页失败次数、下次重试时间和最近执行 ID |
 | `web_state` | `key` | 少量持久化运行状态，例如登录受限、全局冷却 |
 | `notification_targets` | `target` | 首次采集是否已完成，决定历史数据静默策略 |
 | `notification_seen` | `(target, post_id)` | 新动态通知去重 |
@@ -64,3 +65,5 @@ YAML 仅保存 `data_dir` 与 `database`。其他持久化设置均在数据库�
 备份数据库、自动生成的启动 YAML，以及本地媒体或远程对象。SQLite 应停服后复制数据目录，或使用一致性备份工具；MySQL 需要数据库快照或一致性导出。仅备份 YAML 不能恢复配置、Cookie 或归档内容。
 
 分页断点、推文和本轮计数在同一事务中提交；记录不含请求 URL、Cookie 或认证头。`run_metrics` 随采集记录清理，`collection_progress` 在任务完成或显式重置后删除。
+
+`collection_jobs` 是用户可见任务队列的事实来源，状态包括排队、运行、限流等待、登录等待和重试；已结束任务保留用于关联执行记录。时间线分页遇到连接失败、408/425/5xx 或响应体读取失败时，成功页面及下一页游标先持久化，任务按 5、15、45 秒（后续保持 45 秒）退避并移到队尾；服务重启保留下次重试时间。首次账号自动选择 `backfill`；基线完成或标为范围不确定后自动选择 `incremental`；`rescan` 会清除分页断点和基线判定，但不删除归档。`monitors.baseline_status` 使用 `not_started`、`backfilling`、`visible_history_complete`、`partial`、`blocked`，并分别保存普通推文和回复状态。只有 X 时间线响应明确结束才写入 `visible_history_complete`，稳定页面底部只写入 `partial`。`web_state.budget_batch_pending`（历史键名沿用）只保存自动批次尚未完成的账号集合，`budget_batch_failed` 保存当前批次是否曾发生采集错误。队列项在领取时与 `monitors.running` 一起提交，全局暂停、限流冷却和服务重启不会丢失剩余任务；运行中的任务在重启时恢复为排队状态。任务完成与队列推进之间崩溃时允许重试最后一个账号，数据与分页断点通过原有事务和去重逻辑保持一致；整个批次完成后，在同一事务中清空批次待办并统一安排下次自动采集。

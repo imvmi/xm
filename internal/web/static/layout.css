@@ -878,6 +878,17 @@ dialog form {
     gap:12px;
     padding:18px;
   }
+  #view-activity .job-row {
+    flex-wrap:wrap;
+    gap:12px;
+    padding:18px;
+  }
+  #view-activity .job-row .run-main {
+    flex:1 1 180px;
+  }
+  #view-activity .activity-heading .muted {
+    display:none;
+  }
   .run-row>div {
     min-width:0;
     flex:1 1 170px;

@@ -147,7 +147,7 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		case "rate":
 			err = notificationIncident(tx, cfg, "rate", "rate", "", "XM · X 请求限流", "X 返回限流，采集已进入至少 15 分钟的冷却期。")
 		case "media":
-			err = notificationIncident(tx, cfg, "health:"+m.Username, "media_failed", m.Username, "XM · 媒体保存失败", "@"+m.Username+" 部分图片或视频未能保存。请查看采集记录，检查下载网络和存储连接；后续任务会重试。")
+			err = notificationIncident(tx, cfg, "health:"+m.Username, "media_failed", m.Username, "XM · 媒体保存失败", "@"+m.Username+" 部分图片或视频尚未归档。请查看采集记录，检查网络、存储或文件限制；临时失败会在后续任务重试，永久失败需处理原因后修复。")
 		case "transient":
 			if failures >= 3 {
 				err = notificationIncident(tx, cfg, "health:"+m.Username, "collection_failed", m.Username, "XM · 连续采集失败", fmt.Sprintf("@%s 已连续失败 %d 次。系统正在退避重试，请查看采集记录。", m.Username, failures))

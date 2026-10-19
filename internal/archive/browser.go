@@ -2,12 +2,15 @@ package archive
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +22,28 @@ import (
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,15}$`)
 
-const knownBoundaryPosts = 8
+const (
+	// Fault-containment ceilings, not user pacing controls. With the supported
+	// task timeout and minimum scroll wait, normal work reaches the time budget first.
+	CollectionSafetyMaxPosts   = 100000
+	collectionSafetyMaxPages   = 10000
+	collectionSafetyMaxScrolls = 10000
+)
+
+func validateCollectionLimit(limit int) error {
+	if limit < 1 || limit > CollectionSafetyMaxPosts {
+		return fmt.Errorf("单次采集条数安全上限必须为 1～%d", CollectionSafetyMaxPosts)
+	}
+	return nil
+}
+
+func randomizedScrollWait(cfg Config) time.Duration {
+	seconds := cfg.ScrollDelay
+	if cfg.ScrollJitter > 0 {
+		seconds += rand.IntN(cfg.ScrollJitter*2+1) - cfg.ScrollJitter
+	}
+	return time.Duration(max(1, seconds)) * time.Second
+}
 
 func Username(input string) (string, error) {
 	s := strings.TrimSpace(input)
@@ -38,27 +62,65 @@ func Username(input string) (string, error) {
 }
 
 type Collection struct {
-	Posts              int
-	Pages              int
-	Scrolls            int
-	Unavailable        int
-	Stop               string
-	Protected          *bool
-	NeedsHeadRefresh   bool
-	RefreshPostAnchor  string
-	RefreshReplyAnchor string
+	Posts                  int
+	Pages                  int
+	Scrolls                int
+	Unavailable            int
+	Stop                   string
+	Protected              *bool
+	NeedsHeadRefresh       bool
+	RefreshPostAnchor      string
+	RefreshReplyAnchor     string
+	HistoryComplete        bool
+	PostsHistoryComplete   bool
+	RepliesHistoryComplete bool
 }
 type responseMeta struct {
 	operation string
 	status    int64
 	retryAt   time.Time
 	cursor    string
+	userID    string
+	username  string
+	postID    string
 }
 type captured struct {
 	sequence uint64
 	meta     responseMeta
 	data     []byte
 	err      error
+}
+
+type requestActivity struct {
+	meta      responseMeta
+	graphQL   bool
+	responded bool
+}
+
+func isTimelineOperation(operation string) bool {
+	switch operation {
+	case "UserTweets", "UserOriginalsTimeline", "UserTweetsAndReplies", "UserRepliesTimeline":
+		return true
+	default:
+		return false
+	}
+}
+
+func retryableTimelineStatus(status int64) bool {
+	switch status {
+	case 408, 425, 500, 502, 503, 504:
+		return true
+	default:
+		return false
+	}
+}
+
+func timelineFailure(meta responseMeta) error {
+	return fail("timeline", fmt.Sprintf("X %s 下一页加载失败，已保存分页断点并等待重试", meta.operation))
+}
+
+func usesIncrementalBoundary(identity TargetIdentity) bool {
+	return identity.CollectionMode == "" || identity.CollectionMode == "incremental"
 }
 
 func orderedCaptures(ctx context.Context, input <-chan captured) <-chan captured {
@@ -94,7 +156,7 @@ func orderedCaptures(ctx context.Context, input <-chan captured) <-chan captured
 
 // BrowserSession owns one Chrome process that can collect several targets in
 // sequence. Each target still gets an isolated tab and timeout, while cookies,
-// the temporary browser profile and the proxy bridge are shared for the batch.
+// the temporary browser profile and the proxy bridge are shared across batches.
 type BrowserSession struct {
 	cfg          Config
 	cookies      Cookies
@@ -132,10 +194,25 @@ func NewBrowserSession(parent context.Context, cfg Config, cookies Cookies) (*Br
 	alloc, closeAlloc := chromedp.NewExecAllocator(parent, opts...)
 	s.closeAlloc = closeAlloc
 	s.root, s.closeBrowser = chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
-	if err = chromedp.Do(s.root, chromedp.Navigate("about:blank")); err != nil {
+	// Chrome's initial allocation inherits the first action context. Keep that
+	// context alive for the service and bound startup with a separate watchdog.
+	startupTimer := time.AfterFunc(20*time.Second, s.closeBrowser)
+	err = chromedp.Do(s.root, chromedp.Navigate("about:blank"))
+	startedInTime := startupTimer.Stop()
+	if err != nil || !startedInTime {
 		return fail(errors.New("无法启动 Chrome；请检查 chrome_path 和 Chrome 运行环境"))
 	}
 	return s, nil
+}
+
+// Healthy checks the local blank root tab without issuing any request to X.
+func (s *BrowserSession) Healthy(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(s.root, 5*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(parent, cancel)
+	defer stop()
+	_, err := chromedp.Run(ctx, chromedp.Evaluate[bool]("true"))
+	return err
 }
 
 func (s *BrowserSession) Close() {
@@ -182,6 +259,50 @@ func operation(raw string) string {
 	return ""
 }
 
+// requestSubject identifies the entity selected by a GraphQL request. X pages
+// issue unrelated profile lookups in the background; an error from one of those
+// requests must not fail the timeline currently being collected.
+func requestSubject(raw string) (userID, username, postID string) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", ""
+	}
+	var variables map[string]any
+	if json.Unmarshal([]byte(u.Query().Get("variables")), &variables) != nil {
+		return "", "", ""
+	}
+	value := func(keys ...string) string {
+		for _, key := range keys {
+			if s, ok := variables[key].(string); ok && s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	return value("userId", "user_id"), value("screen_name", "screenName"), value("focalTweetId", "tweetId", "rest_id")
+}
+
+func relevantResponse(meta responseMeta, target, expectedID, verifiedID, currentUsername, referencePost string, resolvingPost bool) bool {
+	wantedID := verifiedID
+	if wantedID == "" {
+		wantedID = expectedID
+	}
+	if meta.userID != "" && wantedID != "" && meta.userID != wantedID {
+		return false
+	}
+	wantedUsername := currentUsername
+	if wantedUsername == "" {
+		wantedUsername = target
+	}
+	if meta.username != "" && !strings.EqualFold(meta.username, wantedUsername) {
+		return false
+	}
+	if resolvingPost && meta.postID != "" && referencePost != "" && meta.postID != referencePost {
+		return false
+	}
+	return true
+}
+
 // Collect reads the browser's actual GraphQL responses. No guest access, query-ID
 // guessing, automatic login, or alternate-account fallback is performed.
 func Collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error) (Collection, error) {
@@ -193,15 +314,21 @@ func CollectBound(parent context.Context, cfg Config, cookies Cookies, target st
 }
 
 // Try the last verified handle first. Only an empty, unsuccessful collection
-// may fall back to a stable reference; auth and rate failures are not retried.
+// may retry through a stable archived post; without one, retry the handle route
+// instead of /i/user/{id}, whose UserByRestId lookup is not generally available.
 func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
 	return collectIdentityWithBrowser(parent, cfg, cookies, target, identity, limit, replies, save, setup, nil)
 }
 
-func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
+func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (result Collection, resultErr error) {
 	ctx, cancel := context.WithTimeout(parent, collectionTimeout(cfg, identity))
 	defer cancel()
 	saveFailed := false
+	defer func() {
+		if identity.DurableProgress && !saveFailed && resultErr != nil && FailureKind(resultErr) == "transient" && parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
+			result.Stop, resultErr = "time_budget_reached", nil
+		}
+	}()
 	checkedSave := func(p Page) error {
 		err := save(p)
 		if err != nil {
@@ -209,24 +336,19 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 		}
 		return err
 	}
-	result, err := collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
-	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" || FailureKind(err) == "checkpoint" || FailureKind(err) == "budget" || FailureKind(err) == "budget_storage" {
+	var err error
+	result, err = collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
+	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" || FailureKind(err) == "timeline" || FailureKind(err) == "checkpoint" || FailureKind(err) == "budget_storage" {
 		return result, err
 	}
-	identity.CurrentUsername = ""
+	if userIDPattern.MatchString(identity.ReferencePostID) {
+		identity.CurrentUsername = ""
+	}
 	return collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
 }
 
-func collectionTimeout(cfg Config, identity TargetIdentity) time.Duration {
-	timeout := time.Duration(cfg.CollectionTimeout) * time.Second
-	if identity.Catchup {
-		budget := max(cfg.MaxScrolls, cfg.MaxScrolls+identity.CatchupScrollBudget)
-		needed := time.Duration(budget*cfg.ScrollDelay+60) * time.Second
-		if needed > timeout {
-			timeout = min(needed, time.Hour)
-		}
-	}
-	return timeout
+func collectionTimeout(cfg Config, _ TargetIdentity) time.Duration {
+	return time.Duration(cfg.CollectionTimeout) * time.Second
 }
 
 func collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
@@ -238,8 +360,12 @@ func collectBound(parent context.Context, cfg Config, cookies Cookies, target st
 
 func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (Collection, error) {
 	var result Collection
+	originalReplies := replies
 	expectedID := identity.UserID
 	progress := identity.Progress
+	result.PostsHistoryComplete = progress.Posts.Exhausted
+	result.RepliesHistoryComplete = progress.Replies.Exhausted
+	result.HistoryComplete = result.PostsHistoryComplete && (!originalReplies || result.RepliesHistoryComplete)
 	checkpointing := identity.DurableProgress || progress.UserID != ""
 	resuming := progress.Posts.Cursor != "" || progress.Replies.Cursor != "" || progress.Posts.Done || progress.Replies.Done
 	finish := func() Collection {
@@ -261,8 +387,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	if expectedID != "" && !userIDPattern.MatchString(expectedID) {
 		return result, fail("identity", "无效的绑定用户 ID")
 	}
-	if limit < 1 || limit > 10000 {
-		return result, errors.New("limit 必须在 1～10000 之间")
+	if err := validateCollectionLimit(limit); err != nil {
+		return result, err
 	}
 	ctx, cancel := context.WithTimeout(parent, collectionTimeout(cfg, identity))
 	defer cancel()
@@ -335,46 +461,135 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	if err != nil {
 		return result, errors.New("无法启动 Chrome 或导入 Cookie；请检查 chrome_path 和 Chrome 运行环境")
 	}
-	budgetErrors := make(chan error, 1)
-	// Offline fixtures own Fetch interception and call the same admission helper.
-	if identity.RequestBudget != nil && setup == nil {
-		if err = installRequestBudget(browser, identity.RequestBudget, budgetErrors); err != nil {
-			return result, err
-		}
-	}
 	if setup != nil {
 		if err = setup(browser); err != nil {
 			return result, err
 		}
 	}
+	// Observe GraphQL activity without intercepting or delaying it. The scroll
+	// loop uses this only to avoid starting a new page action while the previous
+	// one is still loading.
+	var graphQLInflight atomic.Int64
+	var responseReaders atomic.Int64
+	var activityMu sync.Mutex
+	graphQLRequests := make(map[network.RequestID]requestActivity)
+	finishedBeforeStart := make(map[network.RequestID]struct{})
+	requestEvents := chromedp.Events(browser, network.RequestWillBeSent)
+	finishedEvents := chromedp.Events(browser, network.LoadingFinished)
+	failedEvents := chromedp.Events(browser, network.LoadingFailed)
 	responses := chromedp.Events(browser, network.ResponseReceived)
+	var sequenceMu sync.Mutex
+	var sequence uint64
+	nextSequence := func() uint64 {
+		sequenceMu.Lock()
+		defer sequenceMu.Unlock()
+		current := sequence
+		sequence++
+		return current
+	}
+	completeRequest := func(id network.RequestID) (requestActivity, bool) {
+		activityMu.Lock()
+		defer activityMu.Unlock()
+		activity, started := graphQLRequests[id]
+		if !started {
+			finishedBeforeStart[id] = struct{}{}
+			return requestActivity{}, false
+		}
+		delete(graphQLRequests, id)
+		if activity.graphQL {
+			graphQLInflight.Add(-1)
+		}
+		return activity, true
+	}
 	go func() {
-		var sequence uint64
+		for e, err := range requestEvents {
+			if err != nil {
+				return
+			}
+			if e.Request == nil {
+				continue
+			}
+			op := operation(e.Request.URL)
+			userID, username, postID := requestSubject(e.Request.URL)
+			activity := requestActivity{graphQL: op != "", meta: responseMeta{operation: op, cursor: requestCursor(e.Request.URL), userID: userID, username: username, postID: postID}}
+			activityMu.Lock()
+			if _, finished := finishedBeforeStart[e.RequestID]; finished {
+				delete(finishedBeforeStart, e.RequestID)
+				activityMu.Unlock()
+				continue
+			}
+			previous, existed := graphQLRequests[e.RequestID]
+			graphQLRequests[e.RequestID] = activity
+			if activity.graphQL && (!existed || !previous.graphQL) {
+				graphQLInflight.Add(1)
+			} else if !activity.graphQL && existed && previous.graphQL {
+				graphQLInflight.Add(-1)
+			}
+			activityMu.Unlock()
+		}
+	}()
+	go func() {
+		for e, err := range finishedEvents {
+			if err != nil {
+				return
+			}
+			completeRequest(e.RequestID)
+		}
+	}()
+	go func() {
+		for e, err := range failedEvents {
+			if err != nil {
+				return
+			}
+			activity, started := completeRequest(e.RequestID)
+			if !started || !activity.graphQL || activity.responded || e.Canceled || !isTimelineOperation(activity.meta.operation) {
+				continue
+			}
+			// Response readers for earlier protocol events must publish their pages
+			// before this failure can terminate the attempt and preserve its cursor.
+			go func(meta responseMeta) {
+				timer := time.NewTimer(50 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-browser.Done():
+					return
+				case <-timer.C:
+				}
+				for responseReaders.Load() > 0 {
+					select {
+					case <-browser.Done():
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+				send(captured{sequence: nextSequence(), meta: meta, err: timelineFailure(meta)})
+			}(activity.meta)
+		}
+	}()
+	go func() {
 		for e, err := range responses {
 			if err != nil {
 				return
+			}
+			if e.Response == nil {
+				continue
 			}
 			op := operation(e.Response.URL)
 			if op == "" {
 				continue
 			}
-			meta := responseMeta{operation: op, status: e.Response.Status, retryAt: rateLimitRetryAt(e.Response.Headers, time.Now()), cursor: requestCursor(e.Response.URL)}
-			if e.Response.Status == localBudgetStatus {
-				if until, ok := headerNumber(e.Response.Headers, "x-xm-budget-until"); ok {
-					meta.retryAt = time.Unix(until, 0)
-				}
-			} else if identity.RequestBudget != nil {
-				if err := identity.RequestBudget.Observe(op, e.Response.Status, e.Response.Headers); err != nil {
-					select {
-					case budgetErrors <- err:
-					default:
-					}
-					return
-				}
+			activityMu.Lock()
+			if activity, ok := graphQLRequests[e.RequestID]; ok {
+				activity.responded = true
+				graphQLRequests[e.RequestID] = activity
 			}
-			current := sequence
-			sequence++
+			activityMu.Unlock()
+			userID, username, postID := requestSubject(e.Response.URL)
+			meta := responseMeta{operation: op, status: e.Response.Status, retryAt: rateLimitRetryAt(e.Response.Headers, time.Now()), cursor: requestCursor(e.Response.URL), userID: userID, username: username, postID: postID}
+			current := nextSequence()
+			responseReaders.Add(1)
 			go func(id network.RequestID, meta responseMeta, sequence uint64) {
+				defer responseReaders.Add(-1)
 				if meta.status != 200 {
 					send(captured{sequence: sequence, meta: meta})
 					return
@@ -396,7 +611,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					}
 					select {
 					case <-readCtx.Done():
-						send(captured{sequence: sequence, meta: meta, err: errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")})
+						err := errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")
+						if isTimelineOperation(meta.operation) {
+							err = timelineFailure(meta)
+						}
+						send(captured{sequence: sequence, meta: meta, err: err})
 						return
 					case <-time.After(250 * time.Millisecond):
 					}
@@ -434,7 +653,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	verifiedUsername := ""
 	var pending []Page
 	replyNavigation := expectedID != "" && identity.CurrentUsername != "" && replies
-	scrolls, totalScrolls, idle, lastCount, lastPages := 0, 0, 0, 0, 0
+	scrolls, totalScrolls, lastCount, lastPages := 0, 0, 0, 0
 	phaseStartPages := 0
 	hitScrollLimit := false
 	knownStreak := 0
@@ -445,13 +664,33 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	if replies {
 		resumeCursor = progress.Replies.Cursor
 	}
-	maxScrolls := cfg.MaxScrolls
-	if identity.Catchup {
-		maxScrolls = min(maxScrolls+identity.CatchupScrollBudget, 1000)
+	maxScrolls := collectionSafetyMaxScrolls
+	pageBudget := collectionSafetyMaxPages
+	knownBoundary := cfg.KnownBoundaryPosts
+	if knownBoundary <= 0 {
+		knownBoundary = DefaultConfig().KnownBoundaryPosts
 	}
+	idleSeconds := cfg.TimelineIdleSeconds
+	if idleSeconds <= 0 {
+		idleSeconds = DefaultConfig().TimelineIdleSeconds
+	}
+	idleDuration := time.Duration(idleSeconds) * time.Second
+	var idleSince time.Time
 	lastTop, lastHeight := -1.0, -1.0
-	ticker := time.NewTicker(time.Duration(cfg.ScrollDelay) * time.Second)
-	defer ticker.Stop()
+	scrollTimer := time.NewTimer(randomizedScrollWait(cfg))
+	defer scrollTimer.Stop()
+	resetScrollTimerAfter := func(wait time.Duration) {
+		if !scrollTimer.Stop() {
+			select {
+			case <-scrollTimer.C:
+			default:
+			}
+		}
+		scrollTimer.Reset(wait)
+	}
+	resetScrollTimer := func() {
+		resetScrollTimerAfter(randomizedScrollWait(cfg))
+	}
 	startOriginalTimeline := func() error {
 		progress.UserID = verifiedID
 		if !hitScrollLimit {
@@ -465,7 +704,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		replies = false
 		pending = nil
 		phaseStartPages = result.Pages
-		scrolls, idle, knownStreak = 0, 0, 0
+		scrolls, knownStreak = 0, 0
+		idleSince = time.Time{}
 		lastTop, lastHeight = -1, -1
 		boundaryReached = false
 		phaseFirstResponse = true
@@ -477,20 +717,34 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			return result, errors.New("浏览器响应队列溢出，本次采集不完整，请降低采集量")
 		}
 		select {
-		case err := <-budgetErrors:
-			return result, err
 		case <-browser.Done():
 			return result, errors.New("浏览器已关闭或采集超时；已入库内容保留，可重新采集")
 		case c, ok := <-events:
 			if !ok {
 				return result, errors.New("浏览器响应流已关闭；已入库内容保留，可重新采集")
 			}
-			if c.err != nil {
-				return result, c.err
-			}
 			isDetail := c.meta.operation == "TweetDetail" || c.meta.operation == "TweetResultByRestId"
 			if resolvingPost && !isDetail || !resolvingPost && isDetail {
 				continue
+			}
+			isCurrentTimeline := !replies && (c.meta.operation == "UserTweets" || c.meta.operation == "UserOriginalsTimeline") || replies && (c.meta.operation == "UserTweetsAndReplies" || c.meta.operation == "UserRepliesTimeline")
+			if resumeCursor != "" && phaseFirstResponse && isCurrentTimeline && c.meta.cursor != resumeCursor {
+				return result, checkpointFailure()
+			}
+			if !relevantResponse(c.meta, target, expectedID, verifiedID, identity.CurrentUsername, identity.ReferencePostID, resolvingPost) {
+				continue
+			}
+			if c.err != nil {
+				if FailureKind(c.err) == "timeline" && !isCurrentTimeline {
+					continue
+				}
+				return result, c.err
+			}
+			if isCurrentTimeline {
+				// The next user-like scroll is timed from the completed timeline
+				// response, not from the previous fixed clock tick.
+				idleSince = time.Time{}
+				resetScrollTimer()
 			}
 			switch c.meta.status {
 			case 200:
@@ -498,11 +752,12 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				return result, fail("auth", "Cookie 登录态失效，请重新导入")
 			case 403:
 				return result, fail("access", "X "+c.meta.operation+" 拒绝访问：可能无查看权限、账号受限或需要浏览器验证")
-			case localBudgetStatus:
-				return result, budgetFailure(c.meta.retryAt)
 			case 429:
 				return result, rateLimitFailure(c.meta)
 			default:
+				if isCurrentTimeline && retryableTimelineStatus(c.meta.status) {
+					return result, timelineFailure(c.meta)
+				}
 				if c.meta.cursor != "" {
 					return result, checkpointFailure()
 				}
@@ -541,8 +796,8 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			if e != nil {
 				if FailureKind(e) == "rate" {
 					e = rateLimitFailure(c.meta)
-				} else if c.meta.cursor != "" && FailureKind(e) == "transient" {
-					e = checkpointFailure()
+				} else if isCurrentTimeline && FailureKind(e) == "transient" {
+					e = timelineFailure(c.meta)
 				}
 				return result, e
 			}
@@ -618,7 +873,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						continue
 					}
 					known := knownPosts[p.ID]
-					if identity.Catchup {
+					if identity.Catchup && usesIncrementalBoundary(identity) {
 						anchor := identity.CatchupPostAnchor
 						if replies {
 							anchor = identity.CatchupReplyAnchor
@@ -626,7 +881,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						if anchor != "" && p.ID == anchor {
 							boundaryReached = true
 						}
-					} else {
+					} else if usesIncrementalBoundary(identity) {
 						if known {
 							knownStreak++
 						} else {
@@ -669,8 +924,18 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 						}
 						phase.Cursor = page.NextCursor
 					}
-					if !truncated && (page.End || boundaryReached || !identity.Catchup && knownStreak >= knownBoundaryPosts) {
+					incrementalBoundary := usesIncrementalBoundary(identity) && !identity.Catchup && knownStreak >= knownBoundary
+					if !truncated && (page.End || boundaryReached || incrementalBoundary) {
 						phase.Done = true
+					}
+					if !truncated && page.End {
+						phase.Exhausted = true
+						if replies {
+							result.RepliesHistoryComplete = true
+						} else {
+							result.PostsHistoryComplete = true
+							result.HistoryComplete = !originalReplies || result.RepliesHistoryComplete
+						}
 					}
 					if checkpointing {
 						page.Progress = &progress
@@ -690,7 +955,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				}
 				// Check inside the loop as several responses can be buffered while
 				// the profile request is still verifying this user's identity.
-				if checkpointing && result.Pages >= checkpointPageBudget {
+				if checkpointing && result.Pages >= pageBudget {
 					phase := progress.Posts
 					if replies {
 						phase = progress.Replies
@@ -724,11 +989,13 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				result.Stop = "known_boundary_reached"
 				return finish(), nil
 			}
-		case <-ticker.C:
-			// Pacing can hold a fetch longer than the normal idle threshold. It
-			// must never be mistaken for the end of a timeline or spend scrolls.
-			if identity.RequestBudget != nil && identity.RequestBudget.pending.Load() > 0 {
-				idle = 0
+		case <-scrollTimer.C:
+			resetScrollTimer()
+			// Wait for the previous page action's GraphQL activity to finish.
+			// A protected background request must not be mistaken for the end of
+			// a timeline or spend a scroll either.
+			if graphQLInflight.Load() > 0 {
+				idleSince = time.Time{}
 				continue
 			}
 			type pageState struct {
@@ -749,21 +1016,37 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				return result, fail("access", "当前账号无权查看此锁推账号，请确认关注请求已经获准")
 			}
 			// Lack of responses while traversing an already loaded, tall timeline
-			// is not exhaustion. Only count idle checks at a stable bottom, after
-			// both scrolling and timeline responses have stopped making progress.
-			if state.Bottom && state.Top == lastTop && state.Height == lastHeight && result.Posts == lastCount && result.Pages == lastPages {
-				idle++
-			} else {
-				idle = 0
-			}
+			// is not exhaustion. Start the wall-clock idle grace period only at a
+			// stable bottom, after scrolling and timeline responses stop progressing.
+			stableBottom := state.Bottom && state.Top == lastTop && state.Height == lastHeight && result.Posts == lastCount && result.Pages == lastPages
 			lastCount = result.Posts
 			lastPages = result.Pages
 			lastTop, lastHeight = state.Top, state.Height
-			if scrolls >= maxScrolls || idle >= 8 {
+			idleExpired := false
+			if stableBottom {
+				now := time.Now()
+				if idleSince.IsZero() {
+					idleSince = now
+					resetScrollTimerAfter(idleDuration)
+					continue
+				}
+				remaining := idleDuration - now.Sub(idleSince)
+				if remaining > 0 {
+					resetScrollTimerAfter(remaining)
+					continue
+				}
+				idleExpired = true
+			} else {
+				idleSince = time.Time{}
+			}
+			if scrolls >= maxScrolls || idleExpired {
 				if verifiedID == "" {
 					return result, fail("identity", "未能确认目标用户 ID，未保存推文")
 				}
 				if result.Pages == phaseStartPages {
+					if resumeCursor != "" {
+						return result, checkpointFailure()
+					}
 					return result, errors.New("未收到可读取的用户时间线，不能认定为没有推文；请检查登录态、权限、代理或页面变化")
 				}
 				if result.Posts == 0 && result.Unavailable > 0 {

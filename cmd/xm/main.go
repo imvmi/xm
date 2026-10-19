@@ -261,10 +261,6 @@ func run(ctx context.Context, args []string) error {
 		if e != nil {
 			return e
 		}
-		budget, e := s.LoadRequestBudget(cookies)
-		if e != nil {
-			return e
-		}
 		var mediaFailed bool
 		for _, target := range targets {
 			fmt.Fprintf(os.Stderr, "开始采集 @%s（最多 %d 条）\n", target, *limit)
@@ -276,7 +272,6 @@ func run(ctx context.Context, args []string) error {
 			if e != nil {
 				return e
 			}
-			identity.RequestBudget = budget
 			if !*backfill {
 				identity.KnownPostIDs, e = s.KnownTargetPosts(target, max(*limit*4, 500))
 				if e != nil {
@@ -306,9 +301,6 @@ func run(ctx context.Context, args []string) error {
 			status, message := "bounded_complete", result.Stop
 			if collectErr != nil {
 				status = "failed"
-				if archive.FailureKind(collectErr) == "budget" {
-					status = "budget_wait"
-				}
 				message = collectErr.Error()
 			}
 			if e = s.EndRun(id, status, result.Posts, message); e != nil {

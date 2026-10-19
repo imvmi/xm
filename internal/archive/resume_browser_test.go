@@ -12,6 +12,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -36,6 +37,7 @@ type resumeFixture struct {
 	pages         int
 	failPage      int
 	failOperation string
+	networkFail   bool
 	ignoreCursor  bool
 	xhr           bool
 	buffered      bool
@@ -80,6 +82,13 @@ func (f *resumeFixture) setup(ctx context.Context) error {
 				f.mu.Lock()
 				f.requests = append(f.requests, op+":"+cursor)
 				f.mu.Unlock()
+				if page == f.failPage && f.networkFail && (f.failOperation == "" || op == f.failOperation) {
+					_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
+						_, err := cdp.Call(c, target, fetch.FailRequest, fetch.FailRequestParams{RequestID: e.RequestID, ErrorReason: network.ErrorReasonFailed})
+						return err
+					}))
+					continue
+				}
 				ct = "application/json"
 				if page == f.failPage && (f.failOperation == "" || op == f.failOperation) {
 					body, status = []byte(`{"errors":[{"code":88}]}`), 429
@@ -107,7 +116,7 @@ addEventListener('scroll',()=>{if(!busy&&next&&scrollY+innerHeight>=document.doc
 </script></body></html>`)
 				if f.buffered {
 					body = []byte(`<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>
-(async()=>{for(let i=0;i<7;i++){const v={userId:'42'};if(i)v.cursor='page-'+i;await fetch('/i/api/graphql/fixture/UserTweets?variables='+encodeURIComponent(JSON.stringify(v)));}await fetch('/i/api/graphql/fixture/UserByScreenName');})();
+(async()=>{for(let i=0;i<` + fmt.Sprint(f.pages) + `;i++){const v={userId:'42'};if(i)v.cursor='page-'+i;await fetch('/i/api/graphql/fixture/UserTweets?variables='+encodeURIComponent(JSON.stringify(v)));}await fetch('/i/api/graphql/fixture/UserByScreenName');})();
 </script></body></html>`)
 				}
 			}
@@ -166,7 +175,47 @@ func TestBrowserResumeAfterRateLimitOffline(t *testing.T) {
 	}
 }
 
-func TestBrowserCheckpointPageBudgetOffline(t *testing.T) {
+func TestBrowserResumeAfterTimelineNetworkFailureOffline(t *testing.T) {
+	if os.Getenv("XM_BROWSER_TEST") != "1" {
+		t.Skip("offline Chrome fixtures")
+	}
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
+	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
+		return s.KnownTargetPostIDs(context.Background(), "alice", ids)
+	}
+	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, TimelineIdleSeconds: 3, MaxScrolls: 20}
+	first := &resumeFixture{pages: 3, failPage: 1, networkFail: true}
+	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error {
+		return s.SaveCollectionPage("alice", 0, p)
+	}, first.setup)
+	if FailureKind(err) != "timeline" || result.Posts != 2 {
+		t.Fatalf("network failure was not retryable: %+v %v", result, err)
+	}
+	identity.Progress, err = s.LoadCollectionProgress("alice", "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Progress.Posts.Cursor != "page-1" {
+		t.Fatal("last successful cursor was not preserved", identity.Progress)
+	}
+	second := &resumeFixture{pages: 3, failPage: -1}
+	result, err = collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error {
+		return s.SaveCollectionPage("alice", 0, p)
+	}, second.setup)
+	if err != nil || result.Posts != 4 {
+		t.Fatalf("resume after network failure: %+v %v", result, err)
+	}
+	if got := strings.Join(second.seen(), ","); got != "UserTweets:page-1,UserTweets:page-2" {
+		t.Fatal("resume did not start at the saved cursor", got)
+	}
+}
+
+func TestBrowserRunsUntilTimelineEndWithoutPageBudgetOffline(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
 		t.Skip("offline Chrome fixtures")
 	}
@@ -177,19 +226,10 @@ func TestBrowserCheckpointPageBudgetOffline(t *testing.T) {
 	defer s.Close()
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
 	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 100}
-	first := &resumeFixture{pages: 7, failPage: -1}
-	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, first.setup)
-	if err != nil || result.Stop != "page_budget_reached" || result.Pages != 5 {
-		t.Fatalf("budget: %+v %v", result, err)
-	}
-	identity.Progress, err = s.LoadCollectionProgress("alice", "42")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second := &resumeFixture{pages: 7, failPage: -1}
-	result, err = collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, second.setup)
-	if err != nil || result.Posts != 4 || strings.Join(second.seen(), ",") != "UserTweets:page-5,UserTweets:page-6" {
-		t.Fatalf("resume budget: %+v %v %v", result, err, second.seen())
+	fixture := &resumeFixture{pages: 17, failPage: -1}
+	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
+	if err != nil || result.Stop != "known_boundary_reached" || result.Pages != 17 || result.Posts != 34 || len(fixture.seen()) != 17 {
+		t.Fatalf("unbounded pages: %+v %v %v", result, err, fixture.seen())
 	}
 }
 
@@ -227,7 +267,7 @@ func TestBrowserUnappliedCheckpointStopsOffline(t *testing.T) {
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true, Progress: CollectionProgress{UserID: "42", Posts: TimelineProgress{Cursor: "page-1"}}}
 	fixture := &resumeFixture{pages: 3, failPage: -1, ignoreCursor: true}
 	saved := 0
-	_, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { saved += len(p.Posts); return nil }, fixture.setup)
+	_, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20, TimelineIdleSeconds: 3}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { saved += len(p.Posts); return nil }, fixture.setup)
 	if FailureKind(err) != "checkpoint" || saved != 0 || len(fixture.seen()) != 1 {
 		t.Fatal(err, saved, fixture.seen())
 	}
@@ -285,7 +325,7 @@ func TestBrowserHeadRefreshFindsNewPostsOffline(t *testing.T) {
 	}
 }
 
-func TestBrowserBufferedPagesRespectBudgetOffline(t *testing.T) {
+func TestBrowserBufferedPagesRunToCompletionOffline(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
 		t.Skip("offline Chrome fixtures")
 	}
@@ -294,14 +334,14 @@ func TestBrowserBufferedPagesRespectBudgetOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	fixture := &resumeFixture{pages: 8, failPage: -1, buffered: true}
+	fixture := &resumeFixture{pages: 18, failPage: -1, buffered: true}
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
-	result, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
-	if err != nil || result.Stop != "page_budget_reached" || result.Pages != 5 {
+	result, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 40, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
+	if err != nil || result.Stop != "known_boundary_reached" || result.Pages != 18 || result.Posts != 36 {
 		t.Fatal(result, err)
 	}
 	progress, err := s.LoadCollectionProgress("alice", "42")
-	if err != nil || progress.Posts.Cursor != "page-5" {
-		t.Fatal("checkpoint skipped buffered unsaved pages", progress, err)
+	if err != nil || !progress.Posts.Exhausted {
+		t.Fatal("completed buffered pages were not checkpointed", progress, err)
 	}
 }

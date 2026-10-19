@@ -7,8 +7,8 @@ import (
 	"xm/internal/database"
 )
 
-// Serialize with job claiming so an in-flight budget cannot write stale quota
-// back after the reset. Clearing local state never claims to reset X's quota.
+// Serialize with job claiming. Clearing local state never claims to reset X's
+// server-side quota.
 func (a *App) resetRateLimit(w http.ResponseWriter, r *http.Request) {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
@@ -47,5 +47,5 @@ func (a *App) resetRateLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.scheduler.Wake()
-	respond(w, 200, map[string]string{"message": "本地限流状态已清空，任务将按启用和暂停设置继续执行；X 服务器仍可能返回限流。"})
+	respond(w, 200, map[string]string{"message": "429 本地冷却已清空，任务将按启用和暂停设置继续执行；X 服务器仍可能再次限流。"})
 }

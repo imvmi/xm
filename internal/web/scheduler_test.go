@@ -19,7 +19,8 @@ func (s *fakeBatchSession) CollectBound(_ context.Context, target string, _ arch
 	*s.targets = append(*s.targets, target)
 	return archive.Collection{Stop: "known_boundary_reached"}, nil
 }
-func (s *fakeBatchSession) Close() { *s.closed = true }
+func (s *fakeBatchSession) Healthy(context.Context) error { return nil }
+func (s *fakeBatchSession) Close()                        { *s.closed = true }
 
 func seedMonitor(t *testing.T, a *App, name string) {
 	t.Helper()
@@ -111,7 +112,7 @@ func TestSchedulerLoadsIncrementalBoundary(t *testing.T) {
 	}
 }
 
-func TestSchedulerUsesFixedSafetyLimitAndMarksIncomplete(t *testing.T) {
+func TestSchedulerUsesInternalSafetyLimitAndMarksIncomplete(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")
 	gotLimit := 0
@@ -128,7 +129,7 @@ func TestSchedulerUsesFixedSafetyLimitAndMarksIncomplete(t *testing.T) {
 		t.Fatal(err, list)
 	}
 	m := list[0]
-	if gotLimit != monitorCollectionLimit || m.LastStatus != "incomplete" || m.LastError != incompleteCollectionMessage || m.LastSuccess != 0 || m.Failures != 0 {
+	if gotLimit != archive.CollectionSafetyMaxPosts || m.LastStatus != "incomplete" || m.LastError != incompleteCollectionMessage || m.LastSuccess != 0 || m.Failures != 0 {
 		t.Fatalf("safety-limit result was treated as complete: limit=%d monitor=%+v", gotLimit, m)
 	}
 	var status, message string
@@ -153,9 +154,9 @@ func TestSchedulerPersistsAndClearsCatchupBoundary(t *testing.T) {
 			if identity.Catchup {
 				t.Fatal("first bounded run unexpectedly started in catch-up mode")
 			}
-			return archive.Collection{Stop: "max_scrolls_reached", Scrolls: 40}, nil
+			return archive.Collection{Stop: "time_budget_reached", Scrolls: 40}, nil
 		}
-		if !identity.Catchup || identity.CatchupPostAnchor != "100" || identity.CatchupScrollBudget == 0 {
+		if !identity.Catchup || identity.CatchupPostAnchor != "100" {
 			t.Fatalf("catch-up state not restored: %+v", identity)
 		}
 		return archive.Collection{Stop: "known_boundary_reached"}, nil
@@ -281,7 +282,7 @@ func TestSchedulerAutomaticBatchReusesOneSession(t *testing.T) {
 	if !worked || err != nil {
 		t.Fatal(worked, err)
 	}
-	if sessions != 1 || !closed || len(targets) != 2 || targets[0] != "alice" || targets[1] != "bob" {
+	if sessions != 1 || closed || len(targets) != 2 || targets[0] != "alice" || targets[1] != "bob" {
 		t.Fatalf("batch did not reuse one session: sessions=%d closed=%v targets=%v", sessions, closed, targets)
 	}
 	list, err := monitors(a.store.DB)

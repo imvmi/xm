@@ -45,7 +45,7 @@ func testApp(t *testing.T) *App {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 900}
+	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 60, CollectionTimeout: 60, ScrollDelay: 3, MaxScrolls: 40, MaxMediaBytes: 512 << 20, DefaultInterval: 3600}
 	configureMySQLTest(t, &cfg)
 	if err := archive.SaveBootstrap(path, cfg); err != nil {
 		t.Fatal(err)
@@ -60,6 +60,7 @@ func testApp(t *testing.T) *App {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(a.scheduler.closeSession)
 	a.scheduler.download = func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error) {
 		return archive.DownloadSummary{}, nil
 	}
@@ -172,14 +173,14 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	if strings.Contains(w.Body.String(), "local-test-secret") {
 		t.Fatal("cookie leaked")
 	}
-	ok(t, b.request("PUT", "/api/settings", map[string]any{"proxy": "socks5://user:proxy-secret@127.0.0.1:1080", "default_interval_seconds": 1200}, "http://localhost", true), 200)
+	ok(t, b.request("PUT", "/api/settings", map[string]any{"proxy": "socks5://user:proxy-secret@127.0.0.1:1080", "default_interval_seconds": 7200}, "http://localhost", true), 200)
 	w = b.request("GET", "/api/settings", nil, "", false)
 	if strings.Contains(w.Body.String(), "proxy-secret") {
 		t.Fatal("proxy password leaked")
 	}
 	ok(t, b.request("PUT", "/api/settings", map[string]any{"polling_paused": true}, "http://localhost", true), 200)
 	cfg, err := archive.LoadConfig(a.configPath)
-	if err != nil || !cfg.PollingPaused || cfg.DefaultInterval != 1200 || !strings.Contains(cfg.Proxy, "proxy-secret") {
+	if err != nil || !cfg.PollingPaused || cfg.DefaultInterval != 7200 || !strings.Contains(cfg.Proxy, "proxy-secret") {
 		t.Fatal("settings did not persist", err)
 	}
 	input := map[string]any{"username": "@Alice", "replies": true, "enabled": true}
@@ -191,7 +192,7 @@ func TestSettingsCookiesAndMonitorPersistence(t *testing.T) {
 	// MySQL reports zero affected rows when an identical update changes nothing.
 	ok(t, b.request("PUT", "/api/monitors/alice", input, "http://localhost", true), 200)
 	list, err := monitors(a.store.DB)
-	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 1200 {
+	if err != nil || len(list) != 1 || list[0].Enabled || list[0].Interval != 7200 {
 		t.Fatal("monitor update failed", err)
 	}
 	w = b.request("GET", "/api/monitors", nil, "", false)

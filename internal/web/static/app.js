@@ -39,20 +39,19 @@ $('logout').addEventListener('click',()=>action($('logout'),async()=>{await api(
 async function refreshOverview() {
   const o=await api('/overview');state.overview=o;const c=o.counts;
   $('nav-count').textContent=number(c.posts);$('stat-posts').textContent=number(c.posts);$('stat-today').textContent=number(c.today);$('stat-monitors').textContent=number(c.monitors);$('stat-active').textContent=number(c.active);$('stat-media').textContent=number(c.media);$('stat-bytes').textContent=bytes(c.media_bytes);
-  const cooling=Number(o.cooldown_until)>o.server_time, budgeting=Number(o.request_budget_until)>o.server_time;
-  let label=o.running?`正在采集 @${o.running}`:o.cookie_blocked?'登录状态待处理':!o.cookie_ready?'等待导入 Cookie':cooling?'限流冷却中':budgeting?'请求预算等待中':o.paused?'自动轮询已暂停':'服务运行中';
+  const cooling=Number(o.cooldown_until)>o.server_time;
+  let label=o.running?`正在采集 @${o.running}`:o.cookie_blocked?'登录状态待处理':!o.cookie_ready?'等待导入 Cookie':cooling?'限流冷却中':o.paused?'自动轮询已暂停':'服务运行中';
   $('service-state').replaceChildren();const dot=document.createElement('span');dot.className='status-dot';$('service-state').append(dot,document.createTextNode(label));
   $('pause-all').textContent=o.paused?'恢复自动轮询':'暂停自动轮询';
   const banner=$('connection-banner');banner.hidden=true;banner.replaceChildren();
   let warning='';
   if(o.cookie_blocked)warning=`采集已暂停：${o.cookie_blocked}。请重新导入 Cookie。`;
-  else if(!o.cookie_ready)warning='还没有可用的 Cookie。先完成连接设置，监控任务才能开始采集。';
+  else if(!o.cookie_ready)warning='还没有可用的 Cookie。先完成设置，监控任务才能开始采集。';
   else if(cooling)warning=`X 请求限流，全部采集已进入冷却，最早于 ${date(Number(o.cooldown_until),true)} 重试；实际恢复以 X 响应为准。`;
-  else if(budgeting)warning=`为避免触发限流，采集已主动等待，最早于 ${date(Number(o.request_budget_until),true)} 继续；已保存的分页断点会保留。`;
   else if(o.scheduler_error)warning=o.scheduler_error;
-  if(warning){banner.hidden=false;banner.append(document.createTextNode(warning+' '));const link=document.createElement('a');link.href='#settings';link.textContent='前往连接设置 →';banner.append(link);}
+  if(warning){banner.hidden=false;banner.append(document.createTextNode(warning+' '));const link=document.createElement('a');link.href='#settings';link.textContent='前往设置 →';banner.append(link);}
 }
-const titles={archive:'推文归档',user:'用户动态',monitors:'监控账号',activity:'采集记录',settings:'连接设置',notifications:'通知设置'};
+const titles={archive:'推文归档',user:'用户动态',monitors:'监控账号',activity:'任务中心',settings:'设置',notifications:'通知设置'};
 function avatar(username, extra='', source='') { const initials=escape(username.slice(0,2).toUpperCase()),alt=[...username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;return `<span class="avatar alt${alt} ${extra}"><span class="avatar-fallback">${initials}</span>${source?`<img class="avatar-image" src="${escape(source)}" alt="" loading="lazy">`:''}</span>`; }
 document.addEventListener('error',event=>{if(event.target instanceof HTMLImageElement&&event.target.classList.contains('avatar-image'))event.target.remove();},true);
 function handle(u){return u.current_username||u.username;}
@@ -93,8 +92,8 @@ $('user-search').addEventListener('input',renderUsers);
 function renderProfile(){
  const u=state.users.find(u=>u.username===state.target)||{username:state.target,name:state.target,posts:0,media:0};
  $('profile-top-name').textContent=u.name;$('profile-top-count').textContent=number(u.posts)+' 条已归档推文';document.title=u.name+' (@'+handle(u)+') · XM';
- $('profile-header').innerHTML=`<div class="profile-cover" aria-hidden="true"></div><div class="profile-identity"><div class="profile-actions">${avatar(handle(u),'profile-avatar',u.avatar_url)}<a href="https://x.com/${encodeURIComponent(handle(u))}" class="button secondary" target="_blank" rel="noopener noreferrer">在 X 查看 ${icon('arrow')}</a></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><div class="user-handle">@${escape(handle(u))}</div>${u.bio?`<p class="profile-bio">${escape(u.bio)}</p>`:''}<div class="profile-meta">${icon('clock')} ${u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</div><div class="profile-numbers"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个已归档媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div></div>`;
- $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${number(u.posts)}</dd></div><div><dt>已归档媒体（含引用）</dt><dd>${number(u.media)}</dd></div><div><dt>统一轮询周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/60)+' 分钟':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
+ $('profile-header').innerHTML=`<div class="profile-cover" aria-hidden="true"></div><div class="profile-identity"><div class="profile-actions">${avatar(handle(u),'profile-avatar',u.avatar_url)}<div class="profile-meta profile-archive-status">${icon('clock')}<span>${u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</span></div></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><a href="https://x.com/${encodeURIComponent(handle(u))}" class="user-handle profile-x-link" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(handle(u))}">@${escape(handle(u))}</a>${u.bio?`<p class="profile-bio">${escape(u.bio)}</p>`:''}<div class="profile-numbers"><span><strong>${number(u.posts)}</strong> 条推文</span><span><strong>${number(u.media)}</strong> 个已归档媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div></div>`;
+ $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${number(u.posts)}</dd></div><div><dt>已归档媒体（含引用）</dt><dd>${number(u.media)}</dd></div><div><dt>统一轮询周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/3600)+' 小时':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
 }
 const timelineTabs=['posts','replies','media'];
 function syncTabs(){
@@ -174,7 +173,7 @@ $('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),as
 $('refresh-user').addEventListener('click',()=>action($('refresh-user'),async()=>{await refreshOverview();await refreshUsers();renderProfile();await refreshPosts();}));
 
 
-function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested)return ['等待执行','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(Number(state.overview?.request_budget_until)>state.overview?.server_time)return ['预算等待','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='budget_wait')return ['等待下次采集','neutral'];if(m.last_status==='incomplete')return ['未追赶完成','warn'];if(m.last_error)return ['等待重试','error'];return ['监控中','']; }
+function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested)return ['等待执行','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='budget_wait')return ['等待下次采集','neutral'];if(m.last_status==='incomplete')return ['任务未完成','warn'];if(m.last_error)return ['等待重试','error'];return ['监控中','']; }
 function checkpointHTML(m) {
   if(!m.catchup)return '';
   const checkpoint=m.checkpoint;
@@ -184,10 +183,17 @@ function checkpointHTML(m) {
   const saved=checkpoint.saved_at?' · '+escape(date(checkpoint.saved_at,true)):'';
   return `<div class="table-sub checkpoint-status">历史追赶中 · ${phase}</div>${reached}<div class="table-sub checkpoint-saved">分页断点已保存，下轮从此处继续${saved}</div>`;
 }
+const baselineLabels={not_started:'尚未补采历史',backfilling:'历史补采中',visible_history_complete:'当前可见历史已完成',partial:'可见历史范围不确定',blocked:'历史补采受阻'};
+function baselineHTML(m){const label=baselineLabels[m.baseline_status]||m.baseline_status||'尚未补采历史';const detail=m.baseline_finished?` · ${date(m.baseline_finished,true)}`:'';return `<div class="table-sub baseline-status">${escape(label+detail)}</div>`;}
+function collectionActions(m){
+  if(m.running||m.requested)return `<button class="text-button" data-monitor="${m.username}" data-op="stop">${m.running?'停止':'取消排队'}</button>`;
+  if(m.baseline_status==='not_started'||m.baseline_status==='backfilling'||!m.baseline_status)return `<button class="text-button" data-monitor="${m.username}" data-op="backfill">继续补采历史</button>`;
+  const rescan=`<button class="text-button" data-monitor="${m.username}" data-op="rescan">重新扫描历史</button>`;
+  return `<button class="text-button" data-monitor="${m.username}" data-op="run">检查新动态</button>${rescan}`;
+}
 async function refreshMonitors() {
   const list=await api('/monitors');if(!state.authenticated)return;state.monitors=list;
   if(!state.settings)state.settings=await api('/settings');
-  if(!$('monitor-default-form').contains(document.activeElement))$('default-interval').value=state.settings.default_interval_seconds/60;
   renderMonitors();
 }
 function renderMonitors(){
@@ -195,11 +201,32 @@ function renderMonitors(){
   const list=state.monitors.filter(m=>(m.username+' '+handle(m)).toLowerCase().includes(q)&&(filter==='all'||(filter==='enabled'?m.enabled:!m.enabled)));
   $('monitor-empty').hidden=state.monitors.length>0;$('monitor-no-match').hidden=!state.monitors.length||list.length>0;
   $('monitor-count').textContent=list.length+' / '+state.monitors.length+' 个账号';
-  $('monitor-rows').innerHTML=list.map(m=>{const [label,cls]=monitorStatus(m);const lastError=m.last_error&&!(m.catchup&&['incomplete','budget_wait'].includes(m.last_status))?`<div class="table-sub error">${escape(m.last_error)}</div>`:'';return `<tr><td class="monitor-identity" data-label="账号"><div class="user-cell"><span class="avatar">${escape(handle(m).slice(0,2).toUpperCase())}</span><div><a href="${userURL(m.username)}"><strong>@${escape(handle(m))}</strong></a>${m.replies?'<div class="table-sub">包含回复</div>':''}${m.current_username&&m.current_username!==m.username?`<div class="table-sub">原 @${escape(m.username)} · 归档已延续</div>`:''}</div></div></td><td data-label="统一周期">${number(m.interval_seconds/60)} 分钟</td><td class="monitor-status" data-label="运行状态"><span class="badge ${cls}">${label}</span>${lastError}${checkpointHTML(m)}</td><td data-label="最近 / 下次批次"><div>${escape(date(m.last_finished,true))}</div><div class="table-sub">${m.enabled?'计划 '+escape(date(m.next_run,true)):'自动轮询已暂停'}</div></td><td data-label="已归档"><strong>${number(m.posts)}</strong><div class="table-sub">上轮新增 ${m.new_posts} 条</div></td><td class="monitor-actions" data-label="操作"><div class="row-actions"><button class="text-button" data-monitor="${m.username}" data-op="${m.running||m.requested?'stop':'run'}">${m.running?'停止':m.requested?'取消排队':'立即采集'}</button>${m.last_error?.includes('请重置断点')?`<button class="text-button" data-monitor="${m.username}" data-op="reset-progress">重置断点并重试</button>`:''}<button class="text-button" data-monitor="${m.username}" data-op="edit">编辑</button><button class="text-button" data-monitor="${m.username}" data-op="toggle">${m.enabled?'暂停':'启用'}</button><button class="text-button delete" data-monitor="${m.username}" data-op="delete" ${m.running?'disabled':''}>移除</button></div></td></tr>`;}).join('');
+  $('monitor-rows').innerHTML=list.map(m=>{const [label,cls]=monitorStatus(m);const lastError=m.last_error&&!(m.catchup&&['incomplete','budget_wait'].includes(m.last_status))?`<div class="table-sub error">${escape(m.last_error)}</div>`:'';return `<tr><td class="monitor-identity" data-label="账号"><div class="user-cell"><span class="avatar">${escape(handle(m).slice(0,2).toUpperCase())}</span><div><a href="${userURL(m.username)}"><strong>@${escape(handle(m))}</strong></a>${m.replies?'<div class="table-sub">包含回复</div>':''}${m.current_username&&m.current_username!==m.username?`<div class="table-sub">原 @${escape(m.username)} · 归档已延续</div>`:''}</div></div></td><td data-label="统一周期">${number(m.interval_seconds/3600)} 小时</td><td class="monitor-status" data-label="运行状态"><span class="badge ${cls}">${label}</span>${baselineHTML(m)}${lastError}${checkpointHTML(m)}</td><td data-label="最近 / 下次批次"><div>${escape(date(m.last_finished,true))}</div><div class="table-sub">${m.enabled?'计划 '+escape(date(m.next_run,true)):'自动轮询已暂停'}</div></td><td data-label="已归档"><strong>${number(m.posts)}</strong><div class="table-sub">上轮新增 ${m.new_posts} 条</div></td><td class="monitor-actions" data-label="操作"><div class="row-actions">${collectionActions(m)}${m.last_error?.includes('请重置断点')?`<button class="text-button" data-monitor="${m.username}" data-op="reset-progress">重置断点并重试</button>`:''}<button class="text-button" data-monitor="${m.username}" data-op="edit">编辑</button><button class="text-button" data-monitor="${m.username}" data-op="toggle">${m.enabled?'暂停':'启用'}</button><button class="text-button delete" data-monitor="${m.username}" data-op="delete" ${m.running?'disabled':''}>移除</button></div></td></tr>`;}).join('');
 }
 $('monitor-search').addEventListener('input',renderMonitors);
 $('monitor-filter').addEventListener('change',renderMonitors);
-$('monitor-default-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{await api('/settings','PUT',{default_interval_seconds:Math.round(Number($('default-interval').value)*60)});state.settings=await api('/settings');toast('统一轮询周期已保存，全部启用账号将在同一批次采集');await refreshMonitors();});});
+$('collection-settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+  const input={queue_interval_seconds:Number($('queue-interval').value),collection_timeout_seconds:Number($('collection-timeout').value),scroll_delay_seconds:Number($('scroll-delay').value),scroll_jitter_seconds:Number($('scroll-jitter').value),timeline_idle_seconds:Number($('timeline-idle-seconds').value),known_boundary_posts:Number($('known-boundary-posts').value),rate_limit_mode:$('rate-limit-mode').value,request_timeout_seconds:Number($('request-timeout').value),max_media_bytes:Number($('max-media-mib').value)*1048576,browser_max_age_seconds:Number($('browser-max-age').value)*3600,browser_max_tasks:Number($('browser-max-tasks').value),media_retry_initial_seconds:Number($('media-retry-initial').value)*60,media_retry_max_seconds:Number($('media-retry-max').value)*3600};
+  const interval=Math.round(Number($('default-interval').value)*3600);
+  if(interval!==state.settings.default_interval_seconds)input.default_interval_seconds=interval;
+  await api('/settings','PUT',input);state.settings=await api('/settings');
+  populateCollectionSettings(state.settings);
+  $('collection-settings-result').textContent='采集设置已保存；自动周期已重新安排，其他参数从下一个账号任务开始生效。';toast('采集设置已保存');
+});});
+function populateCollectionSettings(s){
+  $('default-interval').value=s.default_interval_seconds/3600;$('queue-interval').value=s.queue_interval_seconds;
+  $('collection-timeout').value=s.collection_timeout_seconds;$('scroll-delay').value=s.scroll_delay_seconds;$('scroll-jitter').value=s.scroll_jitter_seconds;$('timeline-idle-seconds').value=s.timeline_idle_seconds;$('known-boundary-posts').value=s.known_boundary_posts;updateScrollSpacingHelp();
+  $('rate-limit-mode').value=s.rate_limit_mode;$('request-timeout').value=s.request_timeout_seconds;$('max-media-mib').value=s.max_media_bytes/1048576;$('browser-max-age').value=s.browser_max_age_seconds/3600;$('browser-max-tasks').value=s.browser_max_tasks;$('media-retry-initial').value=s.media_retry_initial_seconds/60;$('media-retry-max').value=s.media_retry_max_seconds/3600;
+}
+$('collection-defaults').addEventListener('click',()=>{const values={'collection-timeout':300,'scroll-delay':5,'scroll-jitter':2,'timeline-idle-seconds':24,'known-boundary-posts':8};for(const [id,value] of Object.entries(values))$(id).value=value;updateScrollSpacingHelp();$('collection-settings-result').textContent='已填入推荐默认值，点击“保存采集设置”后生效。';});
+$('operational-defaults').addEventListener('click',()=>{const values={'rate-limit-mode':'balanced','request-timeout':60,'max-media-mib':512,'browser-max-age':6,'browser-max-tasks':100,'media-retry-initial':5,'media-retry-max':24};for(const [id,value] of Object.entries(values))$(id).value=value;$('collection-settings-result').textContent='已填入推荐默认值，点击“保存采集设置”后生效。';});
+function updateScrollSpacingHelp(){
+  const interval=Number($('scroll-delay').value),jitter=Number($('scroll-jitter').value),help=$('scroll-spacing-help');
+  $('scroll-jitter').max=Math.max(0,interval-1);
+  if(!Number.isFinite(interval)||!Number.isFinite(jitter)){help.textContent='请输入整数秒数；实际等待不能低于 1 秒。';return;}
+  help.textContent=jitter===0?`上一轮页面请求完成后，固定等待 ${interval} 秒再滚动。`:`上一轮页面请求完成后，随机等待 ${interval-jitter}～${interval+jitter} 秒再滚动。`;
+}
+$('scroll-delay').addEventListener('input',updateScrollSpacingHelp);$('scroll-jitter').addEventListener('input',updateScrollSpacingHelp);
 function monitorPayload(m) { return {username:m.username,replies:m.replies,enabled:m.enabled}; }
 async function openMonitor(m=null) {
   if(!state.settings)state.settings=await api('/settings');state.editing=m?.username||null;
@@ -218,7 +245,9 @@ $('monitor-rows').addEventListener('click',event=>{const b=event.target.closest(
     case 'edit':await openMonitor(m);return;
     case 'delete':state.deleting=m.username;$('confirm-text').textContent='将停止监控 @'+m.username+'。';$('confirm-dialog').showModal();return;
     case 'toggle':await api('/monitors/'+m.username,'PUT',{...monitorPayload(m),enabled:!m.enabled});toast(m.enabled?'监控已暂停':'监控已启用，将按周期执行');break;
-    case 'run':await api('/monitors/'+m.username+'/run','POST');toast('已加入采集队列');break;
+    case 'run':await api('/monitors/'+m.username+'/run','POST',{mode:'incremental'});toast('增量采集已加入队列');break;
+    case 'backfill':await api('/monitors/'+m.username+'/run','POST',{mode:'backfill'});toast('历史补采已加入队列');break;
+    case 'rescan':if(!window.confirm('将清除未完成的分页断点，并从最新内容重新扫描当前可见历史。已归档内容不会删除。是否继续？'))return;await api('/monitors/'+m.username+'/run','POST',{mode:'rescan'});toast('历史重新扫描已加入队列');break;
     case 'stop':await api('/monitors/'+m.username+'/stop','POST');toast('已请求停止并暂停此账号');break;
   }
   await refreshMonitors();await refreshOverview();
@@ -236,7 +265,7 @@ function selectSettingsTab(name,focus=false){
 }
 for(const button of document.querySelectorAll('[data-settings-tab]')){
  button.addEventListener('click',()=>selectSettingsTab(button.dataset.settingsTab));
- button.addEventListener('keydown',e=>{const names=['account','network','storage'];let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%3;else if(e.key==='ArrowLeft')i=(i+2)%3;else if(e.key==='Home')i=0;else if(e.key==='End')i=2;else return;e.preventDefault();selectSettingsTab(names[i],true);});
+ button.addEventListener('keydown',e=>{const names=['account','collection','network','storage'];let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;e.preventDefault();selectSettingsTab(names[i],true);});
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;
@@ -244,7 +273,7 @@ async function refreshSettings() {
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
   $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
-  $('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;$('chrome-mode').textContent=s.chrome_headless?'Headless':'有界面模式';$('default-interval').value=s.default_interval_seconds/60;
+  $('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;$('chrome-mode').textContent=s.chrome_headless?'Headless':'有界面模式';populateCollectionSettings(s);$('collection-settings-result').textContent='';
   await refreshCookieSource();
   await refreshStorage();
 }
@@ -284,12 +313,19 @@ function proxyChange() { if($('proxy-mode').value==='direct')return {proxy:''};c
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{await api('/settings','PUT',proxyChange());toast('代理设置已保存，下一个采集任务生效');await refreshSettings();});});
 $('test-proxy').addEventListener('click',()=>action($('test-proxy'),async()=>{$('proxy-result').textContent='正在连接 X…';try{const r=await api('/proxy-test','POST',proxyChange());$('proxy-result').textContent=`收到 HTTP ${r.status} · ${r.latency_ms} ms。${r.message}`;}catch(err){$('proxy-result').textContent=err.message;throw err;}}));
 $('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{$('chrome-result').classList.remove('error');$('chrome-result').textContent='正在检查 Chrome、Cookie、X 网络和登录状态…';try{const r=await api('/chrome-test','POST');const mark={passed:'✓',failed:'✕',skipped:'○'};$('chrome-result').textContent=r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;$('chrome-result').classList.toggle('error',!r.ok);}catch(err){$('chrome-result').textContent=err.message;$('chrome-result').classList.add('error');throw err;}}));
-const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['未追赶完成','warn'],budget_wait:['预算等待','warn'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
+const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['任务未完成','warn'],budget_wait:['历史等待','neutral'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
+const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};
+const sourceLabels={manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
+const modeLabels={incremental:'增量采集',backfill:'历史补采',rescan:'重新扫描'};
+function jobHTML(job,current=false){const [label,cls]=jobLabels[job.status]||[job.status,'neutral'];const mode=modeLabels[job.mode]||job.mode||'增量采集';const detail=current?`${mode} · 已读取 ${number(job.posts_read)} 条 · 新增 ${number(job.new_posts)} 条 · 第 ${number(job.attempts)} 次执行`:`${mode} · ${sourceLabels[job.source]||job.source} · ${job.message||'等待前序任务完成'}`;const cancel=current?'':`<button class="text-button delete" type="button" data-cancel-job="${Number(job.id)}">取消</button>`;return `<article class="job-row ${current?'current':''}"><div class="job-position">${current?icon('clock'):number(job.position)}</div><div class="run-main"><strong>@${escape(job.target)}</strong><p>${escape(detail)}</p><div class="run-time">${current?'开始于 '+escape(date(job.started_at,true)):'入队于 '+escape(date(job.queued_at,true))}</div></div><div class="job-actions"><span class="badge ${cls}">${escape(label)}</span>${cancel}</div></article>`;}
 async function refreshRuns() {
-  const runs=await api('/runs');$('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
+  const payload=await api('/activity'),legacy=Array.isArray(payload),runs=legacy?payload:payload.runs;
+  if(!legacy){const current=payload.current,queue=payload.queue||[];$('current-job-count').textContent=current?'1':'0';$('queue-count').textContent=number(queue.length);$('current-job').innerHTML=current?jobHTML(current,true):'<div class="activity-empty">当前没有正在执行的任务</div>';$('job-queue').innerHTML=queue.length?queue.map(j=>jobHTML(j)).join(''):'<div class="activity-empty">等待队列为空</div>';const wait=$('queue-wait');wait.hidden=!payload.wait_reason;wait.textContent=payload.wait_reason+(payload.wait_until?' · 预计 '+date(payload.wait_until,true)+' 后继续':'');}
+  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'增量采集'}`;return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div></div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有采集记录</h3><p>添加监控账号后，每次任务的状态都会记录在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
+$('job-queue').addEventListener('click',event=>{const button=event.target.closest('[data-cancel-job]');if(!button)return;action(button,async()=>{const result=await api('/activity/jobs/'+button.dataset.cancelJob,'DELETE');toast(result.message);await refreshRuns();if(state.view==='monitors')await refreshMonitors();});});
 let refreshing=false;
 setInterval(async()=>{if(!state.authenticated||document.hidden||refreshing)return;refreshing=true;try{await refreshOverview();if(state.view==='monitors')await refreshMonitors();if(state.view==='activity')await refreshRuns();if(state.view==='notifications')await refreshNotifications(false);}catch(err){$('service-state').textContent='连接暂时中断';}finally{refreshing=false;}},6000);
 (async()=>{try{const r=await api('/session');state.csrf=r.csrf;await enter();}catch{showLogin();}})();

@@ -12,6 +12,7 @@ import (
 type TimelineProgress struct {
 	Cursor    string `json:"cursor,omitempty"`
 	Done      bool   `json:"done,omitempty"`
+	Exhausted bool   `json:"exhausted,omitempty"`
 	Head      string `json:"head,omitempty"`
 	ReachedAt string `json:"reached_at,omitempty"`
 }

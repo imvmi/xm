@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var archiveTables = []string{"storage_profiles", "notification_channels", "system_settings", "admin_accounts", "media_directories", "cookie_sources", "x_cookies", "posts", "profiles", "target_identities", "target_posts", "media", "runs", "request_budgets", "run_metrics", "collection_progress", "monitors", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries"}
+var archiveTables = []string{"storage_profiles", "notification_channels", "system_settings", "admin_accounts", "media_directories", "cookie_sources", "x_cookies", "posts", "profiles", "target_identities", "target_posts", "media", "runs", "request_budgets", "run_metrics", "collection_progress", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries"}
 
 // CopySQLiteToMySQL copies a consistent read-only SQLite snapshot into an empty
 // MySQL schema. Destination writes commit as one transaction; source is untouched.
@@ -62,7 +62,7 @@ func (s *Store) CopySQLiteToMySQL(ctx context.Context, source string) (map[strin
 		}
 		if exists == 0 {
 			switch table {
-			case "request_budgets", "run_metrics", "collection_progress", "cookie_sources", "monitors", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries":
+			case "request_budgets", "run_metrics", "collection_progress", "cookie_sources", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries":
 				// CLI-only archives may not have started the web service yet.
 			default:
 				return nil, fmt.Errorf("源数据库缺少当前版本必需的表 %s，不支持旧版结构迁移", table)
@@ -88,10 +88,6 @@ func (s *Store) CopySQLiteToMySQL(ctx context.Context, source string) (map[strin
 		if err != nil {
 			rows.Close()
 			return nil, err
-		}
-		if len(cols) != len(targetCols) {
-			rows.Close()
-			return nil, fmt.Errorf("源表 %s 与当前版本结构不同，不支持旧版结构迁移", table)
 		}
 		allowed := map[string]bool{}
 		for _, c := range targetCols {

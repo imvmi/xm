@@ -43,6 +43,25 @@ func TestRateLimitDeadline(t *testing.T) {
 	}
 }
 
+func TestRateLimitDeadlinePresets(t *testing.T) {
+	const now int64 = 1792274400
+	for _, tc := range []struct {
+		mode       string
+		wantDelay  int64
+		wantMargin int64
+	}{{"conservative", 1800, 10}, {"balanced", 900, 5}, {"fast", 300, 3}} {
+		until, _ := rateLimitDeadline(now, 60, 0, nil, tc.mode)
+		if until != now+tc.wantDelay {
+			t.Fatal(tc.mode, until-now)
+		}
+		failure := &archive.Failure{Kind: "rate", RetryAt: time.Unix(now+4000, 0)}
+		until, _ = rateLimitDeadline(now, 60, 0, failure, tc.mode)
+		if until != now+4000+tc.wantMargin {
+			t.Fatal(tc.mode, until-now)
+		}
+	}
+}
+
 func TestSchedulerRepeatedRateLimitsSurviveRestartAndPartialSuccess(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")
@@ -115,6 +134,17 @@ func TestSchedulerRepeatedRateLimitsSurviveRestartAndPartialSuccess(t *testing.T
 	}
 	// Only a whole successful automatic batch clears the counter.
 	failBob = false
+	if worked, err := a.scheduler.step(context.Background()); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	if state(a.store.DB, "rate_limit_failures") == "0" {
+		t.Fatal("resuming only the failed tail incorrectly reset backoff")
+	}
+	// Finishing the durable remainder does not turn earlier failures into a
+	// clean batch; only the next full automatic pass can reset backoff.
+	if _, err := a.store.DB.Exec("UPDATE monitors SET next_run=0"); err != nil {
+		t.Fatal(err)
+	}
 	if worked, err := a.scheduler.step(context.Background()); !worked || err != nil {
 		t.Fatal(worked, err)
 	}

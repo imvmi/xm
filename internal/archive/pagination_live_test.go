@@ -3,6 +3,7 @@ package archive
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 )
 
@@ -22,9 +23,15 @@ func TestLivePagination(t *testing.T) {
 		t.Fatal("database unavailable")
 	}
 	defer store.Close()
-	var target string
+	target := os.Getenv("XM_LIVE_PAGINATION_TARGET")
 	var replies bool
-	if err = store.DB.QueryRow("SELECT username,replies FROM monitors ORDER BY last_started DESC LIMIT 1").Scan(&target, &replies); err != nil {
+	query := "SELECT username,replies FROM monitors ORDER BY last_started DESC LIMIT 1"
+	args := []any{}
+	if target != "" {
+		query = "SELECT username,replies FROM monitors WHERE username=?"
+		args = append(args, target)
+	}
+	if err = store.DB.QueryRow(query, args...).Scan(&target, &replies); err != nil {
 		t.Fatal("no monitor available")
 	}
 	if os.Getenv("XM_LIVE_PAGINATION_MODE") == "posts" {
@@ -38,8 +45,21 @@ func TestLivePagination(t *testing.T) {
 	if err != nil {
 		t.Fatal("cookies unavailable")
 	}
+	if os.Getenv("XM_LIVE_PAGINATION_BUDGET") == "1" {
+		identity.RequestBudget, err = store.LoadRequestBudget(cookies)
+		if err != nil {
+			t.Fatal("request budget unavailable")
+		}
+	}
+	limit := 100
+	if raw := os.Getenv("XM_LIVE_PAGINATION_LIMIT"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 10000 {
+			t.Fatal("invalid live pagination limit")
+		}
+	}
 	cfg.CollectionTimeout = 120
-	result, err := CollectBound(context.Background(), cfg, cookies, target, identity, 100, replies, func(p Page) error {
+	result, err := CollectBound(context.Background(), cfg, cookies, target, identity, limit, replies, func(p Page) error {
 		if p.Timeline {
 			t.Logf("timeline batch: posts=%d unavailable=%d", len(p.Posts), p.Unavailable)
 		}

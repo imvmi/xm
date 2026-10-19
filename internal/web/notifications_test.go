@@ -372,3 +372,55 @@ func TestNotificationSenderDoesNotBlockCollection(t *testing.T) {
 	close(release)
 	<-done
 }
+
+func TestMediaRecoveryWaitsForDeferredAndPermanentQuotedMedia(t *testing.T) {
+	a := testApp(t)
+	notificationFixture(t, a)
+	seedMonitor(t, a, "alice")
+	photo := func(id, author string) archive.Post {
+		return archive.Post{ID: id, AuthorID: author, Username: author, Assets: []archive.Asset{{ID: "photo", Kind: "photo", URL: "https://pbs.twimg.com/fixture.jpg"}}}
+	}
+	post, quote := photo("100", "42"), photo("200", "43")
+	post.Quote = &quote
+	if err := a.store.SavePosts("alice", []archive.Post{post}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.DB.Exec("UPDATE media SET status='permanent' WHERE post_id='100'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.DB.Exec("UPDATE media SET status='failed',next_attempt=? WHERE post_id='200'", time.Now().Add(24*time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	// Unrelated unfinished media must not block this target's recovery.
+	if err := a.store.SavePosts("bob", []archive.Post{photo("300", "44")}); err != nil {
+		t.Fatal(err)
+	}
+	var targets []string
+	a.scheduler.collect = recordTargets(&targets)
+	a.scheduler.download = archive.DownloadPending
+	for _, expected := range []int{2, 1, 0} {
+		if remaining, err := a.store.OutstandingMedia("alice"); err != nil || remaining != expected {
+			t.Fatal(remaining, err)
+		}
+		runCollection(t, a)
+		var status string
+		if err := a.store.DB.QueryRow("SELECT status FROM runs ORDER BY id DESC LIMIT 1").Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		all := events(t, a)
+		if expected > 0 {
+			if status != "media_failed" || len(all) != 1 || all[0].Type != "media_failed" {
+				t.Fatal("unresolved media reported recovered", status, all)
+			}
+			id := "100"
+			if expected == 1 {
+				id = "200"
+			}
+			if _, err := a.store.DB.Exec("UPDATE media SET status='done' WHERE post_id=?", id); err != nil {
+				t.Fatal(err)
+			}
+		} else if status != "bounded_complete" || len(all) != 2 || all[1].Type != "recovered" {
+			t.Fatal("complete archive did not recover", status, all)
+		}
+	}
+}

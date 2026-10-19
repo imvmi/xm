@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS media (
 CREATE INDEX IF NOT EXISTS media_status ON media(status,next_attempt);
 CREATE TABLE IF NOT EXISTS runs (
  id INTEGER PRIMARY KEY, target TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
- status TEXT NOT NULL, posts_seen INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT ''
+ status TEXT NOT NULL, posts_seen INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '', job_id INTEGER NOT NULL DEFAULT 0
 );`)
 	if err != nil {
 		db.Close()
@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS runs (
 	}
 	d := &database.DB{DB: db, Dialect: "sqlite"}
 	if err = migrateSettings(d); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = ensureRunJobColumn(d); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -80,7 +84,10 @@ CREATE TABLE IF NOT EXISTS runs (
 func now() string             { return time.Now().UTC().Format(time.RFC3339Nano) }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) StartRun(target string) (int64, error) {
-	r, err := s.DB.Exec("INSERT INTO runs(target,started_at,status) VALUES(?,?,'running')", target, now())
+	return s.StartJobRun(target, 0)
+}
+func (s *Store) StartJobRun(target string, jobID int64) (int64, error) {
+	r, err := s.DB.Exec("INSERT INTO runs(target,started_at,status,job_id) VALUES(?,?,'running',?)", target, now(), jobID)
 	if err != nil {
 		return 0, err
 	}
@@ -257,13 +264,33 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 }
 
 type MediaJob struct {
-	AuthorID, Username, Directory       string
-	PostID, ID, Kind, URL, Path, Status string
-	StorageID, ObjectKey                string
-	Bytes                               int64
-	SHA256                              string
-	Attempts                            int
-	NextAttempt                         int64
+	AuthorID, Username, Directory        string
+	PostID, ID, Kind, URL, Path, Status  string
+	StorageID, ObjectKey                 string
+	Bytes                                int64
+	SHA256                               string
+	Attempts                             int
+	NextAttempt                          int64
+	RetryInitialSeconds, RetryMaxSeconds int
+}
+
+const targetMediaFilter = ` AND post_id IN (WITH RECURSIVE wanted(id) AS (
+ SELECT post_id FROM target_posts WHERE target=?
+ UNION SELECT p.quote_id FROM posts p JOIN wanted w ON p.id=w.id WHERE p.quote_id<>''
+ ) SELECT id FROM wanted)`
+
+// OutstandingMedia includes deferred retries and permanent failures, including
+// quoted media. An empty runnable download queue does not imply a full archive.
+func (s *Store) OutstandingMedia(target string) (int, error) {
+	query := "SELECT COUNT(*) FROM media WHERE status<>'done'"
+	var args []any
+	if target != "" {
+		query += targetMediaFilter
+		args = append(args, target)
+	}
+	var count int
+	err := s.DB.QueryRow(query, args...).Scan(&count)
+	return count, err
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
@@ -274,10 +301,7 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 		args = append(args, time.Now().Unix())
 	}
 	if target != "" {
-		query += ` AND post_id IN (WITH RECURSIVE wanted(id) AS (
- SELECT post_id FROM target_posts WHERE target=?
- UNION SELECT p.quote_id FROM posts p JOIN wanted w ON p.id=w.id WHERE p.quote_id<>''
- ) SELECT id FROM wanted)`
+		query += targetMediaFilter
 		args = append(args, target)
 	}
 	query += " ORDER BY post_id,media_id"
@@ -308,8 +332,15 @@ func (s *Store) MediaResult(j MediaJob, path string, size int64, hash string, do
 		if IsPermanentMediaError(downloadErr) {
 			status = "permanent"
 		} else {
-			delay := 5 * time.Minute * time.Duration(1<<min(j.Attempts, 8))
-			nextAttempt = time.Now().Add(min(delay, 24*time.Hour)).Unix()
+			initial, maximum := time.Duration(j.RetryInitialSeconds)*time.Second, time.Duration(j.RetryMaxSeconds)*time.Second
+			if initial <= 0 {
+				initial = 5 * time.Minute
+			}
+			if maximum < initial {
+				maximum = max(initial, 24*time.Hour)
+			}
+			delay := initial * time.Duration(1<<min(j.Attempts, 8))
+			nextAttempt = time.Now().Add(min(delay, maximum)).Unix()
 		}
 	}
 	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,next_attempt=?,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, j.StorageID, j.ObjectKey, nextAttempt, message, now(), j.PostID, j.ID)

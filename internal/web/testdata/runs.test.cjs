@@ -19,13 +19,33 @@ test('run history distinguishes repeated reads from new posts and unknown legacy
  assert.match(node.innerHTML,/本轮读取 806 条 · 新增未记录/);
 });
 
-test('proactive budget waiting is not displayed as collection failure',async()=>{
+test('legacy budget-wait history remains recognizable after removing the limiter',async()=>{
  const node={innerHTML:''};
  const ctx=vm.createContext({$:()=>node,escape:String,date:String,api:async()=>[
-  {target:'alice',status:'budget_wait',posts:20,new_posts:2,message:'共享请求预算接近上限'}
+  {target:'alice',status:'budget_wait',posts:20,new_posts:2,message:'旧版本请求预算等待'}
  ]});
  vm.runInContext(source.slice(source.indexOf('const runLabels='),source.indexOf("$('refresh-runs').addEventListener")),ctx);
  await ctx.refreshRuns();
- assert.match(node.innerHTML,/预算等待/);
+ assert.match(node.innerHTML,/历史等待/);
  assert.doesNotMatch(node.innerHTML,/采集失败/);
+});
+
+test('task center renders current work, FIFO positions, wait reason, and run history',async()=>{
+ const nodes=Object.fromEntries(['current-job-count','queue-count','current-job','job-queue','queue-wait','runs'].map(id=>[id,{innerHTML:'',textContent:'',hidden:true}]));
+ const ctx=vm.createContext({$:id=>nodes[id],escape:String,date:String,number:String,icon:name=>`ICON:${name}`,api:async()=>({
+  current:{target:'alice',status:'running',source:'manual',started_at:10,attempts:1,posts_read:8,new_posts:2},
+  queue:[{id:42,target:'bob',status:'waiting_rate',source:'automatic',queued_at:9,position:1,message:'限流冷却'}],
+  runs:[{target:'carol',status:'bounded_complete',posts:4,new_posts:1,message:'',source:'manual',started_at:'start',finished_at:'end'}],
+  wait_reason:'X 请求限流，队列将在冷却结束后继续',wait_until:20
+ })});
+ vm.runInContext(source.slice(source.indexOf('const runLabels='),source.indexOf("$('refresh-runs').addEventListener")),ctx);
+ await ctx.refreshRuns();
+ assert.match(nodes['current-job'].innerHTML,/@alice/);
+ assert.match(nodes['current-job'].innerHTML,/已读取 8 条/);
+ assert.match(nodes['job-queue'].innerHTML,/@bob/);
+ assert.match(nodes['job-queue'].innerHTML,/waiting_rate|限流冷却/);
+ assert.match(nodes['job-queue'].innerHTML,/data-cancel-job="42"/);
+ assert.match(nodes.runs.innerHTML,/@carol/);
+ assert.equal(nodes['queue-wait'].hidden,false);
+ assert.match(nodes['queue-wait'].textContent,/请求限流/);
 });

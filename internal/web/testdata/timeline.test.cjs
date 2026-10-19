@@ -65,3 +65,21 @@ test('an archived quote links its handle without a separate source footer',()=>{
  assert.match(html,/<a class="quote-handle" href="https:\/\/x\.com\/i\/status\/77"[^>]*>@fishball173<\/a>/);
  assert.doesNotMatch(html,/已归档的引用推文|quote-source/);
 });
+
+function profileHTML(user){
+ const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',innerHTML:''});return nodes.get(id)};
+ const state={users:[user],target:user.username};
+ const ctx=vm.createContext({state,$,document:{title:''},number:String,escape:String,date:value=>'DATE:'+value,icon:name=>`<svg data-icon="${name}"></svg>`,avatar:()=>'<span class="avatar"></span>',handle:u=>u.current_username||u.username});
+ vm.runInContext(source.slice(source.indexOf('function renderProfile()'),source.indexOf('const timelineTabs=')),ctx);
+ ctx.renderProfile();
+ return $('profile-header').innerHTML;
+}
+
+test('profile handle opens X while archive status occupies the former action position',()=>{
+ const html=profileHTML({username:'zlswwww',name:'zlswwww',posts:0,media:0,monitored:true,enabled:false});
+ assert.match(html,/<a href="https:\/\/x\.com\/zlswwww" class="user-handle profile-x-link"[^>]*>@zlswwww<\/a>/);
+ assert.match(html,/<div class="profile-actions">[\s\S]*<div class="profile-meta profile-archive-status">[\s\S]*尚未归档[\s\S]*<\/div><\/div><h2>/);
+ assert.doesNotMatch(html,/>在 X 查看/);
+ const archived=profileHTML({username:'alice',name:'Alice',posts:1,media:0,last_saved:'2026-10-18T01:00:00Z'});
+ assert.match(archived,/profile-archive-status[\s\S]*最近归档于 DATE:2026-10-18T01:00:00Z/);
+});

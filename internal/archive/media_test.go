@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -112,8 +113,14 @@ func TestStoreIdempotencyAndRetryState(t *testing.T) {
 	if err != nil || len(jobs) != 3 {
 		t.Fatal(len(jobs), err)
 	}
+	jobs[0].RetryInitialSeconds, jobs[0].RetryMaxSeconds = 10*60, 2*3600
+	retryStarted := time.Now().Unix()
 	if err = s.MediaResult(jobs[0], "", 0, "", errors.New("temporary failure")); err != nil {
 		t.Fatal(err)
+	}
+	var nextAttempt int64
+	if err = s.DB.QueryRow("SELECT next_attempt FROM media WHERE post_id=? AND media_id=?", jobs[0].PostID, jobs[0].ID).Scan(&nextAttempt); err != nil || nextAttempt < retryStarted+10*60 || nextAttempt > time.Now().Unix()+10*60 {
+		t.Fatal("configured media retry was ignored", nextAttempt, err)
 	}
 	jobs, err = s.MediaJobs("alice", true)
 	if err != nil || len(jobs) != 3 {

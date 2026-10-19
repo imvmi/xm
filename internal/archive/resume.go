@@ -5,8 +5,6 @@ import (
 	"net/url"
 )
 
-const checkpointPageBudget = 5
-
 func requestCursor(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {

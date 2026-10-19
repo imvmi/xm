@@ -153,6 +153,10 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 		raw.Close()
 		return nil, mysqlError("初始化配置表", err)
 	}
+	if err = ensureRunJobColumn(d); err != nil {
+		raw.Close()
+		return nil, mysqlError("升级采集记录", err)
+	}
 	if err = ensureArchiveIndexes(d); err != nil {
 		raw.Close()
 		return nil, mysqlError("初始化索引", err)
@@ -176,5 +180,5 @@ var mysqlArchiveSchema = []string{
 	`CREATE TABLE IF NOT EXISTS target_identities(target VARCHAR(64) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,current_username VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS profiles(id VARCHAR(64) PRIMARY KEY,username VARCHAR(64) NOT NULL,protected BOOLEAN NOT NULL,checked_at VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS media(post_id VARCHAR(64) NOT NULL,media_id VARCHAR(128) NOT NULL,kind VARCHAR(32) NOT NULL,source_url TEXT NOT NULL,status VARCHAR(32) NOT NULL DEFAULT 'pending',local_path VARCHAR(2048) NOT NULL DEFAULT '',bytes BIGINT NOT NULL DEFAULT 0,sha256 VARCHAR(64) NOT NULL DEFAULT '',attempts INT NOT NULL DEFAULT 0,next_attempt BIGINT NOT NULL DEFAULT 0,last_error TEXT NOT NULL DEFAULT (''),updated_at VARCHAR(64) NOT NULL,storage_id VARCHAR(64) NOT NULL DEFAULT 'local',object_key VARCHAR(1024) NOT NULL DEFAULT '',PRIMARY KEY(post_id,media_id),INDEX media_status(status,next_attempt),FOREIGN KEY(post_id) REFERENCES posts(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
-	`CREATE TABLE IF NOT EXISTS runs(id BIGINT PRIMARY KEY AUTO_INCREMENT,target VARCHAR(64) NOT NULL,started_at VARCHAR(64) NOT NULL,finished_at VARCHAR(64),status VARCHAR(32) NOT NULL,posts_seen INT NOT NULL DEFAULT 0,message TEXT NOT NULL DEFAULT ('')) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+	`CREATE TABLE IF NOT EXISTS runs(id BIGINT PRIMARY KEY AUTO_INCREMENT,target VARCHAR(64) NOT NULL,started_at VARCHAR(64) NOT NULL,finished_at VARCHAR(64),status VARCHAR(32) NOT NULL,posts_seen INT NOT NULL DEFAULT 0,message TEXT NOT NULL DEFAULT (''),job_id BIGINT NOT NULL DEFAULT 0,INDEX runs_job(job_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 }

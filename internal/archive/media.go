@@ -171,6 +171,7 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 			return summary, err
 		}
 		localPath, size, hash := j.Path, j.Bytes, j.SHA256
+		j.RetryInitialSeconds, j.RetryMaxSeconds = cfg.MediaRetryInitial, cfg.MediaRetryMax
 		var downloadErr error
 		if !validLocalMedia(cfg.DataDir, j) {
 			localPath, size, hash, downloadErr = Download(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes)

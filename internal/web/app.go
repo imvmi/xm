@@ -52,7 +52,7 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err != nil {
 		return nil, err
 	}
-	if err = upgradeRateLimitState(s.DB, cfg.DefaultInterval, time.Now().Unix()); err != nil {
+	if err = upgradeRateLimitState(s.DB, cfg.DefaultInterval, cfg.RateLimitMode, time.Now().Unix()); err != nil {
 		return nil, err
 	}
 	// All enabled accounts share one batch schedule. Preserve the earliest due
@@ -116,6 +116,10 @@ func (a *App) Run(ctx context.Context) error {
 	_, err := a.store.DB.Exec("UPDATE monitors SET running=0,next_run=?,last_error='上次采集中断，等待重新执行' WHERE running=1", time.Now().Unix()+10)
 	if err == nil {
 		_, err = a.store.DB.Exec("UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任务尚未完成，已保存数据保留' WHERE status='running'", time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	if err == nil {
+		now := time.Now()
+		_, err = a.store.DB.Exec("UPDATE collection_jobs SET status='queued',queued_at=?,queue_order=?,message='服务重启后继续执行' WHERE status='running' AND finished_at=0", now.Unix(), now.UnixNano())
 	}
 	if err != nil {
 		return err
@@ -235,6 +239,8 @@ func (a *App) Handler() http.Handler {
 		}
 		respond(w, 200, v)
 	})
+	mux.HandleFunc("GET /api/activity", a.activity)
+	mux.HandleFunc("DELETE /api/activity/jobs/{id}", a.cancelCollectionJob)
 	mux.HandleFunc("GET /media/{post}/{asset}", a.media)
 	mux.HandleFunc("GET /avatars/{user}", a.avatar)
 	assets, _ := fs.Sub(static, "static")
@@ -284,7 +290,73 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 	current, lastError := a.scheduler.Current()
 	cfg := a.Config()
 	_, cookieErr := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"counts": c, "running": current, "scheduler_error": lastError, "paused": cfg.PollingPaused, "cookie_ready": cookieErr == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cooldown_until": state(a.store.DB, "cooldown_until"), "request_budget_until": state(a.store.DB, "request_budget_until"), "server_time": time.Now().Unix()})
+	respond(w, 200, map[string]any{"counts": c, "running": current, "scheduler_error": lastError, "paused": cfg.PollingPaused, "cookie_ready": cookieErr == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cooldown_until": state(a.store.DB, "cooldown_until"), "server_time": time.Now().Unix()})
+}
+
+func (a *App) activity(w http.ResponseWriter, r *http.Request) {
+	current, queue, err := activityJobs(a.store.DB)
+	if err != nil {
+		problem(w, 500, "读取任务队列失败")
+		return
+	}
+	runs, err := recentRuns(a.store.DB)
+	if err != nil {
+		problem(w, 500, "读取采集记录失败")
+		return
+	}
+	now := time.Now().Unix()
+	waitReason, waitUntil := "", int64(0)
+	if blocked := state(a.store.DB, "cookie_blocked"); blocked != "" {
+		waitReason = "登录状态待处理：" + blocked
+	} else if until, _ := strconv.ParseInt(state(a.store.DB, "cooldown_until"), 10, 64); until > now {
+		waitReason, waitUntil = "X 请求限流，队列将在冷却结束后继续", until
+	} else if intervalUntil := a.scheduler.WaitingUntil(); intervalUntil > now {
+		waitReason, waitUntil = "正在等待队列任务间隔", intervalUntil
+	} else if current == nil {
+		ready := false
+		for _, job := range queue {
+			if job.RetryAt <= now {
+				ready = true
+			}
+			if job.RetryAt > now && (waitUntil == 0 || job.RetryAt < waitUntil) {
+				waitUntil = job.RetryAt
+			}
+		}
+		if !ready && waitUntil > now {
+			waitReason = "时间线分页加载异常，等待从已保存断点重试"
+		} else {
+			waitUntil = 0
+		}
+	}
+	if waitReason == "" && a.Config().PollingPaused {
+		waitReason = "自动轮询已暂停；手动任务仍可执行"
+	}
+	respond(w, 200, map[string]any{"current": current, "queue": queue, "runs": runs, "wait_reason": waitReason, "wait_until": waitUntil, "server_time": now})
+}
+
+func (a *App) cancelCollectionJob(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		problem(w, 400, "排队任务编号无效")
+		return
+	}
+	a.changeMu.Lock()
+	target, err := cancelWaitingCollectionJob(a.store.DB, id)
+	a.changeMu.Unlock()
+	if errors.Is(err, errCollectionJobNotFound) {
+		problem(w, 404, err.Error())
+		return
+	}
+	if errors.Is(err, errCollectionJobRunning) {
+		problem(w, 409, "任务已经开始执行，请使用停止当前任务")
+		return
+	}
+	if err != nil {
+		problem(w, 500, "取消排队任务失败")
+		return
+	}
+	a.scheduler.Wake()
+	respond(w, 200, map[string]string{"message": "已取消 @" + target + " 的本次排队任务"})
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 	cfg := a.Config()
@@ -293,13 +365,26 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "max_media_bytes": cfg.MaxMediaBytes})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax})
 }
 
 type settingsInput struct {
-	Proxy           *string `json:"proxy"`
-	DefaultInterval *int    `json:"default_interval_seconds"`
-	Paused          *bool   `json:"polling_paused"`
+	Proxy               *string `json:"proxy"`
+	DefaultInterval     *int    `json:"default_interval_seconds"`
+	QueueInterval       *int    `json:"queue_interval_seconds"`
+	RateLimitMode       *string `json:"rate_limit_mode"`
+	RequestTimeout      *int    `json:"request_timeout_seconds"`
+	CollectionTimeout   *int    `json:"collection_timeout_seconds"`
+	ScrollDelay         *int    `json:"scroll_delay_seconds"`
+	ScrollJitter        *int    `json:"scroll_jitter_seconds"`
+	TimelineIdleSeconds *int    `json:"timeline_idle_seconds"`
+	KnownBoundaryPosts  *int    `json:"known_boundary_posts"`
+	MaxMediaBytes       *int64  `json:"max_media_bytes"`
+	BrowserMaxAge       *int    `json:"browser_max_age_seconds"`
+	BrowserMaxTasks     *int    `json:"browser_max_tasks"`
+	MediaRetryInitial   *int    `json:"media_retry_initial_seconds"`
+	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
+	Paused              *bool   `json:"polling_paused"`
 }
 
 func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -324,17 +409,74 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.Proxy = *v.Proxy
 	}
 	if v.DefaultInterval != nil {
-		if *v.DefaultInterval < 60 || *v.DefaultInterval > 604800 {
-			problem(w, 400, "默认周期必须为 1 分钟到 7 天")
+		if *v.DefaultInterval < 3600 || *v.DefaultInterval > 604800 {
+			problem(w, 400, "自动采集周期必须为 1～168 小时")
 			return
 		}
 		cfg.DefaultInterval = *v.DefaultInterval
+	}
+	if v.QueueInterval != nil {
+		if *v.QueueInterval < 0 || *v.QueueInterval > 3600 {
+			problem(w, 400, "队列任务间隔必须为 0～3600 秒")
+			return
+		}
+		cfg.QueueInterval = *v.QueueInterval
+	}
+	tuningChanged := v.CollectionTimeout != nil || v.ScrollDelay != nil || v.ScrollJitter != nil || v.TimelineIdleSeconds != nil || v.KnownBoundaryPosts != nil
+	if v.CollectionTimeout != nil {
+		cfg.CollectionTimeout = *v.CollectionTimeout
+	}
+	if v.ScrollDelay != nil {
+		cfg.ScrollDelay = *v.ScrollDelay
+	}
+	if v.ScrollJitter != nil {
+		cfg.ScrollJitter = *v.ScrollJitter
+	}
+	if v.TimelineIdleSeconds != nil {
+		cfg.TimelineIdleSeconds = *v.TimelineIdleSeconds
+	}
+	if v.KnownBoundaryPosts != nil {
+		cfg.KnownBoundaryPosts = *v.KnownBoundaryPosts
+	}
+	if tuningChanged {
+		if err := archive.ValidateCollectionTuning(cfg); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
+	}
+	operationalChanged := v.RateLimitMode != nil || v.RequestTimeout != nil || v.MaxMediaBytes != nil || v.BrowserMaxAge != nil || v.BrowserMaxTasks != nil || v.MediaRetryInitial != nil || v.MediaRetryMax != nil
+	if v.RateLimitMode != nil {
+		cfg.RateLimitMode = *v.RateLimitMode
+	}
+	if v.RequestTimeout != nil {
+		cfg.RequestTimeout = *v.RequestTimeout
+	}
+	if v.MaxMediaBytes != nil {
+		cfg.MaxMediaBytes = *v.MaxMediaBytes
+	}
+	if v.BrowserMaxAge != nil {
+		cfg.BrowserMaxAge = *v.BrowserMaxAge
+	}
+	if v.BrowserMaxTasks != nil {
+		cfg.BrowserMaxTasks = *v.BrowserMaxTasks
+	}
+	if v.MediaRetryInitial != nil {
+		cfg.MediaRetryInitial = *v.MediaRetryInitial
+	}
+	if v.MediaRetryMax != nil {
+		cfg.MediaRetryMax = *v.MediaRetryMax
+	}
+	if operationalChanged {
+		if err := archive.ValidateOperationalTuning(cfg); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
 	}
 	if v.Paused != nil {
 		cfg.PollingPaused = *v.Paused
 	}
 	if err := a.saveConfig(cfg); err != nil {
-		problem(w, 500, "保存配置失败，请检查配置文件权限")
+		problem(w, 500, "保存配置失败，请检查数据库连接与写入权限")
 		return
 	}
 	if v.DefaultInterval != nil {
@@ -482,7 +624,11 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run) VALUES(?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix())
+	repliesBaseline := "not_enabled"
+	if m.Replies {
+		repliesBaseline = "not_started"
+	}
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run,replies_baseline_status) VALUES(?,?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix(), repliesBaseline)
 	if err != nil {
 		problem(w, 409, "添加失败，此账号可能已经在监控列表中")
 		return
@@ -502,16 +648,40 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	res, err := a.store.DB.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
+	tx, err := a.store.DB.Begin()
 	if err != nil {
 		problem(w, 500, "修改失败")
 		return
 	}
-	if err = a.missingMonitor(res, m.Username); err != nil {
-		problem(w, 404, err.Error())
+	defer tx.Rollback()
+	var oldReplies bool
+	if err = tx.QueryRow("SELECT replies FROM monitors WHERE username=?", m.Username).Scan(&oldReplies); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, 404, "监控账号不存在")
+		} else {
+			problem(w, 500, "读取监控配置失败")
+		}
+		return
+	}
+	_, err = tx.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
+	if err == nil && oldReplies != m.Replies {
+		err = resetMonitorBaseline(tx, m.Username)
+		if err == nil {
+			_, err = tx.Exec("UPDATE collection_jobs SET mode='backfill' WHERE target=? AND finished_at=0 AND status<>'running' AND mode='incremental'", m.Username)
+		}
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		problem(w, 500, "修改失败")
 		return
 	}
 	if !m.Enabled {
+		if err = cancelMonitorJobs(a.store.DB, m.Username, "监控已暂停，排队任务已取消"); err != nil {
+			problem(w, 500, "取消排队任务失败")
+			return
+		}
 		a.scheduler.Cancel(m.Username)
 	}
 	a.scheduler.Wake()
@@ -533,6 +703,10 @@ func (a *App) deleteMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = missing(res); err != nil {
 		problem(w, 404, err.Error())
+		return
+	}
+	if err = cancelMonitorJobs(a.store.DB, target, "监控已移除，排队任务已取消"); err != nil {
+		problem(w, 500, "取消排队任务失败")
 		return
 	}
 	if _, err = a.store.DB.Exec("DELETE FROM collection_progress WHERE target=?", target); err != nil {
@@ -569,6 +743,9 @@ func (a *App) resetProgress(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("UPDATE monitors SET requested=1,last_error='',catchup_scroll_budget=0 WHERE username=?", target)
 	}
 	if err == nil {
+		_, err = enqueueCollectionJob(tx, target, "manual", collectionModeBackfill, "重置断点后重试")
+	}
+	if err == nil {
 		err = tx.Commit()
 	}
 	if err != nil {
@@ -579,7 +756,13 @@ func (a *App) resetProgress(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]string{"message": "断点已重置，已归档内容保留；任务仍遵守限流冷却"})
 }
 func (a *App) runMonitor(w http.ResponseWriter, r *http.Request) {
-	if err := a.scheduler.queue(r.PathValue("username")); err != nil {
+	input := struct {
+		Mode string `json:"mode"`
+	}{}
+	if r.ContentLength != 0 && !decode(w, r, &input) {
+		return
+	}
+	if err := a.scheduler.queue(r.PathValue("username"), input.Mode); err != nil {
 		problem(w, 409, err.Error())
 		return
 	}
@@ -596,6 +779,10 @@ func (a *App) stopMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = a.missingMonitor(res, target); err != nil {
 		problem(w, 404, err.Error())
+		return
+	}
+	if err = cancelMonitorJobs(a.store.DB, target, "任务已由用户取消"); err != nil {
+		problem(w, 500, "取消排队任务失败")
 		return
 	}
 	a.scheduler.Cancel(target)

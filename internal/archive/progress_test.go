@@ -30,7 +30,7 @@ func TestCollectionPageCommitsPostsCursorAndCounters(t *testing.T) {
 	if _, err = s.DB.Exec("INSERT INTO run_metrics(run_id,new_posts,posts_read) VALUES(?,0,0)", id); err != nil {
 		t.Fatal(err)
 	}
-	progress := CollectionProgress{UserID: "42", Posts: TimelineProgress{Cursor: "page-1", Head: "100"}}
+	progress := CollectionProgress{UserID: "42", Posts: TimelineProgress{Cursor: "page-1", Head: "100", Exhausted: true}}
 	page := Page{Posts: []Post{{ID: "100", AuthorID: "42", Username: "alice"}}, Progress: &progress}
 	for i := 0; i < 2; i++ {
 		if err = s.SaveCollectionPage("alice", id, page); err != nil {
@@ -38,7 +38,7 @@ func TestCollectionPageCommitsPostsCursorAndCounters(t *testing.T) {
 		}
 	}
 	got, err := s.LoadCollectionProgress("alice", "42")
-	if err != nil || got.Posts.Cursor != "page-1" || got.SavedAt == 0 {
+	if err != nil || got.Posts.Cursor != "page-1" || !got.Posts.Exhausted || got.SavedAt == 0 {
 		t.Fatal(got, err)
 	}
 	var added, read int
