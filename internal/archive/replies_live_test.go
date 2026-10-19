@@ -45,7 +45,7 @@ func TestLiveReplies(t *testing.T) {
 	if err != nil && err != sql.ErrNoRows {
 		t.Fatal(err)
 	}
-	cfg.CollectionTimeout = 60
+	cfg.BrowserMaxAge = 60
 	cfg.ScrollDelay = 1
 	cfg.MaxScrolls = 5
 	var mu sync.Mutex

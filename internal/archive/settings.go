@@ -20,7 +20,9 @@ func (s *Store) AdminCredentials() (AdminCredentials, error) {
 	return a, err
 }
 
-func (s *Store) SaveSettings(c Config) error {
+// SaveSettings commits settings and related state changes atomically. Updates
+// must use the supplied transaction; any error rolls back the entire save.
+func (s *Store) SaveSettings(c Config, updates ...func(*database.Tx) error) error {
 	c, err := normalizeConfig("", c)
 	if err != nil {
 		return err
@@ -32,6 +34,11 @@ func (s *Store) SaveSettings(c Config) error {
 	defer tx.Rollback()
 	if err = saveSettings(tx, c); err != nil {
 		return err
+	}
+	for _, update := range updates {
+		if err = update(tx); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return errors.New("保存运行配置到数据库失败")
@@ -49,7 +56,9 @@ func saveSettings(tx *database.Tx, c Config) error {
 			return errors.New("保存存储连接失败")
 		}
 	}
-	_, err := tx.Exec(database.Upsert(tx.Dialect, `INSERT INTO system_settings(id,proxy,chrome_path,headless,request_timeout_seconds,collection_timeout_seconds,scroll_delay_seconds,scroll_jitter_seconds,max_scrolls,max_posts_per_run,page_budget,timeline_idle_seconds,known_boundary_posts,max_media_bytes,default_interval_seconds,queue_interval_seconds,request_interval_seconds,request_jitter_seconds,request_budget_mode,rate_limit_mode,browser_max_age_seconds,browser_max_tasks,media_retry_initial_seconds,media_retry_max_seconds,polling_paused,active_storage_id,updated_at) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"proxy", "chrome_path", "headless", "request_timeout_seconds", "collection_timeout_seconds", "scroll_delay_seconds", "scroll_jitter_seconds", "max_scrolls", "max_posts_per_run", "page_budget", "timeline_idle_seconds", "known_boundary_posts", "max_media_bytes", "default_interval_seconds", "queue_interval_seconds", "request_interval_seconds", "request_jitter_seconds", "request_budget_mode", "rate_limit_mode", "browser_max_age_seconds", "browser_max_tasks", "media_retry_initial_seconds", "media_retry_max_seconds", "polling_paused", "active_storage_id", "updated_at"}), c.Proxy, c.ChromePath, c.Headless, c.RequestTimeout, c.CollectionTimeout, c.ScrollDelay, c.ScrollJitter, c.MaxScrolls, c.MaxPostsPerRun, c.PageBudget, c.TimelineIdleSeconds, c.KnownBoundaryPosts, c.MaxMediaBytes, c.DefaultInterval, c.QueueInterval, c.RequestInterval, c.RequestJitter, c.RequestBudgetMode, c.RateLimitMode, c.BrowserMaxAge, c.BrowserMaxTasks, c.MediaRetryInitial, c.MediaRetryMax, c.PollingPaused, c.ActiveStorage(), now())
+	// Keep the obsolete collection_timeout_seconds column populated for existing schemas.
+	// Runtime deadlines use browser_max_age_seconds exclusively.
+	_, err := tx.Exec(database.Upsert(tx.Dialect, `INSERT INTO system_settings(id,proxy,chrome_path,headless,request_timeout_seconds,collection_timeout_seconds,scroll_delay_seconds,scroll_jitter_seconds,max_scrolls,max_posts_per_run,page_budget,timeline_idle_seconds,known_boundary_posts,max_media_bytes,default_interval_seconds,queue_interval_seconds,request_interval_seconds,request_jitter_seconds,request_budget_mode,rate_limit_mode,browser_max_age_seconds,browser_max_tasks,media_retry_initial_seconds,media_retry_max_seconds,polling_paused,active_storage_id,updated_at) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"proxy", "chrome_path", "headless", "request_timeout_seconds", "collection_timeout_seconds", "scroll_delay_seconds", "scroll_jitter_seconds", "max_scrolls", "max_posts_per_run", "page_budget", "timeline_idle_seconds", "known_boundary_posts", "max_media_bytes", "default_interval_seconds", "queue_interval_seconds", "request_interval_seconds", "request_jitter_seconds", "request_budget_mode", "rate_limit_mode", "browser_max_age_seconds", "browser_max_tasks", "media_retry_initial_seconds", "media_retry_max_seconds", "polling_paused", "active_storage_id", "updated_at"}), c.Proxy, c.ChromePath, c.Headless, c.RequestTimeout, 300, c.ScrollDelay, c.ScrollJitter, c.MaxScrolls, c.MaxPostsPerRun, c.PageBudget, c.TimelineIdleSeconds, c.KnownBoundaryPosts, c.MaxMediaBytes, c.DefaultInterval, c.QueueInterval, c.RequestInterval, c.RequestJitter, c.RequestBudgetMode, c.RateLimitMode, c.BrowserMaxAge, c.BrowserMaxTasks, c.MediaRetryInitial, c.MediaRetryMax, c.PollingPaused, c.ActiveStorage(), now())
 	if err != nil {
 		return errors.New("保存系统设置失败")
 	}
@@ -85,7 +94,7 @@ func (s *Store) LoadSettings(base Config) (Config, error) {
 		return c, errors.New("读取数据库配置失败")
 	}
 	defer tx.Rollback()
-	err = tx.QueryRow(`SELECT proxy,chrome_path,headless,request_timeout_seconds,collection_timeout_seconds,scroll_delay_seconds,scroll_jitter_seconds,max_scrolls,max_posts_per_run,page_budget,timeline_idle_seconds,known_boundary_posts,max_media_bytes,default_interval_seconds,queue_interval_seconds,request_interval_seconds,request_jitter_seconds,request_budget_mode,rate_limit_mode,browser_max_age_seconds,browser_max_tasks,media_retry_initial_seconds,media_retry_max_seconds,polling_paused,active_storage_id FROM system_settings WHERE id=1`).Scan(&c.Proxy, &c.ChromePath, &c.Headless, &c.RequestTimeout, &c.CollectionTimeout, &c.ScrollDelay, &c.ScrollJitter, &c.MaxScrolls, &c.MaxPostsPerRun, &c.PageBudget, &c.TimelineIdleSeconds, &c.KnownBoundaryPosts, &c.MaxMediaBytes, &c.DefaultInterval, &c.QueueInterval, &c.RequestInterval, &c.RequestJitter, &c.RequestBudgetMode, &c.RateLimitMode, &c.BrowserMaxAge, &c.BrowserMaxTasks, &c.MediaRetryInitial, &c.MediaRetryMax, &c.PollingPaused, &c.MediaStorage)
+	err = tx.QueryRow(`SELECT proxy,chrome_path,headless,request_timeout_seconds,scroll_delay_seconds,scroll_jitter_seconds,max_scrolls,max_posts_per_run,page_budget,timeline_idle_seconds,known_boundary_posts,max_media_bytes,default_interval_seconds,queue_interval_seconds,request_interval_seconds,request_jitter_seconds,request_budget_mode,rate_limit_mode,browser_max_age_seconds,browser_max_tasks,media_retry_initial_seconds,media_retry_max_seconds,polling_paused,active_storage_id FROM system_settings WHERE id=1`).Scan(&c.Proxy, &c.ChromePath, &c.Headless, &c.RequestTimeout, &c.ScrollDelay, &c.ScrollJitter, &c.MaxScrolls, &c.MaxPostsPerRun, &c.PageBudget, &c.TimelineIdleSeconds, &c.KnownBoundaryPosts, &c.MaxMediaBytes, &c.DefaultInterval, &c.QueueInterval, &c.RequestInterval, &c.RequestJitter, &c.RequestBudgetMode, &c.RateLimitMode, &c.BrowserMaxAge, &c.BrowserMaxTasks, &c.MediaRetryInitial, &c.MediaRetryMax, &c.PollingPaused, &c.MediaStorage)
 	if errors.Is(err, sql.ErrNoRows) {
 		var n int
 		if err = tx.QueryRow("SELECT COUNT(*) FROM admin_accounts").Scan(&n); err != nil {

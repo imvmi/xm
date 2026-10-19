@@ -27,6 +27,11 @@ type CollectionJob struct {
 	Position   int    `json:"position,omitempty"`
 	PostsRead  int    `json:"posts_read,omitempty"`
 	NewPosts   int    `json:"new_posts,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	Elapsed    int64  `json:"elapsed_seconds,omitempty"`
+	Remaining  *int64 `json:"remaining_seconds,omitempty"`
+	MediaDone  *int   `json:"media_done,omitempty"`
+	MediaTotal *int   `json:"media_total,omitempty"`
 }
 
 const (

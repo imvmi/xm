@@ -24,7 +24,7 @@ func TestBrowserIdentityOffline(t *testing.T) {
 		{name: "rename_and_out_of_order"}, {name: "renamed_replies", replies: true}, {name: "renamed_modern_replies", replies: true, modern: true}, {name: "wrong_resolved_identity", wrong: true}, {name: "deleted_reference", missing: true}, {name: "old_handle_taken_over", takeover: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 3}
+			cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 3}
 			profileID := "42"
 			if tc.wrong {
 				profileID = "99"

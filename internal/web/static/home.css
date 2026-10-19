@@ -274,3 +274,33 @@
 .cookie-api-example{margin:18px 0;color:var(--muted);font-size:12px}
 .cookie-api-example summary{cursor:pointer;min-height:36px;display:flex;align-items:center}
 .cookie-api-example pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8f5;border-radius:8px;padding:14px;color:var(--ink);font-size:12px}
+
+/* Settings group summaries and a persistent, keyboard-aware save action. */
+#view-settings .collection-plan h3 { font-size:16px; margin-bottom:6px; }
+#view-settings .group-summary { display:block; font-size:13px; font-weight:400; color:#596b5c; line-height:1.7; margin-top:5px; }
+#view-settings .advanced-settings summary { width:100%; min-height:44px; }
+#view-settings .field-help,#view-settings .form-details { font-size:14px; color:#526354; }
+#view-settings .advanced-settings { margin:18px 0; border-bottom:0; }
+#view-settings .collection-save-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; position:sticky; bottom:0; z-index:5; background:#fff; border-top:1px solid var(--line); padding:16px 0; }
+#view-settings #collection-draft-status { color:#526354; font-size:13px; }
+#view-settings #settings-draft-notice { max-width:760px; margin-bottom:18px; }
+#view-monitors .next-step { color:#526354; }
+#view-activity .job-phase { color:#385b48; font-weight:550; }
+#view-activity .job-actions { flex-direction:column; align-items:flex-end; gap:10px; }
+#view-activity .job-actions .text-button { min-height:44px; }
+#view-activity .job-row .run-main { overflow-wrap:anywhere; }
+@media(max-width:760px) {
+ #view-settings .collection-save-bar { bottom:calc(64px + env(safe-area-inset-bottom,0px)); flex-wrap:wrap; gap:8px; padding:12px 0; }
+ #view-settings .collection-save-bar .button { flex:1 0 auto; }
+ body.keyboard-open #view-settings .collection-save-bar { position:static; }
+ #view-activity .job-row { flex-wrap:wrap; padding:18px 16px; gap:12px; }
+ #view-activity .job-row .run-main { flex:1 1 180px; }
+ #view-activity .job-actions { flex:1 1 100%; flex-direction:row; justify-content:space-between; align-items:center; padding-left:42px; }
+ #view-settings .settings-tabs { gap:12px; }
+}
+/* Keep the save bar attached to the page viewport, not an overflow-clipped panel. */
+#settings-collection .panel { overflow:visible; }
+body:has(#view-settings:not([hidden]) #settings-collection:not([hidden])) .toast { bottom:92px; }
+@media(max-width:760px) {
+ body:has(#view-settings:not([hidden]) #settings-collection:not([hidden])) .toast { bottom:calc(150px + env(safe-area-inset-bottom,0px)); }
+}

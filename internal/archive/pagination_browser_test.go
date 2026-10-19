@@ -88,7 +88,7 @@ let loaded=false;addEventListener('scroll',async()=>{if(loaded||scrollY+innerHei
 				}()
 				return nil
 			}
-			cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20, TimelineIdleSeconds: 3}
+			cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20, TimelineIdleSeconds: 3}
 			stored := map[string]bool{}
 			identity := TargetIdentity{}
 			if tc.known {

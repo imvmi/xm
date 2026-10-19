@@ -115,8 +115,15 @@ func retryableTimelineStatus(status int64) bool {
 	}
 }
 
-func timelineFailure(meta responseMeta) error {
-	return fail("timeline", fmt.Sprintf("X %s 下一页加载失败，已保存分页断点并等待重试", meta.operation))
+func timelineFailure(meta responseMeta, reasons ...string) error {
+	reason := "接口返回临时错误"
+	if meta.status != 0 && meta.status != 200 {
+		reason = fmt.Sprintf("HTTP %d", meta.status)
+	}
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
+	return fail("timeline", fmt.Sprintf("X %s 下一页加载失败（%s），已保存分页断点并等待重试", meta.operation, reason))
 }
 
 func usesIncrementalBoundary(identity TargetIdentity) bool {
@@ -348,7 +355,7 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 }
 
 func collectionTimeout(cfg Config, _ TargetIdentity) time.Duration {
-	return time.Duration(cfg.CollectionTimeout) * time.Second
+	return time.Duration(cfg.BrowserMaxAge) * time.Second
 }
 
 func collect(parent context.Context, cfg Config, cookies Cookies, target string, limit int, replies bool, save func(Page) error, setup func(context.Context) error) (Collection, error) {
@@ -562,7 +569,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					case <-time.After(10 * time.Millisecond):
 					}
 				}
-				send(captured{sequence: nextSequence(), meta: meta, err: timelineFailure(meta)})
+				send(captured{sequence: nextSequence(), meta: meta, err: timelineFailure(meta, "浏览器网络请求失败")})
 			}(activity.meta)
 		}
 	}()
@@ -613,7 +620,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					case <-readCtx.Done():
 						err := errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")
 						if isTimelineOperation(meta.operation) {
-							err = timelineFailure(meta)
+							err = timelineFailure(meta, "浏览器响应读取超时")
 						}
 						send(captured{sequence: sequence, meta: meta, err: err})
 						return
@@ -797,7 +804,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				if FailureKind(e) == "rate" {
 					e = rateLimitFailure(c.meta)
 				} else if isCurrentTimeline && FailureKind(e) == "transient" {
-					e = timelineFailure(c.meta)
+					e = timelineFailure(c.meta, "响应解析失败或接口返回临时错误")
 				}
 				return result, e
 			}

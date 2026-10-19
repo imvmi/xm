@@ -24,7 +24,6 @@ type Config struct {
 	RequestJitter        int                   `json:"request_jitter_seconds"`
 	RequestBudgetMode    string                `json:"request_budget_mode"` // Legacy persisted value; request-count limits are no longer enforced.
 	RateLimitMode        string                `json:"rate_limit_mode"`
-	CollectionTimeout    int                   `json:"collection_timeout_seconds"`
 	ScrollDelay          int                   `json:"scroll_delay_seconds"`
 	ScrollJitter         int                   `json:"scroll_jitter_seconds"`
 	MaxScrolls           int                   `json:"max_scrolls"`
@@ -50,7 +49,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", CollectionTimeout: 300, ScrollDelay: 5, ScrollJitter: 2, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 8, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 0, DefaultInterval: 3600}
+	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 5, ScrollJitter: 2, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 8, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 0, DefaultInterval: 3600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -117,11 +116,11 @@ func normalizeConfig(path string, c Config) (Config, error) {
 	if c.MediaRetryMax == 0 {
 		c.MediaRetryMax = defaults.MediaRetryMax
 	}
-	if c.DataDir == "" || c.RequestTimeout < 1 || c.CollectionTimeout < 1 || c.ScrollDelay < 1 || c.MaxScrolls < 1 || c.MaxMediaBytes < 1 || c.MaxMediaBytes > 10<<30 {
+	if c.DataDir == "" || c.RequestTimeout < 1 || c.ScrollDelay < 1 || c.MaxScrolls < 1 || c.MaxMediaBytes < 1 || c.MaxMediaBytes > 10<<30 {
 		return c, errors.New("配置中的目录不能为空，超时/分页/大小限制必须为正数；媒体上限不超过 10 GiB")
 	}
-	if c.CollectionTimeout > 3600 || c.ScrollDelay > 60 || c.MaxScrolls > 1000 {
-		return c, errors.New("采集时长、滚动间隔或滚动次数超过系统安全上限")
+	if c.ScrollDelay > 60 || c.MaxScrolls > 1000 {
+		return c, errors.New("滚动间隔或滚动次数超过系统安全上限")
 	}
 	if c.ScrollJitter < 0 || c.ScrollJitter >= c.ScrollDelay {
 		return c, errors.New("滚动随机浮动必须大于等于 0，且小于滚动基础等待")
@@ -190,9 +189,6 @@ func ValidateCollectionTuning(c Config) error {
 	}
 	if c.KnownBoundaryPosts < 3 || c.KnownBoundaryPosts > 50 {
 		return errors.New("已归档推文停止阈值必须为 3～50 条")
-	}
-	if c.CollectionTimeout < 60 || c.CollectionTimeout > 1800 {
-		return errors.New("单轮采集时长必须为 60～1800 秒")
 	}
 	return nil
 }

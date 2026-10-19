@@ -42,7 +42,7 @@ func TestBrowserLowRemainingHeadersDoNotStopCollectionOffline(t *testing.T) {
 	_, b, now := testBudget(t)
 	f := &resumeFixture{pages: 3, failPage: -1, budget: b, headers: []*fetch.HeaderEntry{{Name: "x-rate-limit-limit", Value: "50"}, {Name: "x-rate-limit-remaining", Value: "0"}, {Name: "x-rate-limit-reset", Value: fmt.Sprint(now.Add(time.Hour).Unix())}}}
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", DurableProgress: true, RequestBudget: b}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20}
 	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(Page) error { return nil }, f.setup)
 	if err != nil || result.Posts != 6 {
 		t.Fatalf("%+v %v", result, err)
@@ -111,7 +111,7 @@ func TestBrowserPacingDoesNotLookLikeTimelineEndOffline(t *testing.T) {
 	b.spacing = 9 * time.Second
 	f := &resumeFixture{pages: 1, failPage: -1, budget: b}
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", DurableProgress: true, RequestBudget: b}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20}
 	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(Page) error { return nil }, f.setup)
 	if err != nil || result.Posts != 2 || result.Stop != "known_boundary_reached" {
 		t.Fatalf("%+v %v", result, err)

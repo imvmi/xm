@@ -150,7 +150,7 @@ func TestBrowserResumeAfterRateLimitOffline(t *testing.T) {
 			identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
 				return s.KnownTargetPostIDs(context.Background(), "alice", ids)
 			}
-			cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20}
+			cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20}
 			first := &resumeFixture{pages: 3, failPage: 1, xhr: xhr}
 			result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, first.setup)
 			if FailureKind(err) != "rate" || result.Posts != 2 {
@@ -188,7 +188,7 @@ func TestBrowserResumeAfterTimelineNetworkFailureOffline(t *testing.T) {
 	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
 		return s.KnownTargetPostIDs(context.Background(), "alice", ids)
 	}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, TimelineIdleSeconds: 3, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, TimelineIdleSeconds: 3, MaxScrolls: 20}
 	first := &resumeFixture{pages: 3, failPage: 1, networkFail: true}
 	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error {
 		return s.SaveCollectionPage("alice", 0, p)
@@ -225,7 +225,7 @@ func TestBrowserRunsUntilTimelineEndWithoutPageBudgetOffline(t *testing.T) {
 	}
 	defer s.Close()
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 100}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 100}
 	fixture := &resumeFixture{pages: 17, failPage: -1}
 	result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
 	if err != nil || result.Stop != "known_boundary_reached" || result.Pages != 17 || result.Posts != 34 || len(fixture.seen()) != 17 {
@@ -243,7 +243,7 @@ func TestBrowserResumeSkipsCompletedRepliesOffline(t *testing.T) {
 	}
 	defer s.Close()
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20}
 	first := &resumeFixture{pages: 1, failPage: 0, failOperation: "UserTweets"}
 	_, err = collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, true, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, first.setup)
 	if FailureKind(err) != "rate" {
@@ -267,7 +267,7 @@ func TestBrowserUnappliedCheckpointStopsOffline(t *testing.T) {
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true, Progress: CollectionProgress{UserID: "42", Posts: TimelineProgress{Cursor: "page-1"}}}
 	fixture := &resumeFixture{pages: 3, failPage: -1, ignoreCursor: true}
 	saved := 0
-	_, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20, TimelineIdleSeconds: 3}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { saved += len(p.Posts); return nil }, fixture.setup)
+	_, err := collectBound(context.Background(), Config{Headless: true, BrowserMaxAge: 20, ScrollDelay: 1, MaxScrolls: 20, TimelineIdleSeconds: 3}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { saved += len(p.Posts); return nil }, fixture.setup)
 	if FailureKind(err) != "checkpoint" || saved != 0 || len(fixture.seen()) != 1 {
 		t.Fatal(err, saved, fixture.seen())
 	}
@@ -286,7 +286,7 @@ func TestBrowserPartialPageDoesNotSkipPostsOffline(t *testing.T) {
 	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
 		return s.KnownTargetPostIDs(context.Background(), "alice", ids)
 	}
-	cfg := Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 20, ScrollDelay: 1, MaxScrolls: 20}
 	for round, wantCursor := range []string{"", "page-1"} {
 		fixture := &resumeFixture{pages: 2, failPage: -1}
 		result, err := collectBound(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 1, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
@@ -314,7 +314,7 @@ func TestBrowserHeadRefreshFindsNewPostsOffline(t *testing.T) {
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true, CatchupPostAnchor: "98", KnownPostIDs: map[string]bool{"99": true, "98": true, "97": true}}
 	fixture := &resumeFixture{pages: 4, failPage: -1}
 	saved := map[string]bool{}
-	result, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error {
+	result, err := collectBound(context.Background(), Config{Headless: true, BrowserMaxAge: 20, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error {
 		for _, post := range p.Posts {
 			saved[post.ID] = true
 		}
@@ -336,7 +336,7 @@ func TestBrowserBufferedPagesRunToCompletionOffline(t *testing.T) {
 	defer s.Close()
 	fixture := &resumeFixture{pages: 18, failPage: -1, buffered: true}
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, DurableProgress: true}
-	result, err := collectBound(context.Background(), Config{Headless: true, CollectionTimeout: 40, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
+	result, err := collectBound(context.Background(), Config{Headless: true, BrowserMaxAge: 40, ScrollDelay: 1, MaxScrolls: 20}, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 100, false, func(p Page) error { return s.SaveCollectionPage("alice", 0, p) }, fixture.setup)
 	if err != nil || result.Stop != "known_boundary_reached" || result.Pages != 18 || result.Posts != 36 {
 		t.Fatal(result, err)
 	}

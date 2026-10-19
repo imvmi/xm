@@ -190,10 +190,11 @@ func TestTaskDeadlineCoversMediaAndReleasesNextTarget(t *testing.T) {
 	seedMonitor(t, a, "alice")
 	seedMonitor(t, a, "bob")
 	cfg := a.Config()
-	cfg.CollectionTimeout = 1
-	if err := a.saveConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	// Use a short in-memory lifetime to exercise the real deadline without waiting an hour.
+	cfg.BrowserMaxAge = 1
+	a.configMu.Lock()
+	a.config = cfg
+	a.configMu.Unlock()
 	if err := a.store.SavePosts("alice", []archive.Post{{ID: "100", AuthorID: "42", Username: "alice", Assets: []archive.Asset{{ID: "photo", Kind: "photo", URL: "https://pbs.twimg.com/fixture.jpg"}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -242,10 +243,11 @@ func TestTaskDeadlineDuringCollectionPreservesCheckpoint(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")
 	cfg := a.Config()
-	cfg.CollectionTimeout = 1
-	if err := a.saveConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	// Use a short in-memory lifetime to exercise the real deadline without waiting an hour.
+	cfg.BrowserMaxAge = 1
+	a.configMu.Lock()
+	a.config = cfg
+	a.configMu.Unlock()
 	a.scheduler.collect = func(ctx context.Context, _ archive.Config, _ archive.Cookies, _ string, _ archive.TargetIdentity, _ int, _ bool, save func(archive.Page) error) (archive.Collection, error) {
 		if err := save(archive.Page{Profile: &archive.Profile{ID: "42", Username: "alice"}, Progress: &archive.CollectionProgress{UserID: "42", Posts: archive.TimelineProgress{Cursor: "fixture-next"}}}); err != nil {
 			return archive.Collection{}, err
@@ -257,6 +259,10 @@ func TestTaskDeadlineDuringCollectionPreservesCheckpoint(t *testing.T) {
 	list, err := monitors(a.store.DB)
 	if err != nil || list[0].LastStatus != "incomplete" || !list[0].Catchup || list[0].Failures != 0 {
 		t.Fatal(list, err)
+	}
+	var queueStatus string
+	if err := a.store.DB.QueryRow("SELECT status FROM collection_jobs WHERE target='alice'").Scan(&queueStatus); err != nil || queueStatus != "incomplete" {
+		t.Fatal("unfinished run incorrectly shown as completed", queueStatus, err)
 	}
 	progress, err := a.store.LoadCollectionProgress("alice", "42")
 	if err != nil || progress.Posts.Cursor != "fixture-next" {

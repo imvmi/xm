@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"xm/internal/archive"
+	"xm/internal/database"
 )
 
 //go:embed static/*
@@ -97,15 +98,16 @@ func CookieImported(cfg archive.Config) error {
 	}
 	return setState(s.DB, "cookie_imported", time.Now().UTC().Format(time.RFC3339Nano))
 }
-func (a *App) saveConfig(cfg archive.Config) error {
+func (a *App) saveConfig(cfg archive.Config, updates ...func(*database.Tx) error) error {
 	old := a.Config()
 	if !reflect.DeepEqual(old.Database, cfg.Database) || old.ActiveStorage() != cfg.ActiveStorage() || !reflect.DeepEqual(old.StorageProfiles, cfg.StorageProfiles) {
 		return errors.New("初始化已完成，数据库与存储配置已锁定")
 	}
 
-	if err := a.store.SaveSettings(cfg); err != nil {
+	if err := a.store.SaveSettings(cfg, updates...); err != nil {
 		return err
 	}
+	// Publish only after settings and all related state have committed.
 	a.configMu.Lock()
 	a.config = cfg
 	a.configMu.Unlock()
@@ -207,6 +209,19 @@ func (a *App) Handler() http.Handler {
 			problem(w, 500, "读取监控列表失败")
 			return
 		}
+		_, queue, err := activityJobs(a.store.DB)
+		if err != nil {
+			problem(w, 500, "读取排队状态失败")
+			return
+		}
+		for i := range v {
+			for j := range queue {
+				if queue[j].Target == v[i].Username {
+					v[i].QueuedJob = &queue[j]
+					break
+				}
+			}
+		}
 		respond(w, 200, v)
 	})
 	mux.HandleFunc("POST /api/monitors", a.addMonitor)
@@ -299,10 +314,28 @@ func (a *App) activity(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取任务队列失败")
 		return
 	}
+	if current != nil {
+		a.scheduler.describeProgress(current)
+		done, total, countErr := a.store.TargetMediaCounts(current.Target)
+		if countErr == nil {
+			current.MediaDone, current.MediaTotal = &done, &total
+		}
+	}
 	runs, err := recentRuns(a.store.DB)
 	if err != nil {
 		problem(w, 500, "读取采集记录失败")
 		return
+	}
+	// A run can finish between the queue and history reads. Keep it in one
+	// section for this response; the next refresh will show its final result.
+	if current != nil {
+		filtered := runs[:0]
+		for _, run := range runs {
+			if int64(run["id"].(int)) != current.RunID {
+				filtered = append(filtered, run)
+			}
+		}
+		runs = filtered
 	}
 	now := time.Now().Unix()
 	waitReason, waitUntil := "", int64(0)
@@ -365,7 +398,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "collection_timeout_seconds": cfg.CollectionTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax})
 }
 
 type settingsInput struct {
@@ -374,7 +407,6 @@ type settingsInput struct {
 	QueueInterval       *int    `json:"queue_interval_seconds"`
 	RateLimitMode       *string `json:"rate_limit_mode"`
 	RequestTimeout      *int    `json:"request_timeout_seconds"`
-	CollectionTimeout   *int    `json:"collection_timeout_seconds"`
 	ScrollDelay         *int    `json:"scroll_delay_seconds"`
 	ScrollJitter        *int    `json:"scroll_jitter_seconds"`
 	TimelineIdleSeconds *int    `json:"timeline_idle_seconds"`
@@ -422,10 +454,7 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.QueueInterval = *v.QueueInterval
 	}
-	tuningChanged := v.CollectionTimeout != nil || v.ScrollDelay != nil || v.ScrollJitter != nil || v.TimelineIdleSeconds != nil || v.KnownBoundaryPosts != nil
-	if v.CollectionTimeout != nil {
-		cfg.CollectionTimeout = *v.CollectionTimeout
-	}
+	tuningChanged := v.ScrollDelay != nil || v.ScrollJitter != nil || v.TimelineIdleSeconds != nil || v.KnownBoundaryPosts != nil
 	if v.ScrollDelay != nil {
 		cfg.ScrollDelay = *v.ScrollDelay
 	}
@@ -475,16 +504,16 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if v.Paused != nil {
 		cfg.PollingPaused = *v.Paused
 	}
-	if err := a.saveConfig(cfg); err != nil {
-		problem(w, 500, "保存配置失败，请检查数据库连接与写入权限")
-		return
-	}
-	if v.DefaultInterval != nil {
-		next := time.Now().Unix() + int64(*v.DefaultInterval)
-		if _, err := a.store.DB.Exec("UPDATE monitors SET next_run=CASE WHEN enabled=1 THEN ? ELSE next_run END", next); err != nil {
-			problem(w, 500, "全局周期已保存，但无法同步监控计划")
-			return
+	if err := a.saveConfig(cfg, func(tx *database.Tx) error {
+		if v.DefaultInterval == nil {
+			return nil
 		}
+		next := time.Now().Unix() + int64(cfg.DefaultInterval)
+		_, err := tx.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", next)
+		return err
+	}); err != nil {
+		problem(w, 500, "配置与采集计划保存失败，请检查数据库连接与写入权限后重试")
+		return
 	}
 	a.scheduler.Wake()
 	respond(w, 200, map[string]bool{"ok": true})

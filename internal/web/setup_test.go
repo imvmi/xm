@@ -20,7 +20,7 @@ import (
 func setupFixture(t *testing.T) *setupWizard {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 3600}
+	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 5, ScrollDelay: 1, MaxScrolls: 2, MaxMediaBytes: 1024, DefaultInterval: 3600}
 	if err := archive.PrivateDir(cfg.DataDir); err != nil {
 		t.Fatal(err)
 	}

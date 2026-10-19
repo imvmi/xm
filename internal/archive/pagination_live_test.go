@@ -58,7 +58,7 @@ func TestLivePagination(t *testing.T) {
 			t.Fatal("invalid live pagination limit")
 		}
 	}
-	cfg.CollectionTimeout = 120
+	cfg.BrowserMaxAge = 120
 	result, err := CollectBound(context.Background(), cfg, cookies, target, identity, limit, replies, func(p Page) error {
 		if p.Timeline {
 			t.Logf("timeline batch: posts=%d unavailable=%d", len(p.Posts), p.Unavailable)

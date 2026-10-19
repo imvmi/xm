@@ -74,7 +74,7 @@ func TestBrowserDeepCatchupOffline(t *testing.T) {
 		}()
 		return nil
 	}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, MaxScrolls: 20}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 20}
 	identity := TargetIdentity{UserID: "42", CurrentUsername: "alice", Catchup: true, CatchupPostAnchor: "1"}
 	identity.LookupKnownPosts = func(ids []string) (map[string]bool, error) {
 		return s.KnownTargetPostIDs(context.Background(), "alice", ids)

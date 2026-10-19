@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"xm/internal/archive"
@@ -133,5 +134,101 @@ func TestCheckpointFailurePausesMonitor(t *testing.T) {
 	list, err := monitors(a.store.DB)
 	if err != nil || list[0].Enabled || list[0].Requested {
 		t.Fatal(list, err)
+	}
+}
+
+func TestRecentRunsIncludesOnlyEndedExecutions(t *testing.T) {
+	a := testApp(t)
+	statuses := []string{"bounded_complete", "incomplete", "failed", "media_failed", "cancelled", "interrupted"}
+	var latest int64
+	for i := 0; i < 21; i++ {
+		id, err := a.store.StartRun("alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = a.store.EndRun(id, statuses[i%len(statuses)], i, "fixture"); err != nil {
+			t.Fatal(err)
+		}
+		latest = id
+	}
+	active, err := a.store.StartRun("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := recentRuns(a.store.DB)
+	if err != nil || len(history) != 20 {
+		t.Fatal("running execution consumed a history slot", len(history), err)
+	}
+	if int64(history[0]["id"].(int)) != latest {
+		t.Fatal("older runs of the active account disappeared", history[0])
+	}
+	for _, run := range history {
+		if run["status"] == "running" || int64(run["id"].(int)) == active {
+			t.Fatal("running execution in history", run)
+		}
+	}
+	if err = a.store.EndRun(active, "incomplete", 50, "time budget reached"); err != nil {
+		t.Fatal(err)
+	}
+	history, err = recentRuns(a.store.DB)
+	if err != nil || len(history) != 20 || int64(history[0]["id"].(int)) != active || history[0]["status"] != "incomplete" {
+		t.Fatal("ended execution missing from history", history, err)
+	}
+}
+
+func TestManualRescanContinuesHeadRefreshWhileMonitoringPaused(t *testing.T) {
+	for _, historyComplete := range []bool{true, false} {
+		t.Run(fmt.Sprint(historyComplete), func(t *testing.T) {
+			a := testApp(t)
+			seedMonitor(t, a, "alice")
+			cfg := a.Config()
+			cfg.PollingPaused = true
+			if err := a.saveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.store.DB.Exec("UPDATE monitors SET enabled=0 WHERE username='alice'"); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.scheduler.queue("alice", collectionModeRescan); err != nil {
+				t.Fatal(err)
+			}
+			a.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, id archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
+				if id.CollectionMode != collectionModeRescan {
+					t.Fatal(id.CollectionMode)
+				}
+				return archive.Collection{Stop: "known_boundary_reached", NeedsHeadRefresh: true, RefreshPostAnchor: "500", HistoryComplete: historyComplete}, nil
+			}
+			schedulerStep(t, a)
+			var jobID int64
+			var mode, status string
+			if err := a.store.DB.QueryRow("SELECT id,mode,status FROM collection_jobs WHERE target='alice' AND finished_at=0").Scan(&jobID, &mode, &status); err != nil || mode != collectionModeIncremental || status != "queued" {
+				t.Fatal("head refresh not retained", mode, status, err)
+			}
+			// Recreate the scheduler to prove the continuation is durable.
+			restarted, err := New(a.configPath, a.Config(), a.store, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restarted.scheduler.download = a.scheduler.download
+			restarted.scheduler.avatar = a.scheduler.avatar
+			called := false
+			restarted.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, id archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
+				called = true
+				if id.CollectionMode != collectionModeIncremental || !id.Catchup || id.CatchupPostAnchor != "500" || id.Progress.Posts.Cursor != "" {
+					t.Fatal("head refresh lost anchor or rescanned history", id)
+				}
+				return archive.Collection{Stop: "known_boundary_reached"}, nil
+			}
+			schedulerStep(t, restarted)
+			var enabled bool
+			var attempts int
+			var finished int64
+			if err = a.store.DB.QueryRow("SELECT enabled FROM monitors WHERE username='alice'").Scan(&enabled); err != nil || enabled || !called {
+				t.Fatal("continuation changed monitoring preference", enabled, called, err)
+			}
+			if err = a.store.DB.QueryRow("SELECT status,attempts,finished_at FROM collection_jobs WHERE id=?", jobID).Scan(&status, &attempts, &finished); err != nil || status != "completed" || attempts != 2 || finished == 0 {
+				t.Fatal(status, attempts, finished, err)
+			}
+		})
 	}
 }

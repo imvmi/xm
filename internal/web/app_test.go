@@ -45,7 +45,7 @@ func testApp(t *testing.T) *App {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 60, CollectionTimeout: 60, ScrollDelay: 3, MaxScrolls: 40, MaxMediaBytes: 512 << 20, DefaultInterval: 3600}
+	cfg := archive.Config{DataDir: filepath.Join(dir, "data"), Headless: true, RequestTimeout: 60, ScrollDelay: 3, MaxScrolls: 40, MaxMediaBytes: 512 << 20, DefaultInterval: 3600}
 	configureMySQLTest(t, &cfg)
 	if err := archive.SaveBootstrap(path, cfg); err != nil {
 		t.Fatal(err)

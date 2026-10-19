@@ -43,6 +43,7 @@ type Monitor struct {
 	BaselineFinished int64           `json:"baseline_finished"`
 	BaselineStop     string          `json:"baseline_stop_reason,omitempty"`
 	Checkpoint       *CheckpointView `json:"checkpoint,omitempty"`
+	QueuedJob        *CollectionJob  `json:"queued_job,omitempty"`
 }
 
 type CheckpointView struct {
@@ -373,7 +374,7 @@ func archiveUsers(db *database.DB) ([]UserView, error) {
 }
 
 func recentRuns(db *database.DB) ([]map[string]any, error) {
-	r, err := db.Query("SELECT r.id,r.target,r.started_at,COALESCE(r.finished_at,''),r.status,COALESCE(m.posts_read,r.posts_seen),r.message,m.new_posts,r.job_id,COALESCE(j.source,'legacy'),COALESCE(j.queued_at,0),COALESCE(j.mode,'incremental') FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN collection_jobs j ON j.id=r.job_id ORDER BY r.id DESC LIMIT 20")
+	r, err := db.Query("SELECT r.id,r.target,r.started_at,COALESCE(r.finished_at,''),r.status,COALESCE(m.posts_read,r.posts_seen),r.message,m.new_posts,r.job_id,COALESCE(j.source,'legacy'),COALESCE(j.queued_at,0),COALESCE(j.mode,'incremental') FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN collection_jobs j ON j.id=r.job_id WHERE r.status<>'running' ORDER BY r.id DESC LIMIT 20")
 	if err != nil {
 		return nil, err
 	}

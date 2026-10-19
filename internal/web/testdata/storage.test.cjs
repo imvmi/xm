@@ -14,7 +14,7 @@ function fixture(){
  };
  let storage={active:'remote',profiles:[{id:'remote',kind:'webdav',name:'NAS',endpoint:'https://storage.example'}],cache:{enabled:true,max_bytes:2147483648,used_bytes:1048576}};
  const api=async(route,method='GET',body)=>{calls.push({route,method,body});if(method==='PUT')storage.cache={...body,used_bytes:storage.cache.used_bytes};if(method==='DELETE')storage.cache.used_bytes=0;return route==='/storage'?storage:{ok:true}};
- const context=vm.createContext({$:node,api,bytes:n=>n+' B',toast(){},action:async(_button,work)=>work()});
+ const context=vm.createContext({$:node,api,hydrateSettingsForm:(_id,fill)=>fill(),acceptSettingsForm(){},settingsSnapshot:()=>'',bytes:n=>n+' B',toast(){},action:async(_button,work)=>work()});
  vm.runInContext(source,context);
  return {node,calls,context,setStorage:value=>storage=value};
 }

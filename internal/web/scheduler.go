@@ -41,6 +41,33 @@ type Scheduler struct {
 	waitUntil  int64
 	lastFinish time.Time
 	browser    schedulerBrowser
+	progress   taskProgress
+}
+
+type taskProgress struct {
+	jobID             int64
+	phase             string
+	started, deadline time.Time
+}
+
+func (s *Scheduler) setPhase(phase string) {
+	s.mu.Lock()
+	s.progress.phase = phase
+	s.mu.Unlock()
+}
+
+func (s *Scheduler) describeProgress(job *CollectionJob) {
+	s.mu.Lock()
+	p := s.progress
+	s.mu.Unlock()
+	if p.jobID != job.ID {
+		return
+	}
+	job.Phase = p.phase
+	job.StartedAt = p.started.Unix()
+	job.Elapsed = max(0, int64(time.Since(p.started)/time.Second))
+	remaining := max(0, int64(time.Until(p.deadline)/time.Second))
+	job.Remaining = &remaining
 }
 
 func newScheduler(a *App) *Scheduler {
@@ -431,7 +458,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		s.cancel = nil
 		s.mu.Unlock()
 		processed = append(processed, m.Username)
-		if kind != "" || targetCancelled {
+		if kind != "" && kind != "refresh_head" || targetCancelled {
 			batchSuccessful = false
 			batchHadFailure = true
 		}
@@ -456,7 +483,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 				return true, err
 			}
 		}
-		retryTarget := !targetCancelled && (kind == "auth" || kind == "auth_replaced" || kind == "rate" || kind == "browser" || kind == "timeline")
+		retryTarget := !targetCancelled && (kind == "auth" || kind == "auth_replaced" || kind == "rate" || kind == "browser" || kind == "timeline" || kind == "refresh_head")
 		if ctx.Err() != nil {
 			retryTarget = true // Service shutdown retains work; a user cancellation does not.
 			interrupted = true
@@ -469,8 +496,12 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		jobStatus, jobMessage := "completed", "任务已完成"
 		if runID > 0 {
 			var runStatus string
-			if queryErr := a.store.DB.QueryRow("SELECT status,message FROM runs WHERE id=?", runID).Scan(&runStatus, &jobMessage); queryErr == nil && (runStatus == "failed" || runStatus == "media_failed") {
-				jobStatus = "failed"
+			if queryErr := a.store.DB.QueryRow("SELECT status,message FROM runs WHERE id=?", runID).Scan(&runStatus, &jobMessage); queryErr == nil {
+				if runStatus == "failed" || runStatus == "media_failed" {
+					jobStatus = "failed"
+				} else if runStatus == "incomplete" {
+					jobStatus = "incomplete"
+				}
 			}
 		}
 		if targetCancelled {
@@ -536,10 +567,19 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 
 func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, jobID int64, mode string, collect collector) (string, int64, error) {
 	a := s.app
-	// The configured task budget covers collection, avatars and media together.
+	// Browser lifetime is also the task budget for collection, avatars and media together.
 	// Keep the parent separate so exhausting this budget is not a user stop.
-	workCtx, cancelWork := context.WithTimeout(jobCtx, time.Duration(cfg.CollectionTimeout)*time.Second)
+	workCtx, cancelWork := context.WithTimeout(jobCtx, time.Duration(cfg.BrowserMaxAge)*time.Second)
 	defer cancelWork()
+	deadline, _ := workCtx.Deadline()
+	s.mu.Lock()
+	s.progress = taskProgress{jobID: jobID, phase: "preparing", started: time.Now(), deadline: deadline}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.progress = taskProgress{}
+		s.mu.Unlock()
+	}()
 	if err := a.prepareNotifications(m); err != nil {
 		_, _ = a.store.DB.Exec("UPDATE monitors SET running=0 WHERE username=?", m.Username)
 		return "", 0, err
@@ -582,6 +622,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	var latestProfile *archive.Profile
 	saveFailed := false
 	if collectErr == nil {
+		s.setPhase("timeline")
 		result, collectErr = collect(workCtx, cfg, cookies, m.Username, identity, archive.CollectionSafetyMaxPosts, m.Replies, func(p archive.Page) error {
 			if p.Profile != nil {
 				if err := a.store.SaveTargetProfile(m.Username, *p.Profile); err != nil {
@@ -600,6 +641,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		result.Stop, collectErr = "time_budget_reached", nil
 	}
 	if workCtx.Err() == nil && latestProfile != nil && latestProfile.AvatarURL != "" {
+		s.setPhase("avatar")
 		// An unavailable avatar is cosmetic and must never fail an otherwise
 		// successful archive run; the UI keeps its generated fallback.
 		_ = s.avatar(workCtx, cfg, *latestProfile)
@@ -607,8 +649,10 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 
 	var mediaErr error
 	if workCtx.Err() == nil {
+		s.setPhase("media")
 		_, mediaErr = s.download(workCtx, a.store, cfg, m.Username, false)
 	}
+	s.setPhase("finishing")
 	remainingMedia, remainingErr := a.store.OutstandingMedia(m.Username)
 	mediaBudgetReached := jobCtx.Err() == nil && errors.Is(workCtx.Err(), context.DeadlineExceeded) && remainingMedia > 0
 	if mediaBudgetReached {
@@ -637,7 +681,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		}
 	}
 	if refreshHead {
-		status, message = "incomplete", "历史断点已追赶完成，下轮检查补采期间的新推文"
+		status, message = "incomplete", "历史断点已处理完，已安排检查补采期间的新推文"
 		postAnchor, replyAnchor = result.RefreshPostAnchor, result.RefreshReplyAnchor
 	}
 	baselineStatus, postsBaseline, repliesBaseline := m.BaselineStatus, m.PostsBaseline, m.RepliesBaseline
@@ -667,7 +711,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			}
 			baselineFinished = ended
 			baselineStop = message
-		case collectErr == nil && jobCtx.Err() == nil && !bounded && !refreshHead:
+		case collectErr == nil && jobCtx.Err() == nil && !bounded:
 			// A stable browser bottom without an API end marker is useful evidence,
 			// but it cannot prove that X exposed the complete account history.
 			baselineStatus, postsBaseline = "partial", "partial"
@@ -769,6 +813,14 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			return "", id, err
 		}
 	}
+	continueHead := refreshHead && !scopeChanged && failure == nil && jobCtx.Err() == nil
+	if continueHead {
+		// Commit the new mode alongside cleared cursors and head anchors. A restart
+		// must resume this same manual/automatic slot, not start another full rescan.
+		if _, err = tx.Exec("UPDATE collection_jobs SET mode=?,status='queued',retry_at=0,queue_order=?,message=? WHERE id=? AND finished_at=0", collectionModeIncremental, time.Now().UnixNano(), message, jobID); err != nil {
+			return "", id, err
+		}
+	}
 	if rateUntil > 0 {
 		if err = saveRateLimit(tx, rateUntil, rateFailures); err != nil {
 			return "", id, err
@@ -812,12 +864,17 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		kind = ""
 		batchKind = "auth_replaced"
 	}
+	if continueHead {
+		batchKind = "refresh_head"
+	}
 	err = a.recordNotifications(cfg, m, archiveComplete, jobCtx.Err() != nil, kind, failures)
 	return batchKind, id, err
 }
 
 func retryJobStatus(kind string) string {
 	switch kind {
+	case "refresh_head":
+		return "queued"
 	case "rate":
 		return "waiting_rate"
 	case "auth", "auth_replaced":

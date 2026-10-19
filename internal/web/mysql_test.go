@@ -84,7 +84,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 		t.Fatal(e)
 	}
 	dest := &App{store: destStore, config: destCfg}
-	cfg := archive.Config{DataDir: t.TempDir(), DefaultInterval: 3600, RequestTimeout: 5, CollectionTimeout: 5, ScrollDelay: 1, MaxScrolls: 1, MaxMediaBytes: 1024}
+	cfg := archive.Config{DataDir: t.TempDir(), DefaultInterval: 3600, RequestTimeout: 5, ScrollDelay: 1, MaxScrolls: 1, MaxMediaBytes: 1024}
 	source, e := archive.OpenStore(cfg.DataDir)
 	if e != nil {
 		t.Fatal(e)

@@ -43,7 +43,7 @@ func TestBrowserCollectionOffline(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			cfg := Config{DataDir: dir, Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 3}
+			cfg := Config{DataDir: dir, Headless: true, BrowserMaxAge: 20, ScrollDelay: 1, MaxScrolls: 3}
 			setup := func(ctx context.Context) error {
 				err := chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
 					_, e := cdp.Call(c, target, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{{URLPattern: "*"}}})
@@ -165,7 +165,7 @@ func TestIdentityRetryWithoutPostAnchorKeepsHandleRoute(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
 		t.Skip("offline Chrome fixture")
 	}
-	cfg := Config{Headless: true, CollectionTimeout: 30, ScrollDelay: 1, TimelineIdleSeconds: 3}
+	cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, TimelineIdleSeconds: 3}
 	visits := 0
 	usedRestIDRoute := false
 	setup := func(ctx context.Context) error {
@@ -218,7 +218,7 @@ func TestBrowserSessionCollectsMultipleTargetsOffline(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
 		t.Skip("set XM_BROWSER_TEST=1 to run real-Chrome fixture integration")
 	}
-	cfg := Config{Headless: true, CollectionTimeout: 20, ScrollDelay: 1, MaxScrolls: 3}
+	cfg := Config{Headless: true, BrowserMaxAge: 20, ScrollDelay: 1, MaxScrolls: 3}
 	session, err := NewBrowserSession(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"})
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestBrowserSessionTimeSliceAndCrashOffline(t *testing.T) {
 		t.Skip("offline Chrome lifecycle fixture")
 	}
 	cfg := DefaultConfig()
-	cfg.CollectionTimeout = 1
+	cfg.BrowserMaxAge = 1
 	session, err := NewBrowserSession(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"})
 	if err != nil {
 		t.Fatal(err)
@@ -324,13 +324,16 @@ func TestBrowserSessionTimeSliceAndCrashOffline(t *testing.T) {
 	}
 }
 
-func TestCollectionUsesConfiguredTimeout(t *testing.T) {
+func TestCollectionUsesBrowserLifetime(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.CollectionTimeout = 3600
-	if got := collectionTimeout(cfg, TargetIdentity{DurableProgress: true, Catchup: true, CatchupScrollBudget: 1000}); got != time.Hour {
+	if got := collectionTimeout(cfg, TargetIdentity{}); got != 6*time.Hour {
+		t.Fatal("default browser lifetime not used", got)
+	}
+	cfg.BrowserMaxAge = 24 * 3600
+	if got := collectionTimeout(cfg, TargetIdentity{DurableProgress: true, Catchup: true, CatchupScrollBudget: 1000}); got != 24*time.Hour {
 		t.Fatal(got)
 	}
-	cfg.CollectionTimeout = 30
+	cfg.BrowserMaxAge = 30
 	if got := collectionTimeout(cfg, TargetIdentity{DurableProgress: true, Catchup: true, CatchupScrollBudget: 1000}); got != 30*time.Second {
 		t.Fatal(got)
 	}
@@ -362,6 +365,26 @@ func TestHistoricalModesIgnoreKnownPostBoundary(t *testing.T) {
 	for _, mode := range []string{"", "incremental"} {
 		if !usesIncrementalBoundary(TargetIdentity{CollectionMode: mode}) {
 			t.Fatalf("%q unexpectedly disabled the incremental known-post boundary", mode)
+		}
+	}
+}
+
+func TestTimelineFailureRetainsDiagnosticCategory(t *testing.T) {
+	for _, tc := range []struct {
+		status       int64
+		reason, want string
+	}{
+		{503, "", "HTTP 503"}, {200, "浏览器响应读取超时", "浏览器响应读取超时"}, {0, "浏览器网络请求失败", "浏览器网络请求失败"}, {200, "响应解析失败或接口返回临时错误", "响应解析失败或接口返回临时错误"},
+	} {
+		meta := responseMeta{operation: "UserOriginalsTimeline", status: tc.status}
+		var err error
+		if tc.reason == "" {
+			err = timelineFailure(meta)
+		} else {
+			err = timelineFailure(meta, tc.reason)
+		}
+		if FailureKind(err) != "timeline" || !strings.Contains(err.Error(), tc.want) {
+			t.Fatal(err)
 		}
 	}
 }

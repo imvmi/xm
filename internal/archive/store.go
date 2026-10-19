@@ -293,6 +293,12 @@ func (s *Store) OutstandingMedia(target string) (int, error) {
 	return count, err
 }
 
+// TargetMediaCounts includes quoted assets and deferred or permanently failed media.
+func (s *Store) TargetMediaCounts(target string) (done, total int, err error) {
+	err = s.DB.QueryRow("SELECT COALESCE(SUM(CASE WHEN status='done' THEN 1 ELSE 0 END),0),COUNT(*) FROM media WHERE 1=1"+targetMediaFilter, target).Scan(&done, &total)
+	return
+}
+
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt FROM media JOIN posts ON posts.id=media.post_id WHERE 1=1`
 	var args []any

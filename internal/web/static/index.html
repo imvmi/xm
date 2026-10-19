@@ -34,7 +34,7 @@
 <div id="app" class="app" hidden>
   <aside class="sidebar">
     <a class="brand" href="#archive"><span class="brand-mark">x<span>m</span></span><span>私人动态档案</span></a>
-    <nav aria-label="主导航"><a href="#archive" data-view="archive"><svg><use href="#i-grid"/></svg><span class="nav-text">推文归档</span><span id="nav-count" class="nav-count">0</span></a><a href="#monitors" data-view="monitors"><svg><use href="#i-users"/></svg><span class="nav-text">监控账号</span></a><a href="#activity" data-view="activity"><svg><use href="#i-clock"/></svg><span class="nav-text">采集记录</span></a><a href="#notifications" data-view="notifications"><svg><use href="#i-bell"/></svg><span class="nav-text">通知</span></a><a href="#settings" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-text">设置</span></a></nav>
+    <nav aria-label="主导航"><a href="#archive" data-view="archive"><svg><use href="#i-grid"/></svg><span class="nav-text">推文归档</span><span id="nav-count" class="nav-count">0</span></a><a href="#monitors" data-view="monitors"><svg><use href="#i-users"/></svg><span class="nav-text">监控账号</span></a><a href="#activity" data-view="activity"><svg><use href="#i-clock"/></svg><span class="nav-text">任务中心</span></a><a href="#notifications" data-view="notifications"><svg><use href="#i-bell"/></svg><span class="nav-text">通知</span></a><a href="#settings" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-text">设置</span></a></nav>
     <div class="sidebar-bottom"><button id="logout" class="logout" aria-label="退出登录" title="退出登录"><svg aria-hidden="true"><use href="#i-exit"/></svg><span>退出登录</span></button></div>
   </aside>
   <main id="main-content" tabindex="-1">
@@ -67,16 +67,16 @@
         </div>
       </section>
       <section id="view-monitors" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>监控账号</h1><p>管理关注账号与自动采集计划。</p></div><div class="heading-actions"><button id="pause-all" class="button secondary">暂停自动轮询</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>
+        <div class="page-heading"><div><h1>监控账号</h1><p>管理关注账号与自动采集计划。</p></div><div class="heading-actions"><button id="pause-all" class="button secondary">暂停自动采集</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加监控</button></div></div>
         <div class="monitor-toolbar"><label class="search-box"><svg><use href="#i-search"/></svg><input id="monitor-search" type="search" placeholder="搜索监控账号" aria-label="搜索监控账号"></label><select id="monitor-filter" aria-label="筛选监控状态"><option value="all">全部账号</option><option value="enabled">已启用</option><option value="paused">已暂停</option></select><span id="monitor-count" class="muted" aria-live="polite"></span></div>
-        <div class="table-panel monitor-table"><table><thead><tr><th>账号</th><th>统一周期</th><th>运行状态</th><th>最近完成 / 下次批次</th><th>已归档</th><th>操作</th></tr></thead><tbody id="monitor-rows"></tbody></table><p id="monitor-no-match" class="empty-filter" hidden>没有匹配的账号，试试其他用户名或状态。</p><div id="monitor-empty" class="empty-state compact" hidden><h3>还没有监控账号</h3><p>支持公开账号，以及当前登录账号已获准关注的锁推账号。</p><button class="button primary" data-action="add">添加监控</button></div></div>
+        <div class="table-panel monitor-table"><table><thead><tr><th>账号</th><th>采集周期</th><th>运行状态</th><th>最近结束 / 下次计划</th><th>已归档</th><th>操作</th></tr></thead><tbody id="monitor-rows"></tbody></table><p id="monitor-no-match" class="empty-filter" hidden>没有匹配的账号，试试其他用户名或状态。</p><div id="monitor-empty" class="empty-state compact" hidden><h3>还没有监控账号</h3><p>支持公开账号，以及当前登录账号已获准关注的锁推账号。</p><button class="button primary" data-action="add">添加监控</button></div></div>
       </section>
       <section id="view-activity" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>任务中心</h1><p>查看当前任务、等待队列与最近 20 次执行结果。</p></div><button id="refresh-runs" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新任务</button></div>
+        <div class="page-heading"><div><h1>任务中心</h1><p>查看当前任务、等待队列与最近 20 次已结束的执行。</p></div><button id="refresh-runs" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新任务</button></div>
         <div id="queue-wait" class="notice activity-wait" hidden></div>
         <section class="activity-section"><div class="activity-heading"><h2>当前任务</h2><span id="current-job-count" class="count-label">0</span></div><div id="current-job" class="job-list"></div></section>
         <section class="activity-section"><div class="activity-heading"><h2>等待队列</h2><span id="queue-count" class="count-label">0</span></div><div id="job-queue" class="job-list"></div></section>
-        <section class="activity-section"><div class="activity-heading"><h2>最近记录</h2><span class="muted">每次真实执行单独记录</span></div><div id="runs" class="runs-list"></div></section>
+        <section class="activity-section"><div class="activity-heading"><h2>最近记录</h2><span class="muted">仅显示已结束的执行</span></div><div id="runs" class="runs-list"></div></section>
       </section>
       <section id="view-notifications" class="view management-view" hidden>
         <div class="page-heading"><div><h1>通知设置</h1><p>通过 Telegram 或 Webhook 接收更新与异常提醒。</p></div><button id="notification-new" class="button primary" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>新增渠道</button></div>
@@ -97,6 +97,7 @@
       </section>
       <section id="view-settings" class="view management-view" hidden>
         <div class="page-heading"><div><h1>设置</h1><p>管理采集频率、X 登录与网络连接，查看归档保存位置。</p></div></div>
+        <p id="settings-draft-notice" class="notice" role="status" hidden>有未保存修改。切换页面会保留草稿，刷新或关闭页面前请保存。</p>
         <div class="settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">X 账号</button><button type="button" role="tab" id="settings-tab-collection" aria-controls="settings-collection" aria-selected="false" data-settings-tab="collection" tabindex="-1">采集设置</button><button type="button" role="tab" id="settings-tab-network" aria-controls="settings-network" aria-selected="false" data-settings-tab="network" tabindex="-1">网络代理</button><button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="false" data-settings-tab="storage" tabindex="-1">归档存储</button></div>
         <section id="settings-account" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-account">
           <div class="panel"><div class="panel-heading"><div><h2>X 登录凭据</h2><p>仅采集当前 X 账号有权访问的动态。</p></div><span id="cookie-badge" class="badge neutral">未导入</span></div><div class="panel-body"><p id="cookie-status" class="muted"></p><form id="cookie-form"><label for="cookie-content">粘贴 Cookie</label><textarea id="cookie-content" rows="5" placeholder="auth_token=…; ct0=…&#10;也支持 JSON 和 Netscape 格式" autocomplete="off" spellcheck="false"></textarea><div class="file-row"><label class="button secondary file-button">选择 Cookie 文件<input id="cookie-file" type="file" accept=".json,.txt" hidden></label><span id="cookie-file-name" class="muted">或直接粘贴到上方</span></div><p class="field-help">auth_token 与 ct0 明文保存在数据库中，导入后不会回显。锁推账号需要先获准关注。</p><button class="button primary" type="submit">保存 Cookie</button></form></div></div>
@@ -121,31 +122,40 @@
           <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#monitors">前往监控账号 →</a></p>
         </section>
         <section id="settings-collection" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-collection" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>采集频率</h2><p>所有监控账号共用以下设置。</p></div></div><div class="panel-body">
+          <div class="panel"><div class="panel-heading"><div><h2>采集设置</h2><p>所有监控账号共用。修改后请保存，正在运行的任务继续使用原设置。</p></div></div><div class="panel-body">
             <form id="collection-settings-form">
-              <div class="field-pair"><div><label for="default-interval">自动采集周期（小时）</label><input id="default-interval" type="number" min="1" max="168" step="any" required value="1"></div><div><label for="queue-interval">队列任务间隔（秒）</label><input id="queue-interval" type="number" min="0" max="3600" step="1" required value="0"></div></div>
-              <p class="field-help">自动周期默认 1 小时，范围 1～168 小时；修改后会立即重新安排下次自动采集。队列间隔范围 0～3600 秒，设为 0 表示上一任务结束后立即开始下一任务。</p>
-              <p class="field-help">请求由页面导航和滚动自然触发，不做逐请求拦截或延迟；X 返回 429 时才进入限流冷却。</p>
-              <details class="advanced-settings"><summary>高级时间线设置</summary>
-                <p class="field-help">每个任务持续采集到时间线结束、已归档边界、429 或达到最大时间，不再设置条数、页数和滚动次数限制。</p>
-                <div class="field-pair"><div><label for="scroll-delay">滚动基础等待（秒）</label><input id="scroll-delay" type="number" min="1" max="30" step="1" required value="5"></div><div><label for="scroll-jitter">滚动随机浮动（秒）</label><input id="scroll-jitter" type="number" min="0" max="4" step="1" required value="2"></div></div>
+              <section class="collection-plan" aria-labelledby="collection-plan-title"><h3 id="collection-plan-title">采集计划</h3><p id="plan-summary" class="group-summary"></p>
+                <div class="field-pair"><div><label for="default-interval">自动采集周期（小时）</label><input id="default-interval" type="number" min="1" max="168" step="any" required value="1"></div><div><label for="queue-interval">账号之间的等待时间（秒）</label><input id="queue-interval" type="number" min="0" max="3600" step="1" required value="0"></div></div>
+                <p class="field-help">一批账号执行结束后，再等待一个周期开始下一批。修改周期会重新安排下次计划；账号间隔设为 0 时，上一任务结束后立即开始下一任务。</p>
+              </section>
+              <details class="advanced-settings" data-settings-group="timeline"><summary>时间线采集 <span id="timeline-summary" class="group-summary"></span></summary>
+                <div class="field-pair"><div><label for="scroll-delay">每次滚动前等待（秒）</label><input id="scroll-delay" type="number" min="1" max="30" step="1" required value="5"></div><div><label for="scroll-jitter">等待时间随机浮动（±秒）</label><input id="scroll-jitter" type="number" min="0" max="4" step="1" required value="2"></div></div>
                 <p id="scroll-spacing-help" class="field-help">上一轮页面请求完成后，随机等待 3～7 秒再滚动。</p>
-                <div class="field-pair"><div><label for="timeline-idle-seconds">时间线无进展结束等待（秒）</label><input id="timeline-idle-seconds" type="number" min="10" max="120" step="1" required value="24"></div><div><label for="known-boundary-posts">连续已归档停止阈值（条）</label><input id="known-boundary-posts" type="number" min="3" max="50" step="1" required value="8"></div></div>
-                <p class="field-help">仅当页面已在底部、没有进行中的时间线请求，且推文数量和页面高度均不再变化时开始计时；期间出现新响应或页面进展会重新计时。达到该时间后才判定当前时间线结束，它不控制请求频率。</p>
-                <label for="collection-timeout">单次任务最大时间（秒）</label><input id="collection-timeout" type="number" min="60" max="1800" step="1" required value="300">
-                <p class="field-help">浏览器采集、头像处理和媒体下载/上传共用此时间；到期停止本轮处理，已入库正文、断点及未完成媒体任务保留，后续任务继续。</p>
-                <button id="collection-defaults" class="text-button" type="button">恢复推荐默认值</button>
+                <div class="field-pair"><div><label for="timeline-idle-seconds">页面无进展等待时间（秒）</label><input id="timeline-idle-seconds" type="number" min="10" max="120" step="1" required value="24"></div><div><label for="known-boundary-posts">连续遇到多少条已保存推文后停止</label><input id="known-boundary-posts" type="number" min="3" max="50" step="1" required value="8"></div></div>
+                <p class="field-help">页面到底且没有新内容后，再等待指定秒数结束采集。已保存推文的停止阈值仅用于增量采集，补采历史和重新扫描不受此项限制。</p>
+                <details class="form-details"><summary>了解时间线结束条件</summary><p>页面在底部、没有进行中的时间线请求，且推文数量和页面高度均不再变化时开始计时；新响应或页面进展会重新计时。时间线结束、达到已保存边界、遇到限流或任务时限用完，都会结束本轮处理。</p></details>
+                <button id="collection-defaults" class="text-button" type="button" data-default-group="timeline">填入本组默认值</button>
               </details>
-              <details class="advanced-settings"><summary>请求、浏览器与媒体策略</summary>
-                <p class="field-help">XM 不限制请求频率，也不拦截浏览器请求。若 X 实际返回 429，则按以下预设冷却后重试。</p>
-                <label for="rate-limit-mode">限流冷却预设</label><select id="rate-limit-mode"><option value="conservative">保守 · 最少 30 分钟</option><option value="balanced">均衡 · 最少 15 分钟</option><option value="fast">快速 · 最少 5 分钟</option></select>
-                <div class="field-pair"><div><label for="request-timeout">网络请求超时（秒）</label><input id="request-timeout" type="number" min="10" max="300" step="1" required value="60"></div><div><label for="max-media-mib">单媒体文件上限（MiB）</label><input id="max-media-mib" type="number" min="1" max="10240" step="1" required value="512"></div></div>
-                <div class="field-pair"><div><label for="browser-max-age">浏览器最长复用（小时）</label><input id="browser-max-age" type="number" min="1" max="24" step="1" required value="6"></div><div><label for="browser-max-tasks">单浏览器最多任务数</label><input id="browser-max-tasks" type="number" min="10" max="1000" step="1" required value="100"></div></div>
-                <div class="field-pair"><div><label for="media-retry-initial">媒体首次重试（分钟）</label><input id="media-retry-initial" type="number" min="1" max="1440" step="1" required value="5"></div><div><label for="media-retry-max">媒体最长重试（小时）</label><input id="media-retry-max" type="number" min="1" max="168" step="1" required value="24"></div></div>
-                <p class="field-help">媒体临时失败会指数退避并持续重试；永久格式、域名或大小错误不会自动重试。S3 单文件仍受 5 GiB 上传上限约束。</p>
-                <button id="operational-defaults" class="text-button" type="button">恢复推荐默认值</button>
+              <details class="advanced-settings" data-settings-group="browser"><summary>浏览器与任务 <span id="browser-summary" class="group-summary"></span></summary>
+                <div class="field-pair"><div><label for="browser-max-age">浏览器复用与任务时限（小时）</label><input id="browser-max-age" type="number" min="1" max="24" step="1" required value="6"></div><div><label for="browser-max-tasks">单个浏览器最多执行任务数</label><input id="browser-max-tasks" type="number" min="10" max="1000" step="1" required value="100"></div></div>
+                <p class="field-help">每个账号任务最多运行此时长，采集与媒体处理共用，超时保留已保存内容和进度。</p>
+                <p class="field-help">浏览器从创建时单独计时，达到复用时间或任务数后，在下一任务开始前重建。不会到点中断当前任务，空闲时也不会自动关闭。</p>
+                <details class="form-details"><summary>以 6 小时为例</summary><p>浏览器已经使用 5 小时后开始新任务，该任务仍有完整的 6 小时时限。任务超时后结束本轮；未完成内容等待下次自动采集或手动继续，不会仅因超时立即重试。</p></details>
+                <button class="text-button" type="button" data-default-group="browser">填入本组默认值</button>
               </details>
-              <div class="form-actions"><button class="button primary" type="submit">保存采集设置</button></div>
+              <details class="advanced-settings" data-settings-group="network"><summary>网络与限流 <span id="network-summary" class="group-summary"></span></summary>
+                <label for="request-timeout">单次网络请求超时（秒）</label><input id="request-timeout" type="number" min="10" max="300" step="1" required value="60">
+                <label for="rate-limit-mode">遇到 X 限流后的等待策略</label><select id="rate-limit-mode"><option value="conservative">保守 · 基础等待 30 分钟</option><option value="balanced">均衡 · 基础等待 15 分钟</option><option value="fast">快速 · 基础等待 5 分钟</option></select>
+                <p class="field-help">X 返回限流后才开始冷却。实际等待还受自动采集周期、连续限流次数及 X 指定时间影响；手动任务也需要等待。</p>
+                <button class="text-button" type="button" data-default-group="network">填入本组默认值</button>
+              </details>
+              <details class="advanced-settings" data-settings-group="media"><summary>媒体归档 <span id="media-summary" class="group-summary"></span></summary>
+                <label for="max-media-mib">单个媒体文件大小上限（MiB）</label><input id="max-media-mib" type="number" min="1" max="10240" step="1" required value="512">
+                <div class="field-pair"><div><label for="media-retry-initial">首次失败后等待（分钟）</label><input id="media-retry-initial" type="number" min="1" max="1440" step="1" required value="5"></div><div><label for="media-retry-max">重试等待时间上限（小时）</label><input id="media-retry-max" type="number" min="1" max="168" step="1" required value="24"></div></div>
+                <p class="field-help">临时失败会逐次延长等待时间，到期后在后续采集任务中重试。永久格式、域名或大小错误不会自动重试；S3 单文件上传上限仍为 5 GiB。</p>
+                <button class="text-button" type="button" data-default-group="media">填入本组默认值</button>
+              </details>
+              <div class="collection-save-bar"><span id="collection-draft-status" role="status">设置已保存</span><button class="button primary" type="submit">保存采集设置</button></div>
               <p id="collection-settings-result" class="field-help" role="status" aria-live="polite"></p>
             </form>
           </div></div>

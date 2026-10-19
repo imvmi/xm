@@ -29,7 +29,7 @@ type browserSessionKey struct {
 }
 
 func sessionKey(cfg archive.Config, cookies archive.Cookies) browserSessionKey {
-	return browserSessionKey{cfg.Proxy, cfg.ChromePath, cfg.Headless, cookies, cfg.CollectionTimeout, cfg.ScrollDelay, cfg.ScrollJitter, cfg.TimelineIdleSeconds, cfg.KnownBoundaryPosts}
+	return browserSessionKey{cfg.Proxy, cfg.ChromePath, cfg.Headless, cookies, cfg.BrowserMaxAge, cfg.ScrollDelay, cfg.ScrollJitter, cfg.TimelineIdleSeconds, cfg.KnownBoundaryPosts}
 }
 
 func (s *Scheduler) closeSession() {

@@ -36,7 +36,7 @@ func TestLiveUserIDResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal("no captured identity available for live verification")
 	}
-	cfg.CollectionTimeout = 60
+	cfg.BrowserMaxAge = 60
 	cfg.MaxScrolls = 3
 	cfg.ScrollDelay = 2
 	verified := false

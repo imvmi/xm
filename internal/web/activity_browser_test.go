@@ -83,10 +83,25 @@ func TestTaskCenterBrowser(t *testing.T) {
 	if !eval(`document.getElementById('current-job').textContent.includes('已读取 8 条') && document.getElementById('job-queue').textContent.includes('限流冷却') && document.getElementById('queue-count').textContent==='1' && !document.getElementById('queue-wait').hidden`) {
 		t.Fatal("task center did not render current, queue, and wait state")
 	}
+	if !eval(`!document.getElementById('runs').textContent.includes('@alice') && document.getElementById('runs').textContent.includes('还没有已结束的执行')`) {
+		t.Fatal("current task duplicated in recent history")
+	}
 	eval(`(()=>{document.querySelector('#job-queue [data-cancel-job]').click();return true})()`)
 	wait(`document.getElementById('queue-count').textContent==='0' && !document.getElementById('job-queue').textContent.includes('@bob')`)
 	var enabled bool
 	if err = a.store.DB.QueryRow("SELECT enabled FROM monitors WHERE username='bob'").Scan(&enabled); err != nil || !enabled {
 		t.Fatal("queue cancellation paused the monitor", enabled, err)
 	}
+	// Monitor page uses the same cancellation action and preserves monitoring.
+	if err := a.scheduler.queue("bob"); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{location.hash='monitors';return true})()`)
+	wait(`!!document.querySelector('[data-monitor="bob"][data-op="cancel-queue"]')`)
+	eval(`(()=>{document.querySelector('[data-monitor="bob"][data-op="cancel-queue"]').click();return true})()`)
+	wait(`!document.querySelector('[data-monitor="bob"][data-op="cancel-queue"]')`)
+	if err = a.store.DB.QueryRow("SELECT enabled FROM monitors WHERE username='bob'").Scan(&enabled); err != nil || !enabled {
+		t.Fatal("monitor page cancellation paused account", enabled, err)
+	}
+
 }
