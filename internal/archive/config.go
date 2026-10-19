@@ -39,6 +39,8 @@ type Config struct {
 	QueueInterval        int                   `json:"queue_interval_seconds"`
 	DefaultInterval      int                   `json:"default_interval_seconds"`
 	PollingPaused        bool                  `json:"polling_paused"`
+	ArchiveTheme         string                `json:"archive_theme"`
+	TimelinePageSize     int                   `json:"timeline_page_size"`
 }
 
 // Bootstrap is the only configuration kept outside the database.
@@ -49,7 +51,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 5, ScrollJitter: 2, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 8, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 0, DefaultInterval: 3600}
+	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", TimelinePageSize: 24}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -116,6 +118,12 @@ func normalizeConfig(path string, c Config) (Config, error) {
 	if c.MediaRetryMax == 0 {
 		c.MediaRetryMax = defaults.MediaRetryMax
 	}
+	if c.ArchiveTheme == "" {
+		c.ArchiveTheme = defaults.ArchiveTheme
+	}
+	if c.TimelinePageSize == 0 {
+		c.TimelinePageSize = defaults.TimelinePageSize
+	}
 	if c.DataDir == "" || c.RequestTimeout < 1 || c.ScrollDelay < 1 || c.MaxScrolls < 1 || c.MaxMediaBytes < 1 || c.MaxMediaBytes > 10<<30 {
 		return c, errors.New("配置中的目录不能为空，超时/分页/大小限制必须为正数；媒体上限不超过 10 GiB")
 	}
@@ -130,6 +138,9 @@ func normalizeConfig(path string, c Config) (Config, error) {
 	}
 	if !validRateLimitMode(c.RateLimitMode) || c.BrowserMaxAge < 300 || c.BrowserMaxAge > 86400 || c.BrowserMaxTasks < 1 || c.BrowserMaxTasks > 1000 || c.MediaRetryInitial < 60 || c.MediaRetryInitial > 86400 || c.MediaRetryMax < c.MediaRetryInitial || c.MediaRetryMax > 604800 {
 		return c, errors.New("请求、浏览器或媒体重试设置超出系统安全范围")
+	}
+	if (c.ArchiveTheme != "system" && c.ArchiveTheme != "light" && c.ArchiveTheme != "dark") || c.TimelinePageSize < 10 || c.TimelinePageSize > 1000 {
+		return c, errors.New("归档显示设置超出系统安全范围")
 	}
 	if !filepath.IsAbs(c.DataDir) {
 		c.DataDir = filepath.Join(filepath.Dir(path), c.DataDir)
@@ -148,7 +159,7 @@ func normalizeConfig(path string, c Config) (Config, error) {
 		return c, err
 	}
 	if c.DefaultInterval == 0 {
-		c.DefaultInterval = 3600
+		c.DefaultInterval = defaults.DefaultInterval
 	}
 	if c.DefaultInterval < 3600 || c.DefaultInterval > 604800 {
 		return c, errors.New("自动采集周期必须为 1～168 小时")

@@ -3,6 +3,9 @@ const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const state = {csrf:'', view:'archive', settings:null, monitors:[], overview:null, offset:0, total:0, editing:null, deleting:null, postRequest:0, authenticated:false, users:[], target:'', timelineTab:'posts', postsLoading:false, postsError:false, hasMore:false, postIDs:new Set(), navRequest:0};
+let archiveThemePreference='system';
+function applyArchiveTheme(preference=archiveThemePreference){archiveThemePreference=preference;const dark=preference==='dark'||(preference==='system'&&window.matchMedia?.('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=dark?'dark':'light';document.documentElement.style.colorScheme=dark?'dark':'light';}
+applyArchiveTheme();window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(archiveThemePreference==='system')applyArchiveTheme();});
 let toastTimer, searchTimer;
 function toast(message, error=false) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').classList.toggle('error',error); $('toast').hidden=false; toastTimer=setTimeout(()=>$('toast').hidden=true,error?7000:4000); }
 function date(value, short=false) { if(!value)return '尚未执行';const d=new Date(typeof value==='number'?value*1000:value);if(Number.isNaN(d.getTime()))return String(value);return d.toLocaleString('zh-CN',short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
@@ -18,7 +21,7 @@ async function api(path, method='GET', data) {
 }
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
-  settingsBaselines.clear();$('collection-settings-form').reset();$('settings-form').reset();$('remote-cache-form').reset();updateSettingsDraftNotice();
+  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();updateSettingsDraftNotice();
   state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','monitor-rows','runs'])$(id).replaceChildren();
@@ -56,6 +59,11 @@ const titles={archive:'推文归档',user:'用户动态',monitors:'监控账号'
 function avatar(username, extra='', source='') { const initials=escape(username.slice(0,2).toUpperCase()),alt=[...username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;return `<span class="avatar alt${alt} ${extra}"><span class="avatar-fallback">${initials}</span>${source?`<img class="avatar-image" src="${escape(source)}" alt="" loading="lazy">`:''}</span>`; }
 document.addEventListener('error',event=>{if(event.target instanceof HTMLImageElement&&event.target.classList.contains('avatar-image'))event.target.remove();},true);
 function handle(u){return u.current_username||u.username;}
+function userAvatar(username){
+ const key=String(username??'').toLowerCase();
+ const user=state.users?.find(u=>[u.current_username,u.username].some(name=>String(name??'').toLowerCase()===key));
+ return user?.avatar_url||'';
+}
 function userURL(username) { return '#user/'+encodeURIComponent(username); }
 async function navigate() {
   if(!state.authenticated)return;
@@ -113,14 +121,25 @@ function mediaHTML(post) {
   for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='failed'?'下载失败':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
   return html;
 }
+function displayPostText(post){
+ let text=String(post.text??'').trimEnd();
+ const mediaCount=Array.isArray(post.media)?post.media.length:0;
+ for(let i=0;i<mediaCount;i++){
+  const trailingMediaURL=/(?:^|[ \t]+)https?:\/\/t\.co\/[A-Za-z0-9]+[ \t]*$/i.exec(text);
+  if(!trailingMediaURL)break;
+  text=text.slice(0,trailingMediaURL.index).replace(/[ \t]+$/,'');
+ }
+ return text;
+}
 function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
  if(!p.quote||depth>=4)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
  const q=p.quote;
  const source=`https://x.com/i/status/${encodeURIComponent(q.id)}`;
- return `<div class="quote-card"><div class="quote-content"><div class="quote-author">${avatar(q.username,'tiny-quote',state.users?.find(u=>(u.current_username||u.username)===q.username)?.avatar_url)}<strong>${escape(q.name||q.username)}</strong><a class="quote-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(q.username)} 的这条引用推文">@${escape(q.username)}</a><span>· ${escape(date(q.created_at,true))}</span></div><div class="post-text quote-text">${escape(q.text)}</div>${q.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div></div>`;
+ const text=displayPostText(q);
+ return `<div class="quote-card"><div class="quote-content"><div class="quote-author">${avatar(q.username,'tiny-quote',userAvatar(q.username))}<strong>${escape(q.name||q.username)}</strong><a class="quote-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(q.username)} 的这条引用推文">@${escape(q.username)}</a><span>· ${escape(date(q.created_at))}</span></div><div class="post-text quote-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div></div>`;
 }
-function postHTML(p){const source=`https://x.com/i/status/${encodeURIComponent(p.id)}`;return `<article class="post"><div class="post-body">${avatar(p.username,'post-avatar',state.users?.find(u=>(u.current_username||u.username)===p.username)?.avatar_url)}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${escape(p.name||p.username)}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at,true))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}</div><div class="post-main"><div class="post-text">${escape(p.text)}</div>${p.text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div></div></article>`;}
+function postHTML(p){const source=`https://x.com/i/status/${encodeURIComponent(p.id)}`,text=displayPostText(p);return `<article class="post"><div class="post-body">${avatar(p.username,'post-avatar',userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${escape(p.name||p.username)}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}</div><div class="post-main"><div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div></div></article>`;}
 const timelineObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{
  if(entries.some(e=>e.isIntersecting)&&!state.postsError)loadMorePosts();
 },{rootMargin:'0px 0px 320px 0px'}):null;
@@ -163,11 +182,42 @@ async function loadMorePosts(){
  }
 }
 $('load-more').addEventListener('click',()=>loadMorePosts());
+let imageGallery=[],imageIndex=0,touchStart=null;
+function showGalleryImage(index){
+ if(!imageGallery.length)return;
+ imageIndex=Math.max(0,Math.min(index,imageGallery.length-1));
+ $('large-image').src=imageGallery[imageIndex];
+ $('large-image').alt=`已归档图片 ${imageIndex+1} / ${imageGallery.length}`;
+ const multiple=imageGallery.length>1;
+ $('image-prev').hidden=!multiple;$('image-next').hidden=!multiple;$('image-count').hidden=!multiple;
+ $('image-prev').disabled=imageIndex===0;$('image-next').disabled=imageIndex===imageGallery.length-1;
+ $('image-count').textContent=`${imageIndex+1} / ${imageGallery.length}`;
+}
+function stepGallery(delta){if(imageGallery.length>1)showGalleryImage(imageIndex+delta);}
 $('posts').addEventListener('click',event=>{
-  const image=event.target.closest('[data-image]');if(image){$('large-image').src=image.dataset.image;$('image-dialog').showModal();}
+  const image=event.target.closest('[data-image]');if(image){
+   const grid=image.closest('.media-grid');
+   const items=[...(grid?.querySelectorAll('[data-image]')||[image])];
+   imageGallery=items.map(item=>item.dataset.image);
+   imageIndex=Math.max(0,items.indexOf(image));showGalleryImage(imageIndex);$('image-dialog').showModal();
+  }
   if(event.target.classList.contains('expand-text')){const text=event.target.previousElementSibling;const expanded=text.classList.toggle('expanded');event.target.textContent=expanded?'收起全文':'展开全文';}
 });
-$('image-dialog').addEventListener('close',()=>$('large-image').removeAttribute('src'));
+$('image-prev').addEventListener('click',()=>stepGallery(-1));
+$('image-next').addEventListener('click',()=>stepGallery(1));
+$('image-dialog').addEventListener('keydown',event=>{
+ if(event.key==='ArrowLeft'&&imageGallery.length>1){event.preventDefault();stepGallery(-1);}
+ if(event.key==='ArrowRight'&&imageGallery.length>1){event.preventDefault();stepGallery(1);}
+});
+$('large-image').addEventListener('touchstart',event=>{touchStart=event.changedTouches[0]?.clientX??null;},{passive:true});
+$('large-image').addEventListener('touchend',event=>{
+ if(touchStart===null)return;
+ const delta=(event.changedTouches[0]?.clientX??touchStart)-touchStart;touchStart=null;
+ if(Math.abs(delta)>40)stepGallery(delta<0?1:-1);
+},{passive:true});
+$('image-dialog').addEventListener('close',()=>{
+ $('large-image').removeAttribute('src');$('large-image').alt='已归档图片';imageGallery=[];imageIndex=0;touchStart=null;
+});
 $('search').addEventListener('input',()=>{clearTimeout(searchTimer);state.postRequest++;state.hasMore=false;state.postsLoading=true;timelineObserver?.disconnect();updateTimelineLoader();searchTimer=setTimeout(()=>refreshPosts(),300);});
 $('kind-filter').addEventListener('change',()=>refreshPosts());
 $('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),async()=>{await refreshOverview();await refreshUsers();}));
@@ -246,7 +296,7 @@ for(const form of document.querySelectorAll('#view-settings form')){
 window.addEventListener('beforeunload',event=>{if([...settingsBaselines.keys()].some(settingsFormDirty)){event.preventDefault();event.returnValue='';}});
 function updateKeyboardLayout(){document.body.classList.toggle('keyboard-open',!!window.visualViewport&&window.innerHeight-window.visualViewport.height>150);}
 window.visualViewport?.addEventListener('resize',updateKeyboardLayout);
-const collectionDefaults={timeline:{'scroll-delay':5,'scroll-jitter':2,'timeline-idle-seconds':24,'known-boundary-posts':8},browser:{'browser-max-age':6,'browser-max-tasks':100},network:{'rate-limit-mode':'balanced','request-timeout':60},media:{'max-media-mib':512,'media-retry-initial':5,'media-retry-max':24}};
+const collectionDefaults={timeline:{'scroll-delay':20,'scroll-jitter':5,'timeline-idle-seconds':24,'known-boundary-posts':3},browser:{'browser-max-age':6,'browser-max-tasks':100},network:{'rate-limit-mode':'balanced','request-timeout':60},media:{'max-media-mib':512,'media-retry-initial':5,'media-retry-max':24}};
 for(const button of document.querySelectorAll('[data-default-group]'))button.addEventListener('click',()=>{
  for(const [id,value] of Object.entries(collectionDefaults[button.dataset.defaultGroup]))$(id).value=value;
  updateScrollSpacingHelp();updateCollectionSummaries();updateSettingsDraftNotice();
@@ -261,6 +311,13 @@ $('collection-settings-form').addEventListener('submit',event=>{event.preventDef
   acceptSettingsForm('collection-settings-form',submitted);populateCollectionSettings(state.settings);
   $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'采集设置已保存；下次自动采集计划已重新安排。其他设置从下一个任务生效，账号间隔会更新当前等待。':'采集设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('采集设置已保存');
 });});
+$('archive-display-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+  const submitted=settingsSnapshot('archive-display-form');
+  await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value)});
+  state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);populateArchiveDisplaySettings(state.settings);
+  acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='归档显示设置已保存。';toast('归档显示设置已保存');
+});});
+function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;});applyArchiveTheme(s.archive_theme||'system');}
 function populateCollectionSettings(s){
  hydrateSettingsForm('collection-settings-form',()=>{
   $('default-interval').value=s.default_interval_seconds/3600;$('queue-interval').value=s.queue_interval_seconds;
@@ -314,10 +371,10 @@ function selectSettingsTab(name,focus=false){
 }
 for(const button of document.querySelectorAll('[data-settings-tab]')){
  button.addEventListener('click',()=>selectSettingsTab(button.dataset.settingsTab));
- button.addEventListener('keydown',e=>{const names=['account','collection','network','storage'];let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;e.preventDefault();selectSettingsTab(names[i],true);});
+ button.addEventListener('keydown',e=>{const names=['account','collection','display','network','storage'];let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;e.preventDefault();selectSettingsTab(names[i],true);});
 }
 async function refreshSettings() {
-  const s=await api('/settings');state.settings=s;
+  const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');

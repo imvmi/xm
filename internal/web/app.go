@@ -398,7 +398,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -417,6 +417,8 @@ type settingsInput struct {
 	MediaRetryInitial   *int    `json:"media_retry_initial_seconds"`
 	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
 	Paused              *bool   `json:"polling_paused"`
+	ArchiveTheme        *string `json:"archive_theme"`
+	TimelinePageSize    *int    `json:"timeline_page_size"`
 }
 
 func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -503,6 +505,20 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if v.Paused != nil {
 		cfg.PollingPaused = *v.Paused
+	}
+	if v.ArchiveTheme != nil {
+		if *v.ArchiveTheme != "system" && *v.ArchiveTheme != "light" && *v.ArchiveTheme != "dark" {
+			problem(w, 400, "主题模式必须为跟随系统、日间或夜间")
+			return
+		}
+		cfg.ArchiveTheme = *v.ArchiveTheme
+	}
+	if v.TimelinePageSize != nil {
+		if *v.TimelinePageSize < 10 || *v.TimelinePageSize > 1000 {
+			problem(w, 400, "每次加载推文数量必须为 10～1000")
+			return
+		}
+		cfg.TimelinePageSize = *v.TimelinePageSize
 	}
 	if err := a.saveConfig(cfg, func(tx *database.Tx) error {
 		if v.DefaultInterval == nil {
@@ -837,7 +853,7 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "无效的动态类型")
 		return
 	}
-	v, err := listPosts(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, 24)
+	v, err := listPosts(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, a.Config().TimelinePageSize)
 	if err != nil {
 		problem(w, 500, "读取推文失败")
 		return
