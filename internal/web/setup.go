@@ -84,6 +84,9 @@ func (s *setupWizard) candidate(v setupInput) (archive.Config, error) {
 	c.Database = v.Database
 	// Only reuse an existing password for the exact same database destination.
 	old := s.cfg.Database
+	if c.Database.DriverName() == "sqlite" && old.DriverName() == "sqlite" && c.Database.SQLiteFile == "" {
+		c.Database.SQLiteFile = old.SQLiteFile
+	}
 	if c.Database.Password == "" && c.Database.Host == old.Host && c.Database.Port == old.Port && c.Database.Name == old.Name && c.Database.User == old.User {
 		c.Database.Password = old.Password
 	}
@@ -128,7 +131,11 @@ func (s *setupWizard) guardLocalArchive(c archive.Config) error {
 	if c.Database.DriverName() == "sqlite" || s.cfg.Database.DriverName() != "sqlite" {
 		return nil
 	}
-	path := filepath.Join(c.DataDir, "archive.sqlite")
+	name, err := s.cfg.Database.SQLiteFilename(c.DataDir)
+	if err != nil {
+		return errors.New("无法检查现有本地归档")
+	}
+	path := filepath.Join(c.DataDir, name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {

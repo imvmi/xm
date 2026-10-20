@@ -1,0 +1,23 @@
+#settings-migration .panel + .panel{margin-top:20px}
+#settings-migration .panel-body{overflow-wrap:anywhere}
+#settings-migration progress{display:block;width:100%;height:12px;accent-color:var(--accent,#1d9bf0);margin:16px 0}
+#settings-migration progress[data-status=failed]{accent-color:#c99043}
+.migration-preview{border:1px solid var(--line,#ccd2d7);border-radius:12px;margin:18px 0}
+.migration-sections{display:grid;gap:20px;margin-top:16px}
+#settings-migration .migration-sections .panel{margin:0;min-width:0}
+.migration-route{display:flex;align-items:center;gap:16px;padding:12px 0;font-size:16px;flex-wrap:wrap}
+.migration-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin-bottom:14px}
+.migration-fields>div{min-width:0}
+.migration-field-wide{grid-column:1/-1}
+#settings-migration input:not([type=checkbox]),#settings-migration select{width:100%;min-width:0}
+#settings-migration .panel-heading .badge{max-width:45%;white-space:normal;text-align:right;overflow-wrap:anywhere}
+#settings-migration details{margin:14px 0}
+#settings-migration summary{cursor:pointer}
+.migration-sections .panel-body>.button{margin-top:16px}
+#migration-remote-fields{border-top:1px solid var(--line,#ccd2d7);padding-top:16px;margin-top:16px}
+@media(max-width:600px){.migration-fields{grid-template-columns:minmax(0,1fr)}.migration-field-wide{grid-column:auto}}
+#migration-confirm-panel{margin-top:18px}
+#migration-confirm-panel .button{margin-top:12px}
+.migration-failures{padding-left:22px;max-height:280px;overflow:auto;font-size:13px;line-height:1.8}
+#migration-error:not(:empty){color:#d15454}
+#settings-migration [hidden]{display:none!important}

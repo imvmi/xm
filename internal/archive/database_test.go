@@ -67,3 +67,65 @@ func TestDatabaseCAPathRoundTrip(t *testing.T) {
 		t.Fatal("saved CA path changed on reload", err)
 	}
 }
+
+func TestSQLiteDefaultFilenameAndLegacyCompatibility(t *testing.T) {
+	for _, explicit := range []string{"", "custom.db", "archive-migrated-fixture.sqlite"} {
+		t.Run("explicit_"+explicit, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.DataDir = t.TempDir()
+			cfg.Database = DatabaseConfig{Driver: "sqlite", SQLiteFile: explicit}
+			s, err := OpenConfiguredStore(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := explicit
+			if want == "" {
+				want = DefaultSQLiteFile
+			}
+			if _, err = os.Stat(filepath.Join(cfg.DataDir, want)); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.SavePosts("alice", []Post{{ID: "123", Text: "filename preserved"}}); err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			s, err = OpenConfiguredStore(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var count int
+			if err = s.DB.QueryRow("SELECT COUNT(*) FROM posts").Scan(&count); err != nil || count != 1 {
+				t.Fatal("database was not reopened", err)
+			}
+		})
+	}
+	t.Run("legacy_implicit", func(t *testing.T) {
+		dir := t.TempDir()
+		s, err := OpenStoreFile(dir, "archive.sqlite")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.SavePosts("alice", []Post{{ID: "1"}}); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		s, err = OpenStore(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		var n int
+		if err = s.DB.QueryRow("SELECT COUNT(*) FROM posts").Scan(&n); err != nil || n != 1 {
+			t.Fatal("legacy data lost", err)
+		}
+		if _, err = os.Stat(filepath.Join(dir, DefaultSQLiteFile)); !os.IsNotExist(err) {
+			t.Fatal("empty default database created beside legacy archive")
+		}
+	})
+	for _, name := range []string{"../xm.db", "/tmp/xm.db", "nested/xm.db", `nested\xm.db`, "xm.db-wal", "bad\x00.db", "xm.txt"} {
+		if err := (DatabaseConfig{SQLiteFile: name}).Validate(); err == nil {
+			t.Fatalf("unsafe filename accepted: %q", name)
+		}
+	}
+}

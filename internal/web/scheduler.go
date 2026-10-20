@@ -151,6 +151,9 @@ func (s *Scheduler) waitBetweenJobs(ctx context.Context, completedAt time.Time) 
 		s.mu.Unlock()
 	}()
 	for {
+		if s.app.maintenance.Load() {
+			return false
+		}
 		interval := s.app.Config().QueueInterval
 		deadline := completedAt.Add(time.Duration(interval) * time.Second)
 		if interval == 0 || !time.Now().Before(deadline) {
@@ -184,6 +187,13 @@ func (s *Scheduler) waitBetweenJobs(ctx context.Context, completedAt time.Time) 
 
 func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	a := s.app
+	if !a.writeGate.TryRLock() {
+		return false, nil
+	}
+	defer a.writeGate.RUnlock()
+	if a.maintenance.Load() {
+		return false, nil
+	}
 	a.changeMu.Lock()
 	cfg := a.Config()
 	s.mu.Lock()
@@ -346,7 +356,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	lastFinished := s.lastTaskFinish()
 	needInterval := !lastFinished.IsZero()
 	for _, queued := range jobs {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || a.maintenance.Load() {
 			interrupted = true
 			break
 		}
@@ -566,6 +576,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 }
 
 func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, jobID int64, mode string, collect collector) (string, int64, error) {
+	defer s.app.invalidateStats()
 	a := s.app
 	// Browser lifetime is also the task budget for collection, avatars and media together.
 	// Keep the parent separate so exhausting this budget is not a user stop.

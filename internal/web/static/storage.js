@@ -6,7 +6,9 @@ async function refreshStorage(){
  $('storage-readonly-name').textContent=p?(p.kind==='s3'?'S3 · ':'WebDAV · ')+p.name:'本地文件系统';
  $('storage-readonly-detail').textContent=p?[p.endpoint||'AWS S3',p.bucket,p.region,p.prefix].filter(Boolean).join(' · '):'媒体保存在数据目录下的 media 文件夹中。';
  const cache=storage.cache||{enabled:false,max_bytes:2*1024**3,used_bytes:0};
- $('remote-cache-panel').hidden=!p;
+ const remote=p?.kind==='webdav'||p?.kind==='s3';
+ $('remote-cache-panel').hidden=!remote;
+ $('remote-cache-note').hidden=!remote;
  hydrateSettingsForm('remote-cache-form',()=>{$('remote-cache-enabled').checked=!!cache.enabled;
  $('remote-cache-size').value=Math.round(cache.max_bytes/1024**2);});
  $('remote-cache-usage').textContent=bytes(cache.used_bytes)+' / '+bytes(cache.max_bytes);

@@ -2,10 +2,12 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"mime"
@@ -17,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"xm/internal/archive"
@@ -27,18 +30,24 @@ import (
 var static embed.FS
 
 type App struct {
-	store        *archive.Store
-	configPath   string
-	configMu     sync.RWMutex
-	config       archive.Config
-	changeMu     sync.Mutex
-	auth         *auth
-	scheduler    *Scheduler
-	notifier     *Notifier
-	checkChrome  func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
-	cacheLockMu  sync.Mutex
-	cacheLocks   map[string]*cacheEntryLock
-	cachePruneMu sync.Mutex
+	store              *archive.Store
+	configPath         string
+	configMu           sync.RWMutex
+	config             archive.Config
+	changeMu           sync.Mutex
+	auth               *auth
+	scheduler          *Scheduler
+	notifier           *Notifier
+	checkChrome        func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
+	cacheLockMu        sync.Mutex
+	cacheLocks         map[string]*cacheEntryLock
+	cachePruneMu       sync.Mutex
+	writeGate          sync.RWMutex
+	maintenance        atomic.Bool
+	migrations         *migrationManager
+	restart            chan struct{}
+	userStatsCache     statsCache[[]ArchiveUserStats]
+	overviewStatsCache statsCache[map[string]int64]
 }
 
 func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, error) {
@@ -70,6 +79,11 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
 	a.scheduler = newScheduler(a)
 	a.notifier = newNotifier(a)
+	a.restart = make(chan struct{}, 1)
+	a.migrations, err = newMigrationManager(a)
+	if err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 func (a *App) Config() archive.Config {
@@ -78,6 +92,10 @@ func (a *App) Config() archive.Config {
 	cfg := a.config
 	cfg.NotificationChannels = append([]archive.NotificationChannel(nil), cfg.NotificationChannels...)
 	cfg.StorageProfiles = append([]archive.StorageProfile(nil), cfg.StorageProfiles...)
+	if cfg.VideoDefaultMuted != nil {
+		muted := *cfg.VideoDefaultMuted
+		cfg.VideoDefaultMuted = &muted
+	}
 	return cfg
 }
 
@@ -114,18 +132,29 @@ func (a *App) saveConfig(cfg archive.Config, updates ...func(*database.Tx) error
 	return nil
 }
 func (a *App) Run(ctx context.Context) error {
-	// A process-wide worker file lock is held by the serve command at this point.
-	_, err := a.store.DB.Exec("UPDATE monitors SET running=0,next_run=?,last_error='上次采集中断，等待重新执行' WHERE running=1", time.Now().Unix()+10)
-	if err == nil {
-		_, err = a.store.DB.Exec("UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任务尚未完成，已保存数据保留' WHERE status='running'", time.Now().UTC().Format(time.RFC3339Nano))
-	}
-	if err == nil {
-		now := time.Now()
-		_, err = a.store.DB.Exec("UPDATE collection_jobs SET status='queued',queued_at=?,queue_order=?,message='服务重启后继续执行' WHERE status='running' AND finished_at=0", now.Unix(), now.UnixNano())
-	}
-	if err != nil {
+	if err := a.recoverWorkers(); err != nil {
 		return err
 	}
+	return a.runWorkers(ctx)
+}
+func (a *App) recoverWorkers() error {
+	a.writeGate.RLock()
+	// A process-wide worker file lock is held by the serve command at this point.
+	var err error
+	if !a.maintenance.Load() {
+		_, err = a.store.DB.Exec("UPDATE monitors SET running=0,next_run=?,last_error='上次采集中断，等待重新执行' WHERE running=1", time.Now().Unix()+10)
+		if err == nil {
+			_, err = a.store.DB.Exec("UPDATE runs SET status='interrupted',finished_at=?,message='服务停止时任务尚未完成，已保存数据保留' WHERE status='running'", time.Now().UTC().Format(time.RFC3339Nano))
+		}
+		if err == nil {
+			now := time.Now()
+			_, err = a.store.DB.Exec("UPDATE collection_jobs SET status='queued',queued_at=?,queue_order=?,message='服务重启后继续执行' WHERE status='running' AND finished_at=0", now.Unix(), now.UnixNano())
+		}
+	}
+	a.writeGate.RUnlock()
+	return err
+}
+func (a *App) runWorkers(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() { defer close(done); a.notifier.Run(ctx) }()
 	a.scheduler.Run(ctx)
@@ -186,6 +215,7 @@ func (a *App) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/logout", a.auth.logout)
 	mux.HandleFunc("GET /api/overview", a.overview)
+	mux.HandleFunc("PUT /api/posts/{id}/bookmark", a.setBookmark)
 	mux.HandleFunc("GET /api/settings", a.settings)
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
 	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
@@ -195,6 +225,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/channels/{id}/test", a.testNotificationChannel)
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
+	mux.HandleFunc("GET /api/migrations", a.migrationStatus)
+	mux.HandleFunc("GET /api/migrations/preview", a.migrationPreview)
+	mux.HandleFunc("POST /api/migrations/preview", a.migrationPreview)
+	mux.HandleFunc("POST /api/migrations", a.startMigration)
+	mux.HandleFunc("POST /api/migrations/pause", a.pauseMigration)
 	mux.HandleFunc("PUT /api/storage/cache", a.updateRemoteMediaCache)
 	mux.HandleFunc("DELETE /api/storage/cache", a.clearRemoteMediaCache)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
@@ -226,14 +261,20 @@ func (a *App) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/monitors", a.addMonitor)
 	mux.HandleFunc("PUT /api/monitors/{username}", a.editMonitor)
+	mux.HandleFunc("PUT /api/monitors/{username}/timeline", a.editMonitorTimeline)
 	mux.HandleFunc("DELETE /api/monitors/{username}", a.deleteMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/run", a.runMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
 	mux.HandleFunc("GET /api/posts", a.posts)
 	mux.HandleFunc("GET /api/targets", a.targets)
+	mux.HandleFunc("GET /api/users/stats", a.userStats)
 	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
-		users, err := archiveUsers(a.store.DB)
+		load := archiveUsersFor
+		if r.URL.Query().Get("stats") == "0" {
+			load = archiveUserDirectory
+		}
+		users, err := load(a.store.DB, r.URL.Query().Get("target"))
 		if err != nil {
 			problem(w, 500, "读取用户归档失败")
 			return
@@ -263,9 +304,17 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		b, _ := static.ReadFile("static/index.html")
-		_, _ = w.Write(b)
+		preference := a.Config().ArchiveTheme
+		if preference != "dark" && preference != "light" {
+			preference = "system"
+		}
+		html := strings.Replace(string(b), `data-theme-preference="system"`, `data-theme-preference="`+preference+`"`, 1)
+		_, _ = io.WriteString(w, html)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/media/") || strings.HasPrefix(r.URL.Path, "/avatars/") {
+			w = &mediaCacheResponseWriter{w}
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -292,12 +341,26 @@ func (a *App) Handler() http.Handler {
 				return
 			}
 		}
+		if mutation && !strings.HasPrefix(r.URL.Path, "/api/migrations") && r.URL.Path != "/api/login" && r.URL.Path != "/api/logout" {
+			if !a.writeGate.TryRLock() {
+				problem(w, 503, "数据迁移维护中，请稍后再试")
+				return
+			}
+			defer a.writeGate.RUnlock()
+			if a.maintenance.Load() {
+				problem(w, 503, "数据迁移维护中，请稍后再试")
+				return
+			}
+		}
+		if mutation && (strings.HasPrefix(r.URL.Path, "/api/monitors") || strings.HasPrefix(r.URL.Path, "/api/settings") || strings.HasPrefix(r.URL.Path, "/api/migrations")) {
+			defer a.invalidateStats()
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
 
 func (a *App) overview(w http.ResponseWriter, r *http.Request) {
-	c, err := counts(a.store.DB)
+	c, err := a.overviewStatsCache.get(r.URL.Query().Get("refresh") == "1", func() (map[string]int64, error) { return counts(a.store.DB) })
 	if err != nil {
 		problem(w, 500, "读取统计失败")
 		return
@@ -398,7 +461,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -418,6 +481,9 @@ type settingsInput struct {
 	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
 	Paused              *bool   `json:"polling_paused"`
 	ArchiveTheme        *string `json:"archive_theme"`
+	VideoDefaultMuted   *bool   `json:"video_default_muted"`
+	ImageCacheSeconds   *int    `json:"image_cache_seconds"`
+	VideoCacheSeconds   *int    `json:"video_cache_seconds"`
 	TimelinePageSize    *int    `json:"timeline_page_size"`
 }
 
@@ -519,6 +585,19 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.TimelinePageSize = *v.TimelinePageSize
+	}
+	if v.VideoDefaultMuted != nil {
+		cfg.VideoDefaultMuted = v.VideoDefaultMuted
+	}
+	if v.ImageCacheSeconds != nil {
+		cfg.ImageCacheSeconds = *v.ImageCacheSeconds
+	}
+	if v.VideoCacheSeconds != nil {
+		cfg.VideoCacheSeconds = *v.VideoCacheSeconds
+	}
+	if err := archive.ValidateMediaDisplay(cfg); err != nil {
+		problem(w, 400, err.Error())
+		return
 	}
 	if err := a.saveConfig(cfg, func(tx *database.Tx) error {
 		if v.DefaultInterval == nil {
@@ -641,9 +720,10 @@ func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
 }
 
 type monitorInput struct {
-	Username string `json:"username"`
-	Replies  bool   `json:"replies"`
-	Enabled  bool   `json:"enabled"`
+	Username       string `json:"username"`
+	Replies        bool   `json:"replies"`
+	Enabled        bool   `json:"enabled"`
+	ShowInTimeline *bool  `json:"show_in_timeline"`
 }
 
 func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +753,11 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	if m.Replies {
 		repliesBaseline = "not_started"
 	}
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run,replies_baseline_status) VALUES(?,?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix(), repliesBaseline)
+	showInTimeline := true
+	if input.ShowInTimeline != nil {
+		showInTimeline = *input.ShowInTimeline
+	}
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run,replies_baseline_status,show_in_timeline) VALUES(?,?,?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix(), repliesBaseline, showInTimeline)
 	if err != nil {
 		problem(w, 409, "添加失败，此账号可能已经在监控列表中")
 		return
@@ -699,8 +783,8 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var oldReplies bool
-	if err = tx.QueryRow("SELECT replies FROM monitors WHERE username=?", m.Username).Scan(&oldReplies); err != nil {
+	var oldReplies, oldEnabled bool
+	if err = tx.QueryRow("SELECT replies,enabled FROM monitors WHERE username=?", m.Username).Scan(&oldReplies, &oldEnabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, 404, "监控账号不存在")
 		} else {
@@ -708,7 +792,8 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	_, err = tx.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN requested ELSE 0 END WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, m.Enabled, m.Username)
+	pausing := oldEnabled && !m.Enabled
+	_, err = tx.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN 0 ELSE requested END,show_in_timeline=COALESCE(?,show_in_timeline) WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, pausing, input.ShowInTimeline, m.Username)
 	if err == nil && oldReplies != m.Replies {
 		err = resetMonitorBaseline(tx, m.Username)
 		if err == nil {
@@ -722,7 +807,7 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "修改失败")
 		return
 	}
-	if !m.Enabled {
+	if pausing {
 		if err = cancelMonitorJobs(a.store.DB, m.Username, "监控已暂停，排队任务已取消"); err != nil {
 			problem(w, 500, "取消排队任务失败")
 			return
@@ -732,6 +817,40 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 	a.scheduler.Wake()
 	respond(w, 200, map[string]bool{"ok": true})
 }
+
+// A display-only change must not cancel a manual job on a paused monitor or
+// alter its schedule, baseline, or checkpoint.
+func (a *App) editMonitorTimeline(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ShowInTimeline *bool `json:"show_in_timeline"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	if input.ShowInTimeline == nil {
+		problem(w, 400, "请选择是否在主时间线显示")
+		return
+	}
+	a.changeMu.Lock()
+	defer a.changeMu.Unlock()
+	var exists int
+	err := a.store.DB.QueryRow("SELECT 1 FROM monitors WHERE username=?", r.PathValue("username")).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		problem(w, 404, "账号监控不存在")
+		return
+	}
+	if err != nil {
+		problem(w, 500, "读取显示设置失败")
+		return
+	}
+	_, err = a.store.DB.Exec("UPDATE monitors SET show_in_timeline=? WHERE username=?", *input.ShowInTimeline, r.PathValue("username"))
+	if err != nil {
+		problem(w, 500, "保存显示设置失败")
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
+}
+
 func (a *App) deleteMonitor(w http.ResponseWriter, r *http.Request) {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
@@ -848,15 +967,43 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch q.Get("section") {
-	case "", "posts", "replies", "media":
+	case "", "posts", "replies", "media", "bookmarks":
 	default:
 		problem(w, 400, "无效的动态类型")
 		return
 	}
-	v, err := listPosts(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, a.Config().TimelinePageSize)
+	before := q.Get("before")
+	validCursor := before == "" || validPostID(before)
+	if q.Get("section") == "bookmarks" && before != "" {
+		_, _, err := parseBookmarkCursor(before)
+		validCursor = err == nil
+	}
+	if !validCursor {
+		problem(w, 400, "无效的分页游标")
+		return
+	}
+	v, err := listPostsPage(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, a.Config().TimelinePageSize, before, q.Get("count") != "0")
 	if err != nil {
 		problem(w, 500, "读取推文失败")
 		return
+	}
+	avatars := map[string]string{}
+	dataDir := a.Config().DataDir
+	var addAvatar func(*PostView)
+	addAvatar = func(p *PostView) {
+		if _, checked := avatars[p.AuthorID]; !checked {
+			avatars[p.AuthorID] = ""
+			if archive.AvatarExists(dataDir, p.AuthorID) {
+				avatars[p.AuthorID] = "/avatars/" + p.AuthorID
+			}
+		}
+		p.AvatarURL = avatars[p.AuthorID]
+		if p.Quote != nil {
+			addAvatar(p.Quote)
+		}
+	}
+	for i := range v.Items {
+		addAvatar(&v.Items[i])
 	}
 	respond(w, 200, v)
 }
@@ -882,6 +1029,11 @@ func (a *App) media(w http.ResponseWriter, r *http.Request) {
 	var path, storageID, objectKey, hash string
 	var size int64
 	err := a.store.DB.QueryRow("SELECT local_path,storage_id,object_key,bytes,sha256 FROM media WHERE post_id=? AND media_id=? AND status='done'", r.PathValue("post"), r.PathValue("asset")).Scan(&path, &storageID, &objectKey, &size, &hash)
+	if version := r.URL.Query().Get("v"); version != "" && version != mediaVersion(hash) {
+		// Never return new content under an old immutable version URL.
+		http.NotFound(w, r)
+		return
+	}
 	if err == nil && storageID != "local" {
 		a.remoteMedia(w, r, storageID, objectKey, size, hash)
 		return
@@ -916,6 +1068,7 @@ func (a *App) media(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
 	w.Header().Set("Content-Disposition", "inline")
+	a.setMediaCache(w, r, hash, ext)
 	http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
 }
 
@@ -961,5 +1114,16 @@ func (a *App) avatar(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "inline")
+	// Avatars are small and can change independently of the media table.
+	hasher := sha256.New()
+	if _, err = io.Copy(hasher, f); err != nil {
+		problem(w, 500, "读取头像失败")
+		return
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		problem(w, 500, "读取头像失败")
+		return
+	}
+	setPrivateCache(w, fmt.Sprintf(`"sha256-%x"`, hasher.Sum(nil)), avatarCacheSeconds)
 	http.ServeContent(w, r, "avatar", st.ModTime(), f)
 }

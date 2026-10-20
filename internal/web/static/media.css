@@ -1,0 +1,20 @@
+/* No poster or video source is fetched until the explicit play action. */
+.media-grid .video-shell { grid-column:1/-1; min-width:0; background:#101820; }
+.video-shell .video-load {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:10px; width:100%; aspect-ratio:16/9;
+  padding:16px; border:0; background:#101820; color:#f4f7fa; cursor:pointer;
+}
+.video-load>span { display:grid; place-items:center; width:52px; height:52px; border:1px solid #71808c; border-radius:50%; font-size:22px; padding-left:3px; }
+.video-load strong { font-size:14px; font-weight:600; }
+.video-load small { color:#b6c3cd; font-size:12px; }
+.video-load:hover { background:#1a2733; }
+.video-load:focus-visible { outline:3px solid #1d9bf0; outline-offset:-4px; }
+.video-shell video { object-fit:contain; }
+.video-shell [hidden] { display:none!important; }
+@media(max-width:600px) {
+  .video-shell .video-load { gap:6px; padding:12px; }
+  .video-load>span { width:40px; height:40px; font-size:18px; }
+  .video-load strong { font-size:12px; }
+  .video-load small { font-size:11px; }
+}

@@ -17,10 +17,21 @@ import (
 type Store struct{ DB *database.DB }
 
 func OpenStore(dir string) (*Store, error) {
+	name, err := (DatabaseConfig{Driver: "sqlite"}).SQLiteFilename(dir)
+	if err != nil {
+		return nil, err
+	}
+	return OpenStoreFile(dir, name)
+}
+
+func OpenStoreFile(dir, filename string) (*Store, error) {
+	if err := (DatabaseConfig{Driver: "sqlite", SQLiteFile: filename}).Validate(); err != nil {
+		return nil, err
+	}
 	if err := PrivateDir(dir); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "archive.sqlite")
+	path := filepath.Join(dir, filename)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -41,6 +52,11 @@ CREATE TABLE IF NOT EXISTS posts (
  created_at TEXT NOT NULL, url TEXT NOT NULL, reply_to TEXT NOT NULL, quote_id TEXT NOT NULL,
  repost_id TEXT NOT NULL, raw_json TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS post_bookmarks (
+ post_id TEXT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+ created_at INTEGER NOT NULL CHECK(created_at>0)
+);
+CREATE INDEX IF NOT EXISTS post_bookmarks_recent ON post_bookmarks(created_at,post_id);
 CREATE TABLE IF NOT EXISTS target_posts (
  target TEXT NOT NULL, post_id TEXT NOT NULL REFERENCES posts(id), PRIMARY KEY(target,post_id)
 );

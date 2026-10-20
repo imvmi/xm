@@ -82,6 +82,7 @@ func ensureCollectionModeSchema(db *database.DB) error {
 			{"retry_count", "INT NOT NULL DEFAULT 0"},
 		}},
 		{"monitors", []struct{ name, definition string }{
+			{"show_in_timeline", "BOOLEAN NOT NULL DEFAULT 1"},
 			{"baseline_status", "VARCHAR(32) NOT NULL DEFAULT 'not_started'"},
 			{"posts_baseline_status", "VARCHAR(32) NOT NULL DEFAULT 'not_started'"},
 			{"replies_baseline_status", "VARCHAR(32) NOT NULL DEFAULT 'not_enabled'"},

@@ -24,7 +24,7 @@ const usage = `XM — 个人 X 采集验证程序（Go + SQLite/MySQL + Chrome�
   xm collect       [-config config.yaml] -users alice,bob [-limit 100] [-replies] [-backfill]
   xm retry-media   [-config config.yaml] [-user alice] [-verify]
   xm status        [-config config.yaml]
-  xm migrate-mysql -config mysql-config.yaml -source data/archive.sqlite
+  xm migrate-mysql -config mysql-config.yaml -source data/xm.db
   xm list          [-config config.yaml] [-user alice] [-limit 20]
   xm serve         [-config config.yaml] [-listen 127.0.0.1:8080] [-secure-cookie]
 
@@ -37,9 +37,16 @@ retry-media -verify 同时检查已下载文件的 SHA-256，丢失或损坏的�
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := run(ctx, os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintln(os.Stderr, "错误:", err)
-		os.Exit(1)
+	for {
+		err := run(ctx, os.Args[1:])
+		if errors.Is(err, web.ErrMigrationRestart) && ctx.Err() == nil {
+			continue
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "错误:", err)
+			os.Exit(1)
+		}
+		return
 	}
 }
 

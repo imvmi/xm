@@ -275,6 +275,31 @@ func TestSetupMySQL(t *testing.T) {
 	store.Close()
 }
 
+func TestSetupPreservesExplicitSQLiteFilename(t *testing.T) {
+	s := setupFixture(t)
+	s.cfg.Database = archive.DatabaseConfig{Driver: "sqlite", SQLiteFile: "existing.db"}
+	cfg, err := s.candidate(setupValid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.SQLiteFile != "existing.db" {
+		t.Fatal("setup discarded explicit SQLite path")
+	}
+	store, err := archive.OpenConfiguredStore(s.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SavePosts("alice", []archive.Post{{ID: "42"}}); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	mysqlCfg := s.cfg
+	mysqlCfg.Database = archive.DatabaseConfig{Driver: "mysql", Host: "127.0.0.1", Name: "fixture", User: "fixture"}
+	if err = s.guardLocalArchive(mysqlCfg); err == nil {
+		t.Fatal("custom SQLite archive was not protected")
+	}
+}
+
 func TestSetupRequiresCompleteInitializationRecord(t *testing.T) {
 	s := setupFixture(t)
 	ready, err := installationReady(s.cfg)

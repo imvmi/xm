@@ -22,17 +22,25 @@ func Serve(ctx context.Context, path string, cfg archive.Config, s *archive.Stor
 	if err != nil {
 		return err
 	}
+	// Finish recovery before accepting requests, so a migration cannot race
+	// startup writes or leave previously running jobs unrecovered.
+	if err = a.recoverWorkers(); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(os.Stderr, "XM 管理页面 · Local: http://"+l.Addr().String())
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer a.migrations.stop()
 	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return ctx }}
 	serverErr := make(chan error, 1)
 	workerErr := make(chan error, 1)
 	go func() { serverErr <- server.Serve(l) }()
-	go func() { workerErr <- a.Run(ctx) }()
+	go func() { workerErr <- a.runWorkers(ctx) }()
 	select {
 	case <-ctx.Done():
+	case <-a.restart:
+		err = ErrMigrationRestart
 	case err = <-serverErr:
 	case err = <-workerErr:
 		cancel()

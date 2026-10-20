@@ -21,7 +21,11 @@ func TestLiveUserIDResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := url.URL{Scheme: "file", Path: filepath.Join(cfg.DataDir, "archive.sqlite")}
+	filename, err := cfg.Database.SQLiteFilename(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := url.URL{Scheme: "file", Path: filepath.Join(cfg.DataDir, filename)}
 	db, err := sql.Open("sqlite", u.String()+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)

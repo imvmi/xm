@@ -9,8 +9,8 @@ function fixture(){
  const nodes=new Map(), requests=[], observer={disconnect(){},observe(){this.observed++},observed:0};
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html=''},insertAdjacentHTML(_,html){this.html+=html},querySelector(){return $('heading')}});return nodes.get(id)};
  const state={authenticated:true,view:'user',target:'alice',timelineTab:'posts',postRequest:0,postIDs:new Set(),postsLoading:false,postsError:false,hasMore:false,offset:0,total:0};
- const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',toast:()=>{},api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
- vm.runInContext(source.slice(source.indexOf('function quoteHTML('),source.indexOf("$('posts').addEventListener")),ctx);
+ const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:()=>{},api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
+ vm.runInContext(source.slice(source.indexOf('function displayPostText('),source.indexOf("$('posts').addEventListener")),ctx);
  const page=(ids,total)=>({total,items:ids.map(id=>({id,username:'alice',text:`post-${id}`,media:[]}))});
  return {ctx,state,$,requests,observer,page};
 }
@@ -52,6 +52,39 @@ test('an empty final page stops loading even when the count changed',async()=>{
  assert.equal(f.state.hasMore,false);assert.equal(f.$('post-empty').hidden,false);
  await f.ctx.loadMorePosts();assert.equal(f.requests.length,1);
 });
+test('home uses the global timeline and continues by cursor without recounting',async()=>{
+ const f=fixture();f.state.view='home';f.state.target='';f.state.timelineTab='';
+ let pending=f.ctx.refreshPosts();
+ f.requests[0].resolve({...f.page(['100','99'],3),next_cursor:'99',has_more:true});await pending;
+ pending=f.ctx.loadMorePosts();
+ assert.match(f.requests[1].query,/before=99/);assert.match(f.requests[1].query,/count=0/);assert.doesNotMatch(f.requests[1].query,/offset=/);
+ f.requests[1].resolve({...f.page(['98'],-1),next_cursor:'98',has_more:false});await pending;
+ assert.equal(f.state.total,3);assert.equal(f.state.postIDs.size,3);assert.equal(f.state.hasMore,false);
+});
+test('bookmark feeds carry the account scope and composite cursor',async()=>{
+ const f=fixture();f.state.timelineTab='bookmarks';
+ let pending=f.ctx.refreshPosts();
+ assert.match(f.requests[0].query,/section=bookmarks/);assert.match(f.requests[0].query,/target=alice/);
+ f.requests[0].resolve({...f.page(['9'],2),next_cursor:'b:123:9',has_more:true});await pending;
+ pending=f.ctx.loadMorePosts();
+ assert.match(f.requests[1].query,/before=b%3A123%3A9/);
+ f.requests[1].resolve({...f.page(['2'],-1),has_more:false});await pending;
+ assert.equal(f.state.postIDs.size,2);
+});
+test('an old page response cannot undo a successful bookmark change',async()=>{
+ const f=fixture();const pending=f.ctx.refreshPosts();
+ vm.runInContext(`bookmarkOverrides.set('9',{bookmarked:true,bookmarked_at:123,revision:++bookmarkRevision})`,f.ctx);
+ f.requests[0].resolve(f.page(['9'],1));await pending;
+ assert.match(f.$('posts').html,/data-bookmark-id="9" aria-pressed="true"/);
+});
+test('an in-flight bookmark page is refreshed after a collection change',async()=>{
+ const f=fixture();f.state.timelineTab='bookmarks';const pending=f.ctx.refreshPosts();
+ vm.runInContext(`bookmarkOverrides.set('9',{bookmarked:false,bookmarked_at:0,revision:++bookmarkRevision})`,f.ctx);
+ f.requests[0].resolve(f.page(['9'],1));await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(f.requests.length,2);
+ f.requests[1].resolve(f.page([],0));await pending;
+ assert.equal(f.state.postIDs.size,0);assert.equal(f.state.total,0);
+});
 test('the author handle opens the source post without redundant reply controls',()=>{
  const f=fixture();
  const html=f.ctx.postHTML({id:'42',username:'Vickiehavefun',name:'Vickie',created_at:1,text:'reply',reply_to:'41',media:[]});
@@ -69,7 +102,7 @@ test('an archived quote links its handle without a separate source footer',()=>{
 function profileHTML(user){
  const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',innerHTML:''});return nodes.get(id)};
  const state={users:[user],target:user.username};
- const ctx=vm.createContext({state,$,document:{title:''},number:String,escape:String,date:value=>'DATE:'+value,icon:name=>`<svg data-icon="${name}"></svg>`,avatar:()=>'<span class="avatar"></span>',handle:u=>u.current_username||u.username});
+ const ctx=vm.createContext({state,$,document:{title:''},number:String,userStat:(u,key)=>u.stats_pending?'—':String(u[key]),escape:String,date:value=>'DATE:'+value,icon:name=>`<svg data-icon="${name}"></svg>`,avatar:()=>'<span class="avatar"></span>',handle:u=>u.current_username||u.username});
  vm.runInContext(source.slice(source.indexOf('function renderProfile()'),source.indexOf('const timelineTabs=')),ctx);
  ctx.renderProfile();
  return $('profile-header').innerHTML;

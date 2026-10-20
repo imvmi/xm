@@ -20,6 +20,7 @@ type Monitor struct {
 	Interval         int             `json:"interval_seconds"`
 	Replies          bool            `json:"replies"`
 	Enabled          bool            `json:"enabled"`
+	ShowInTimeline   bool            `json:"show_in_timeline"`
 	Requested        bool            `json:"requested"`
 	Running          bool            `json:"running"`
 	NextRun          int64           `json:"next_run"`
@@ -103,14 +104,14 @@ CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,m.baseline_status,m.posts_baseline_status,m.replies_baseline_status,m.baseline_started,m.baseline_finished,m.baseline_stop_reason,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),'')`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,m.baseline_status,m.posts_baseline_status,m.replies_baseline_status,m.baseline_started,m.baseline_finished,m.baseline_stop_reason,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),''),m.show_in_timeline`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
 	var checkpoint string
-	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint)
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint, &m.ShowInTimeline)
 	if err == nil {
 		m.LastError = displayCollectionMessage(m.LastError)
 	}
@@ -163,19 +164,25 @@ func setState(db *database.DB, key, value string) error {
 }
 
 type MediaView struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Status string `json:"status"`
-	Error  string `json:"error"`
-	Bytes  int64  `json:"bytes"`
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Status  string `json:"status"`
+	Error   string `json:"error"`
+	Bytes   int64  `json:"bytes"`
+	Version string `json:"version,omitempty"`
 }
 type PostView struct {
+	AuthorID         string      `json:"-"`
+	ArchiveTarget    string      `json:"archive_target,omitempty"`
+	AvatarURL        string      `json:"avatar_url,omitempty"`
 	ID               string      `json:"id"`
 	Username         string      `json:"username"`
 	Name             string      `json:"name"`
 	Text             string      `json:"text"`
 	CreatedAt        string      `json:"created_at"`
 	SavedAt          string      `json:"saved_at"`
+	Bookmarked       bool        `json:"bookmarked"`
+	BookmarkedAt     int64       `json:"bookmarked_at"`
 	Protected        bool        `json:"protected"`
 	ReplyTo          string      `json:"reply_to"`
 	RepostID         string      `json:"repost_id"`
@@ -185,24 +192,21 @@ type PostView struct {
 	Media            []MediaView `json:"media"`
 }
 type PostList struct {
-	Items  []PostView `json:"items"`
-	Total  int        `json:"total"`
-	Offset int        `json:"offset"`
-	Limit  int        `json:"limit"`
+	Items      []PostView `json:"items"`
+	Total      int        `json:"total"`
+	Offset     int        `json:"offset"`
+	Limit      int        `json:"limit"`
+	NextCursor string     `json:"next_cursor"`
+	HasMore    bool       `json:"has_more"`
 }
 
-// A quote remains attached to its parent; it is not an independent timeline row.
-// UNION (rather than UNION ALL) also terminates cycles in old or malformed data.
-const relatedPosts = `WITH RECURSIVE related(root,id) AS (
- SELECT id,id FROM posts
- UNION SELECT r.root,p.quote_id FROM related r JOIN posts p ON p.id=r.id WHERE p.quote_id<>''
-) `
-const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json`
+const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)`
 
 func scanPost(row scanner) (PostView, error) {
 	var p PostView
 	var raw string
-	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw)
+	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw, &p.AuthorID, &p.ArchiveTarget, &p.BookmarkedAt)
+	p.Bookmarked = p.BookmarkedAt > 0
 	p.Name, _ = archive.AuthorDetails([]byte(raw))
 	if p.Name == "" {
 		p.Name = p.Username
@@ -210,53 +214,41 @@ func scanPost(row scanner) (PostView, error) {
 	p.Media = []MediaView{}
 	return p, err
 }
-func attachPost(db *database.DB, p *PostView, depth int, seen map[string]bool) error {
-	seen[p.ID] = true
-	defer delete(seen, p.ID)
-	rows, err := db.Query("SELECT media_id,kind,status,last_error,bytes FROM media WHERE post_id=? ORDER BY media_id", p.ID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var m MediaView
-		if err = rows.Scan(&m.ID, &m.Kind, &m.Status, &m.Error, &m.Bytes); err != nil {
-			rows.Close()
-			return err
-		}
-		p.Media = append(p.Media, m)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if p.QuoteID != "" {
-		p.QuoteUnavailable = true
-		if depth >= archive.MaxQuoteDepth || seen[p.QuoteID] {
-			return nil
-		}
-		q, err := scanPost(db.QueryRow("SELECT "+postColumns+" FROM posts p WHERE p.id=?", p.QuoteID))
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err = attachPost(db, &q, depth+1, seen); err != nil {
-			return err
-		}
-		p.Quote = &q
-		p.QuoteUnavailable = false
-	}
-	return nil
-}
 func listPosts(db *database.DB, target, query, kind, section string, offset, limit int) (PostList, error) {
+	return listPostsPage(db, target, query, kind, section, offset, limit, "", true)
+}
+
+func listPostsPage(db *database.DB, target, query, kind, section string, offset, limit int, before string, count bool) (PostList, error) {
+	if section == "bookmarks" {
+		return listBookmarkedPosts(db, target, query, kind, offset, limit, before, count)
+	}
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit}
-	where := " WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"
+	from := " FROM posts p"
+	orderID := "p.id"
+	// Visibility applies to archive roots on the home feed, not to an account's
+	// own archive or embedded quotes. A root shared by visible/hidden archives
+	// remains visible once. Archives without a monitor remain visible by default.
+	where := " WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,1)=1)"
 	args := []any{}
 	if target != "" {
-		where += " AND EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id AND t.target=?)"
+		from = " FROM target_posts t JOIN posts p ON p.id=t.post_id"
+		orderID = "t.post_id"
+		where = " WHERE t.target=?"
 		args = append(args, target)
+	}
+	// Only filtered requests need quote traversal. Seed it from the selected
+	// archive instead of expanding every post (including unrelated quotes).
+	prefix := ""
+	prefixArgs := []any{}
+	if query != "" || kind != "" || section == "media" {
+		seed := "SELECT DISTINCT post_id,post_id FROM target_posts"
+		if target != "" {
+			seed += " WHERE target=?"
+			prefixArgs = append(prefixArgs, target)
+		} else {
+			seed = "SELECT DISTINCT t.post_id,t.post_id FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE COALESCE(m.show_in_timeline,1)=1"
+		}
+		prefix = "WITH RECURSIVE related(root,id) AS (" + seed + " UNION SELECT r.root,p.quote_id FROM related r JOIN posts p ON p.id=r.id WHERE p.quote_id<>'') "
 	}
 	if query != "" {
 		where += ` AND EXISTS (SELECT 1 FROM related r JOIN posts q ON q.id=r.id WHERE r.root=p.id AND (instr(lower(q.text),lower(?))>0 OR instr(lower(q.username),lower(?))>0))`
@@ -281,31 +273,62 @@ func listPosts(db *database.DB, target, query, kind, section string, offset, lim
 	case "text":
 		where += " AND NOT " + media + ")"
 	}
-	if err := db.QueryRow(relatedPosts+"SELECT COUNT(*) FROM posts p"+where, args...).Scan(&result.Total); err != nil {
-		return result, err
-	}
-	args = append(args, limit, offset)
-	rows, err := db.Query(relatedPosts+"SELECT "+postColumns+" FROM posts p"+where+" ORDER BY length(p.id) DESC,p.id DESC LIMIT ? OFFSET ?", args...)
-	if err != nil {
-		return result, err
-	}
-	for rows.Next() {
-		p, e := scanPost(rows)
-		if e != nil {
-			rows.Close()
-			return result, e
-		}
-		result.Items = append(result.Items, p)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return result, err
-	}
-	for i := range result.Items {
-		if err = attachPost(db, &result.Items[i], 0, map[string]bool{}); err != nil {
+	args = append(prefixArgs, args...)
+	result.Total = -1
+	if count {
+		if err := db.QueryRow(prefix+"SELECT COUNT(*)"+from+where, args...).Scan(&result.Total); err != nil {
 			return result, err
 		}
+	}
+	// Seek both parts of the compound index. An OR over different ID lengths
+	// can scan every same-length ID before the cursor on SQLite/MySQL.
+	ranges := []struct {
+		clause string
+		args   []any
+	}{{"", nil}}
+	if before != "" {
+		ranges = []struct {
+			clause string
+			args   []any
+		}{
+			{" AND length(" + orderID + ")=? AND " + orderID + "<?", []any{len(before), before}},
+			{" AND length(" + orderID + ")<?", []any{len(before)}},
+		}
+		offset = 0
+	}
+	for _, span := range ranges {
+		pageArgs := append(append([]any{}, args...), span.args...)
+		pageArgs = append(pageArgs, limit+1-len(result.Items), offset)
+		rows, err := db.Query(prefix+"SELECT "+postColumns+from+where+span.clause+" ORDER BY length("+orderID+") DESC,"+orderID+" DESC LIMIT ? OFFSET ?", pageArgs...)
+		if err != nil {
+			return result, err
+		}
+		for rows.Next() {
+			p, err := scanPost(rows)
+			if err != nil {
+				rows.Close()
+				return result, err
+			}
+			result.Items = append(result.Items, p)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return result, err
+		}
+		if len(result.Items) > limit {
+			break
+		}
+	}
+	result.HasMore = len(result.Items) > limit
+	if result.HasMore {
+		result.Items = result.Items[:limit]
+	}
+	if len(result.Items) > 0 {
+		result.NextCursor = result.Items[len(result.Items)-1].ID
+	}
+	if err := attachPosts(db, result.Items); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -325,50 +348,29 @@ type UserView struct {
 	Monitored       bool   `json:"monitored"`
 	Enabled         bool   `json:"enabled"`
 	Interval        int    `json:"interval_seconds"`
+	StatsPending    bool   `json:"stats_pending,omitempty"`
 }
 
 func archiveUsers(db *database.DB) ([]UserView, error) {
-	rows, err := db.Query(`WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
- SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(m.last_finished,0)
- FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id LEFT JOIN monitors m ON m.username=u.username GROUP BY u.username,m.username,m.enabled,m.last_finished ORDER BY u.username`)
+	return archiveUsersFor(db, "")
+}
+func archiveUsersFor(db *database.DB, target string) ([]UserView, error) {
+	users, err := archiveUserDirectory(db, target)
 	if err != nil {
 		return nil, err
 	}
-	users := []UserView{}
-	for rows.Next() {
-		var u UserView
-		if err = rows.Scan(&u.Username, &u.Posts, &u.LastSaved, &u.Monitored, &u.Enabled, &u.Interval, &u.LastRun); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		users = append(users, u)
-	}
-	err = rows.Err()
-	rows.Close()
+	stats, err := archiveUserStats(db, target)
 	if err != nil {
 		return nil, err
+	}
+	byUser := make(map[string]ArchiveUserStats, len(stats))
+	for _, s := range stats {
+		byUser[s.Username] = s
 	}
 	for i := range users {
 		u := &users[i]
-		u.CurrentUsername = u.Username
-		eIdentity := db.QueryRow("SELECT user_id,current_username FROM target_identities WHERE target=?", u.Username).Scan(&u.UserID, &u.CurrentUsername)
-		if eIdentity != nil && !errors.Is(eIdentity, sql.ErrNoRows) {
-			return nil, eIdentity
-		}
-		u.Name = u.CurrentUsername
-		var raw string
-		e := db.QueryRow(`SELECT raw_json,COALESCE((SELECT protected FROM profiles WHERE id=p.author_id),0) FROM posts p JOIN target_posts t ON t.post_id=p.id WHERE t.target=? ORDER BY length(p.id) DESC,p.id DESC LIMIT 1`, u.Username).Scan(&raw, &u.Protected)
-		if e != nil && !errors.Is(e, sql.ErrNoRows) {
-			return nil, e
-		}
-		name, bio := archive.AuthorDetails([]byte(raw))
-		if name != "" {
-			u.Name = name
-		}
-		u.Bio = bio
-		if err = db.QueryRow(relatedPosts+`SELECT COUNT(*) FROM media a WHERE status='done' AND EXISTS (SELECT 1 FROM related r JOIN target_posts t ON t.post_id=r.root WHERE t.target=? AND r.id=a.post_id)`, u.Username).Scan(&u.Media); err != nil {
-			return nil, err
-		}
+		s := byUser[u.Username]
+		u.Posts, u.Media, u.LastSaved, u.StatsPending = s.Posts, s.Media, s.LastSaved, false
 	}
 	return users, nil
 }

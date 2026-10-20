@@ -22,6 +22,7 @@ import (
 
 type DatabaseConfig struct {
 	Driver      string `json:"driver,omitempty" yaml:"driver,omitempty"`
+	SQLiteFile  string `json:"sqlite_file,omitempty" yaml:"sqlite_file,omitempty"`
 	Host        string `json:"host,omitempty" yaml:"host,omitempty"`
 	Port        int    `json:"port,omitempty" yaml:"port,omitempty"`
 	Name        string `json:"name,omitempty" yaml:"name,omitempty"`
@@ -33,6 +34,28 @@ type DatabaseConfig struct {
 	ServerName  string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
 }
 
+const DefaultSQLiteFile = "xm.db"
+
+// SQLiteFilename keeps explicit filenames and older implicit archives usable.
+// Fresh installations use xm.db; upgrading never silently opens an empty DB
+// instead of a pre-existing archive.sqlite.
+func (c DatabaseConfig) SQLiteFilename(dir string) (string, error) {
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	if c.SQLiteFile != "" {
+		return c.SQLiteFile, nil
+	}
+	for _, name := range []string{DefaultSQLiteFile, "archive.sqlite"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			return name, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return DefaultSQLiteFile, nil
+}
+
 func (c DatabaseConfig) DriverName() string {
 	if c.Driver == "" {
 		return "sqlite"
@@ -41,6 +64,9 @@ func (c DatabaseConfig) DriverName() string {
 }
 func (c DatabaseConfig) Validate() error {
 	if c.DriverName() == "sqlite" {
+		if c.SQLiteFile != "" && (filepath.Base(c.SQLiteFile) != c.SQLiteFile || strings.ContainsAny(c.SQLiteFile, "\\\x00\r\n") || (!strings.HasSuffix(c.SQLiteFile, ".sqlite") && !strings.HasSuffix(c.SQLiteFile, ".db"))) {
+			return errors.New("SQLite 文件名必须是数据目录中的 .db 或 .sqlite 文件")
+		}
 		return nil
 	}
 	if c.Driver != "mysql" {
@@ -119,7 +145,11 @@ func mysqlConfig(c DatabaseConfig) (*mysql.Config, error) {
 }
 func OpenConfiguredStore(cfg Config) (*Store, error) {
 	if cfg.Database.DriverName() == "sqlite" {
-		return OpenStore(cfg.DataDir)
+		name, err := cfg.Database.SQLiteFilename(cfg.DataDir)
+		if err != nil {
+			return nil, err
+		}
+		return OpenStoreFile(cfg.DataDir, name)
 	}
 	if err := PrivateDir(cfg.DataDir); err != nil {
 		return nil, err
@@ -176,6 +206,7 @@ func mysqlError(action string, err error) error {
 var mysqlArchiveSchema = []string{
 	`CREATE TABLE IF NOT EXISTS x_cookies(id INTEGER PRIMARY KEY CHECK(id=1),auth_token TEXT NOT NULL,ct0 TEXT NOT NULL,updated_at VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS posts(id VARCHAR(64) PRIMARY KEY,author_id VARCHAR(64) NOT NULL,username VARCHAR(64) NOT NULL,text LONGTEXT NOT NULL,created_at VARCHAR(64) NOT NULL,url TEXT NOT NULL,reply_to VARCHAR(64) NOT NULL,quote_id VARCHAR(64) NOT NULL,repost_id VARCHAR(64) NOT NULL,raw_json LONGTEXT NOT NULL,first_seen VARCHAR(64) NOT NULL,last_seen VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+	`CREATE TABLE IF NOT EXISTS post_bookmarks(post_id VARCHAR(64) PRIMARY KEY,created_at BIGINT NOT NULL CHECK(created_at>0),INDEX post_bookmarks_recent(created_at,post_id),FOREIGN KEY(post_id) REFERENCES posts(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS target_posts(target VARCHAR(64) NOT NULL,post_id VARCHAR(64) NOT NULL,PRIMARY KEY(target,post_id),INDEX target_posts_post(post_id),FOREIGN KEY(post_id) REFERENCES posts(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS target_identities(target VARCHAR(64) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,current_username VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 	`CREATE TABLE IF NOT EXISTS profiles(id VARCHAR(64) PRIMARY KEY,username VARCHAR(64) NOT NULL,protected BOOLEAN NOT NULL,checked_at VARCHAR(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,

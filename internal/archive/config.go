@@ -40,6 +40,9 @@ type Config struct {
 	DefaultInterval      int                   `json:"default_interval_seconds"`
 	PollingPaused        bool                  `json:"polling_paused"`
 	ArchiveTheme         string                `json:"archive_theme"`
+	VideoDefaultMuted    *bool                 `json:"video_default_muted,omitempty"`
+	ImageCacheSeconds    int                   `json:"image_cache_seconds"`
+	VideoCacheSeconds    int                   `json:"video_cache_seconds"`
 	TimelinePageSize     int                   `json:"timeline_page_size"`
 }
 
@@ -51,7 +54,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", TimelinePageSize: 24}
+	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -123,6 +126,15 @@ func normalizeConfig(path string, c Config) (Config, error) {
 	}
 	if c.TimelinePageSize == 0 {
 		c.TimelinePageSize = defaults.TimelinePageSize
+	}
+	if c.ImageCacheSeconds == 0 {
+		c.ImageCacheSeconds = 7 * 24 * 3600
+	}
+	if c.VideoCacheSeconds == 0 {
+		c.VideoCacheSeconds = 10 * 60
+	}
+	if err := ValidateMediaDisplay(c); err != nil {
+		return c, err
 	}
 	if c.DataDir == "" || c.RequestTimeout < 1 || c.ScrollDelay < 1 || c.MaxScrolls < 1 || c.MaxMediaBytes < 1 || c.MaxMediaBytes > 10<<30 {
 		return c, errors.New("配置中的目录不能为空，超时/分页/大小限制必须为正数；媒体上限不超过 10 GiB")
@@ -200,6 +212,20 @@ func ValidateCollectionTuning(c Config) error {
 	}
 	if c.KnownBoundaryPosts < 3 || c.KnownBoundaryPosts > 50 {
 		return errors.New("已归档推文停止阈值必须为 3～50 条")
+	}
+	return nil
+}
+
+func (c Config) VideoMutedByDefault() bool {
+	return c.VideoDefaultMuted == nil || *c.VideoDefaultMuted
+}
+
+func ValidateMediaDisplay(c Config) error {
+	if c.ImageCacheSeconds < 3600 || c.ImageCacheSeconds > 30*24*3600 || c.ImageCacheSeconds%3600 != 0 {
+		return errors.New("图片缓存时间必须为 1～720 小时的整数")
+	}
+	if c.VideoCacheSeconds < 60 || c.VideoCacheSeconds > 24*3600 || c.VideoCacheSeconds%60 != 0 {
+		return errors.New("视频缓存时间必须为 1～1440 分钟的整数")
 	}
 	return nil
 }

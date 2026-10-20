@@ -209,7 +209,9 @@ func serveRemoteCacheFile(w http.ResponseWriter, r *http.Request, path, key, ext
 	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
 	w.Header().Set("Content-Disposition", "inline")
 	w.Header().Set("X-XM-Media-Cache", "hit")
-	http.ServeContent(w, r, filepath.Base(key), info.ModTime(), f)
+	// Cache mtime is an LRU access timestamp, not the content modification time.
+	// Use the archive's ETag instead; it stays stable across cache hits/refills.
+	http.ServeContent(w, r, filepath.Base(key), time.Time{}, f)
 	return true
 }
 
@@ -221,11 +223,23 @@ func (a *App) remoteMedia(w http.ResponseWriter, r *http.Request, id, key string
 		http.NotFound(w, r)
 		return
 	}
+	a.setMediaCache(w, r, hash, ext)
+	if mediaNotModified(w, r) {
+		return
+	}
 	cache := a.remoteMediaCacheSettings()
 	if cache.Enabled && r.Method == http.MethodGet && size <= cache.MaxBytes {
-		path, err := a.ensureRemoteMediaCached(r.Context(), id, key, size, hash, ext, cache.MaxBytes)
-		if err == nil && serveRemoteCacheFile(w, r, path, key, ext) {
+		path := remoteMediaCachePath(a.Config().DataDir, id, key, hash, ext, size)
+		if validRemoteMediaCache(path, size) && serveRemoteCacheFile(w, r, path, key, ext) {
 			return
+		}
+		// A video range request must not wait for the entire remote file to be
+		// downloaded first. Existing cache entries still serve ranges normally.
+		if ext != ".mp4" || r.Header.Get("Range") == "" {
+			path, err := a.ensureRemoteMediaCached(r.Context(), id, key, size, hash, ext, cache.MaxBytes)
+			if err == nil && serveRemoteCacheFile(w, r, path, key, ext) {
+				return
+			}
 		}
 	}
 	a.streamRemoteMedia(w, r, id, key, size, ext)

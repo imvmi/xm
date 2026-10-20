@@ -85,6 +85,8 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	}
 	dest := &App{store: destStore, config: destCfg}
 	cfg := archive.Config{DataDir: t.TempDir(), DefaultInterval: 3600, RequestTimeout: 5, ScrollDelay: 1, MaxScrolls: 1, MaxMediaBytes: 1024}
+	muted := false
+	cfg.VideoDefaultMuted, cfg.ImageCacheSeconds, cfg.VideoCacheSeconds = &muted, 7200, 120
 	source, e := archive.OpenStore(cfg.DataDir)
 	if e != nil {
 		t.Fatal(e)
@@ -134,16 +136,25 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 		r()
 		t.Fatal("second writer acquired database lock")
 	}
-	counts, e := dest.store.CopySQLiteToMySQL(ctx, filepath.Join(cfg.DataDir, "archive.sqlite"))
+	if _, e = source.DB.Exec("INSERT INTO post_bookmarks(post_id,created_at) VALUES('100',123)"); e != nil {
+		t.Fatal(e)
+	}
+	counts, e := dest.store.CopySQLiteToMySQL(ctx, filepath.Join(cfg.DataDir, archive.DefaultSQLiteFile))
 	if e != nil {
 		t.Fatal(e)
 	}
 	if counts["admin_accounts"] != 1 || counts["system_settings"] != 1 || counts["storage_profiles"] != 1 || counts["x_cookies"] != 1 || counts["posts"] != 2 || counts["notification_deliveries"] != 1 {
 		t.Fatal(counts)
 	}
+	if counts["post_bookmarks"] != 1 {
+		t.Fatal("CLI migration lost bookmark", counts)
+	}
 	migrated, e := dest.store.LoadSettings(dest.Config())
 	if e != nil || migrated.Database.DriverName() != "mysql" || migrated.DataDir != destCfg.DataDir {
 		t.Fatal("runtime migration overrode bootstrap", e)
+	}
+	if migrated.VideoMutedByDefault() || migrated.ImageCacheSeconds != 7200 || migrated.VideoCacheSeconds != 120 {
+		t.Fatal("SQLite to MySQL migration lost media preferences")
 	}
 	if _, e = newAuth(dest.store, false); e != nil {
 		t.Fatal("administrator was not migrated", e)
@@ -160,7 +171,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	if e != nil || len(jobs) != 1 || jobs[0].StorageID != "s3_profile" {
 		t.Fatal(jobs, e)
 	}
-	if _, e = dest.store.CopySQLiteToMySQL(ctx, filepath.Join(cfg.DataDir, "archive.sqlite")); e == nil {
+	if _, e = dest.store.CopySQLiteToMySQL(ctx, filepath.Join(cfg.DataDir, archive.DefaultSQLiteFile)); e == nil {
 		t.Fatal("nonempty target overwritten")
 	}
 	var original string

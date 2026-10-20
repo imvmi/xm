@@ -249,6 +249,13 @@ func (n *Notifier) Run(ctx context.Context) {
 	}
 }
 func (n *Notifier) step(ctx context.Context) (bool, error) {
+	if !n.app.writeGate.TryRLock() {
+		return false, nil
+	}
+	defer n.app.writeGate.RUnlock()
+	if n.app.maintenance.Load() {
+		return false, nil
+	}
 	if ctx.Err() != nil {
 		return false, nil
 	}
