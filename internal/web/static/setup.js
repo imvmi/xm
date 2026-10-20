@@ -16,12 +16,13 @@ function showStep(next){
 }
 function databaseChanged(){const mysql=document.querySelector('input[name="db-kind"]:checked').value==='mysql';el('mysql-fields').hidden=!mysql;el('mysql-fields').disabled=!mysql;el('sqlite-note').hidden=mysql;}
 function storageChanged(){
- const kind=el('media-kind').value,remote=kind==='webdav'||kind==='s3',s3=kind==='s3';
+ const kind=el('media-kind').value,remote=['webdav','s3','smb'].includes(kind),s3=kind==='s3',smb=kind==='smb';
  el('remote-fields').hidden=!remote;el('remote-fields').disabled=!remote;el('local-note').hidden=kind!=='local';
  el('webdav-fields').hidden=s3;el('webdav-fields').disabled=s3;el('s3-fields').hidden=!s3;el('s3-fields').disabled=!s3;
- el('media-endpoint').required=kind==='webdav';
- el('media-endpoint').placeholder=s3?'https://s3.example.com（AWS S3 可留空）':'https://nas.example.com/remote.php/dav/files/user';
- el('media-endpoint-help').textContent=s3?'AWS S3 可以留空；兼容服务填写 Endpoint，Bucket 必须已存在。':'填写已存在的最终 WebDAV 根目录地址，不跟随重定向。';
+ el('media-endpoint').required=kind==='webdav'||smb;
+ el('media-user').required=smb;el('media-password').required=smb;el('media-user-label').textContent=smb?'用户名（域账号：域名\\用户名）':'用户名';
+ el('media-endpoint').placeholder=smb?'smb://192.168.1.10/共享名':s3?'https://s3.example.com（AWS S3 可留空）':'https://nas.example.com/remote.php/dav/files/user';
+ el('media-endpoint-help').textContent=smb?'使用 SMB2/3 连接，默认端口 445；可写为 smb://服务器:端口/共享名，子目录填入目录前缀。':s3?'AWS S3 可以留空；兼容服务填写 Endpoint，Bucket 必须已存在。':'填写已存在的最终 WebDAV 根目录地址，不跟随重定向。';
  if(step===2)showStep(2);
 }
 function database(){

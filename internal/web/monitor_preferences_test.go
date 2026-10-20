@@ -1,12 +1,117 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
 
 	"xm/internal/archive"
 )
+
+func TestUnifiedAccountLifecycleAndPreferences(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	if err := a.store.SavePosts("alice", []archive.Post{{ID: "100", Username: "alice", Text: "preserved", Assets: []archive.Asset{{ID: "photo", Kind: "photo"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"INSERT INTO monitors(username,enabled,next_run,show_in_timeline) VALUES('alice',0,123,0)",
+		"INSERT INTO target_identities(target,user_id,current_username) VALUES('alice','42','alice_new')",
+		"INSERT INTO post_bookmarks(post_id,created_at) VALUES('100',123)",
+		"INSERT INTO collection_progress(target,state) VALUES('alice','{}')",
+		"INSERT INTO collection_jobs(target,source,status,queued_at,queue_order) VALUES('alice','manual','queued',1,1)",
+	} {
+		if _, err := a.store.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The lightweight runtime endpoint does not return historical counts.
+	w := b.request("GET", "/api/monitors?stats=0", nil, "", false)
+	ok(t, w, 200)
+	var runtime []Monitor
+	if err := json.Unmarshal(w.Body.Bytes(), &runtime); err != nil || len(runtime) != 1 || runtime[0].Posts != -1 {
+		t.Fatalf("runtime list: %s %v", w.Body.String(), err)
+	}
+	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 200)
+	users, err := archiveUserDirectory(a.store.DB, "")
+	if err != nil || len(users) != 1 || users[0].Monitored || users[0].ShowInTimeline || users[0].CurrentUsername != "alice_new" {
+		t.Fatalf("cancelled account: %+v %v", users, err)
+	}
+	p, err := listPostsPage(a.store.DB, "", "", "", "", 0, 24, "", true)
+	if err != nil || p.Total != 0 {
+		t.Fatalf("cancellation revealed hidden archive: %+v %v", p, err)
+	}
+	for table, want := range map[string]int{"posts": 1, "target_posts": 1, "post_bookmarks": 1, "media": 1, "monitors": 0, "collection_progress": 0} {
+		var count int
+		if err := a.store.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s count=%d want=%d err=%v", table, count, want, err)
+		}
+	}
+	var status string
+	if err := a.store.DB.QueryRow("SELECT status FROM collection_jobs").Scan(&status); err != nil || status != "cancelled" {
+		t.Fatalf("pending task: %s %v", status, err)
+	}
+	// Archive-only accounts can change visibility without recreating a monitor.
+	ok(t, b.request("PUT", "/api/users/alice/timeline", map[string]bool{"show_in_timeline": true}, "http://localhost", true), 200)
+	p, err = listPostsPage(a.store.DB, "", "", "", "", 0, 24, "", true)
+	if err != nil || p.Total != 1 {
+		t.Fatalf("archive-only visibility: %+v %v", p, err)
+	}
+	ok(t, b.request("PUT", "/api/users/alice/timeline", map[string]bool{"show_in_timeline": false}, "http://localhost", true), 200)
+	ok(t, b.request("PUT", "/api/users/missing/timeline", map[string]bool{"show_in_timeline": false}, "http://localhost", true), 404)
+	ok(t, b.request("PUT", "/api/users/alice/timeline", map[string]bool{"show_in_timeline": true}, "http://localhost", false), 403)
+	// Re-add by the new handle while preserving the original archive and preference.
+	ok(t, b.request("POST", "/api/monitors", map[string]any{"username": "alice_new", "enabled": false}, "http://localhost", true), 201)
+	list, err := monitors(a.store.DB)
+	if err != nil || len(list) != 1 || list[0].Username != "alice" || list[0].ShowInTimeline || list[0].Posts != 1 {
+		t.Fatalf("re-added alias: %+v %v", list, err)
+	}
+	ok(t, b.request("POST", "/api/monitors", map[string]any{"username": "alice_new", "enabled": false}, "http://localhost", true), 409)
+	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 200)
+	// Account preferences participate in a verified database migration.
+	dst, err := archive.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	if err := migrate(dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.store.CopyDatabase(context.Background(), dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	var shown bool
+	if err := dst.DB.QueryRow("SELECT show_in_timeline FROM account_preferences WHERE target='alice'").Scan(&shown); err != nil || shown {
+		t.Fatalf("migration lost preference: %v %v", shown, err)
+	}
+}
+
+func TestCancelMonitoringRollsBackPreferenceAndQueue(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	for _, q := range []string{
+		"INSERT INTO monitors(username,enabled,next_run,show_in_timeline) VALUES('alice',0,123,0)",
+		"INSERT INTO collection_progress(target,state) VALUES('alice','{}')",
+		"INSERT INTO collection_jobs(target,source,status,queued_at,queue_order) VALUES('alice','manual','queued',1,1)",
+		"CREATE TRIGGER fixture_refuse_delete BEFORE DELETE ON monitors BEGIN SELECT RAISE(ABORT,'fixture failure'); END",
+	} {
+		if _, err := a.store.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ok(t, b.request("DELETE", "/api/monitors/alice", nil, "http://localhost", true), 500)
+	for table, want := range map[string]int{"monitors": 1, "account_preferences": 0, "collection_progress": 1} {
+		var count int
+		if err := a.store.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s partially committed: count=%d err=%v", table, count, err)
+		}
+	}
+	var status string
+	if err := a.store.DB.QueryRow("SELECT status FROM collection_jobs").Scan(&status); err != nil || status != "queued" {
+		t.Fatalf("queue partially committed: %s %v", status, err)
+	}
+}
 
 func TestMonitorTimelinePreference(t *testing.T) {
 	a := testApp(t)

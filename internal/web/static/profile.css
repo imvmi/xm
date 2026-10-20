@@ -1,15 +1,16 @@
 /* User directory and private, X-inspired profile timelines. */
-.bookmark-button{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:50%;background:transparent;color:var(--muted,#536471);margin:-8px -8px -8px auto}
+.bookmark-button{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:50%;background:transparent;color:var(--muted,#536471);margin:-9px -8px -9px auto}
 .bookmark-button svg{width:19px;height:19px}
 .bookmark-button:hover{background:#1d9bf01a;color:var(--accent,#1d9bf0)}
 .bookmark-button.bookmarked{color:var(--accent,#1d9bf0)}
 .bookmark-button.bookmarked svg{fill:currentColor}
-:is(#view-user,#view-home) .post-header:has(.bookmark-button){flex-wrap:nowrap;align-items:flex-start;min-height:24px}
+:is(#view-user,#view-home) .post-header:has(.bookmark-button){flex-wrap:nowrap;align-items:flex-start;min-height:22px}
 :is(#view-user,#view-home) .post-header .timeline-author{flex:1;min-width:0}
-.quote-heading{display:flex;align-items:flex-start;gap:8px}
-.quote-heading .quote-author{flex:1;min-width:0}
-.quote-heading .bookmark-button{margin:-6px -6px 0 auto}
-@media(pointer:coarse){.bookmark-button{width:44px;height:44px}}
+.quote-heading{display:flex;align-items:flex-start;gap:8px;margin-bottom:2px}
+.quote-heading .quote-author{flex:1;min-width:0;margin-bottom:0}
+.quote-heading .bookmark-button{margin:-9px -6px -9px auto}
+/* Retain a 44px touch target without increasing the author row's height. */
+@media(pointer:coarse){.bookmark-button{width:44px;height:44px;margin-top:-11px;margin-bottom:-11px}.quote-heading .bookmark-button{margin-top:-11px;margin-bottom:-11px}}
 .collection-caption{font-size:12px;color:var(--muted);margin-top:6px}.user-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.user-card{display:block;background:#fff;border:1px solid var(--line);border-radius:13px;padding:23px;transition:border-color .18s,box-shadow .18s}.user-card:hover{border-color:#a3b7a5;box-shadow:0 8px 25px #203b2a09}.user-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:17px}.user-avatar{width:52px;height:52px;font-size:18px}.user-card h3{display:flex;gap:7px;align-items:center;font-size:17px;overflow-wrap:anywhere}.user-card h3 svg{width:14px;height:14px}.user-handle{font-size:13px;color:#687684;margin-top:1px}.user-bio{font-size:13px;color:#6e7d72;margin-top:14px;min-height:42px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.user-card-stats{display:flex;gap:22px;color:#8b968c;font-size:12px;margin:21px 0}.user-card-stats strong{font-weight:650;color:#334a3b;font-size:17px}.user-card footer{border-top:1px solid #edf0e9;padding-top:14px;display:flex;justify-content:space-between;gap:8px;align-items:center;color:#909b90;font-size:10px}.user-open{color:#386047;white-space:nowrap;font-size:12px}
 .content:has(:is(#view-user,#view-home):not([hidden])){max-width:1280px;padding:0 32px 0}.content:has(:is(#view-user,#view-home):not([hidden]))>.notice{margin-top:20px}.profile-layout{display:grid;grid-template-columns:minmax(0,650px) minmax(240px,1fr);gap:30px;align-items:start;color:#0f1419}.profile-feed{background:white;border-left:1px solid #eff3f4;border-right:1px solid #eff3f4;min-width:0;min-height:90vh}.profile-top{display:flex;gap:25px;align-items:center;position:sticky;top:0;background:#ffffffed;backdrop-filter:blur(12px);padding:10px 16px;z-index:3;border-bottom:1px solid #eff3f4;height:64px}.profile-top h1{font-size:19px;font-weight:750;letter-spacing:0;line-height:1.3}.profile-top .muted{font-size:12px;color:#536471}.profile-top>.icon-button{margin-left:auto;width:36px;height:36px;border-radius:50%;color:#0f1419}.profile-top>.icon-button:hover,.back-link:hover{background:#eff3f4}.back-link{width:33px;height:33px;border-radius:50%;display:grid;place-items:center;font-size:24px;line-height:1}.profile-cover{height:176px;background:#cfd9de;display:flex;align-items:flex-start;justify-content:space-between;padding:23px;color:#7c919d}.profile-cover span{font-size:10px;letter-spacing:3px;font-weight:600}.profile-cover svg{width:18px}.profile-identity{padding:0 18px 18px}.profile-actions{display:flex;align-items:flex-end;justify-content:space-between;margin-top:-50px;position:relative;gap:15px;margin-bottom:13px}.profile-avatar{width:116px;height:116px;font-size:38px;border:4px solid #fff;background:#e8eef0!important;color:#516979!important}.profile-actions>.button{margin-bottom:8px;border-radius:25px;font-weight:650;border-color:#cfd9de;color:#0f1419;padding:8px 15px}.profile-identity h2{font-size:22px;font-weight:800;line-height:1.3;display:flex;gap:7px;align-items:center;overflow-wrap:anywhere}.profile-identity h2 svg{width:18px}.profile-bio{font-size:14px;line-height:1.6;margin:15px 0 10px;white-space:pre-wrap;overflow-wrap:anywhere}.profile-meta{font-size:13px;color:#536471;display:flex;gap:6px;align-items:center}.profile-meta svg{width:16px;height:16px}.profile-numbers{display:flex;align-items:center;gap:17px;font-size:13px;color:#536471;margin-top:13px;flex-wrap:wrap}.profile-numbers strong{color:#0f1419}.profile-numbers .badge{margin-left:auto;background:#f2f6f7;color:#536471}.timeline-tabs{display:flex;border-bottom:1px solid #eff3f4}.timeline-tabs button{position:relative;flex:1;min-width:0;border:0;background:#fff;padding:16px;color:#536471;font-weight:650;font-size:14px}.timeline-tabs button:hover{background:#f7f9f9}.timeline-tabs button.selected{color:#0f1419;font-weight:750}.timeline-tabs button.selected:after{content:'';position:absolute;bottom:0;left:calc(50% - 25px);width:50px;height:4px;border-radius:4px;background:#1d9bf0}.timeline-filters{display:flex;align-items:center;gap:9px;padding:13px 16px 5px}.timeline-filters .search-box{flex:1;min-width:0;border-radius:20px;background:#f7f9f9;border-color:#eff3f4}.timeline-filters .search-box input{width:100%;font-size:12px}.timeline-filters select{width:auto;max-width:115px;border-radius:20px;padding:7px 10px;font-size:12px;border-color:#eff3f4;background:#fff;color:#536471}.timeline-result{font-size:11px;color:#788793;padding:5px 18px 12px;border-bottom:1px solid #eff3f4}.timeline-posts .post{border:0;border-bottom:1px solid #eff3f4;border-radius:0;box-shadow:none;background:#fff}.timeline-posts .post-body{padding:17px 16px 10px}.timeline-posts .post-header{gap:10px;margin-bottom:0;align-items:flex-start}.timeline-posts .post-header>.avatar{width:40px;height:40px;font-size:14px}.timeline-author{display:flex;flex-wrap:wrap;gap:0 6px;align-items:baseline;min-width:0;padding-top:1px;line-height:1.5}.timeline-author strong{font-size:14px;color:#0f1419;overflow-wrap:anywhere}.timeline-author>span{font-size:12px;color:#536471;overflow-wrap:anywhere}.timeline-posts .post-main{margin-left:50px;margin-top:-15px}.timeline-posts .post-text{font-size:14px;color:#0f1419;line-height:1.65;max-height:270px}.timeline-posts .post-text.expanded{max-height:none}.timeline-posts .expand-text{font-size:12px;color:#1d9bf0}.timeline-posts .post-footer{margin-left:66px;border:0;background:#fff;padding:6px 16px 17px 0;color:#8899a6;font-size:11px;gap:12px}.timeline-posts .post-footer a{color:#536471}.timeline-posts .post-footer a:hover{color:#1d9bf0}.timeline-posts .media-grid{margin-top:12px;border:1px solid #eff3f4;border-radius:13px;background:#f7f9f9;grid-template-columns:repeat(2,minmax(0,1fr))}.timeline-posts .media-grid.single{grid-template-columns:1fr}.timeline-posts .media-grid img{height:200px}.timeline-posts .media-grid.single img{height:auto;max-height:520px}.timeline-posts .media-grid video{max-height:480px;background:#0f1419}.quote-card{border:1px solid #cfd9de;border-radius:14px;margin-top:13px;overflow:hidden;background:#fff}.quote-content{padding:12px}.quote-author{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:11px;color:#536471;margin-bottom:7px}.quote-author strong{font-size:12px;color:#0f1419;overflow-wrap:anywhere}.quote-author>span:not(.avatar){overflow-wrap:anywhere}.tiny-quote{width:21px;height:21px;font-size:9px}.timeline-posts .quote-text{font-size:13px;max-height:220px}.quote-content .quote-content{padding:10px}.quote-content .quote-card{border-radius:10px}.quote-source{display:flex;align-items:center;gap:6px;border-top:1px solid #eff3f4;padding:8px 12px;color:#536471;font-size:10px}.quote-source svg{width:12px;height:12px}.quote-source:hover{background:#f7f9f9;color:#1d9bf0}.quote-unavailable{display:flex;gap:7px;flex-wrap:wrap;align-items:center;border:1px solid #eff3f4;background:#f7f9f9;border-radius:12px;padding:13px;margin-top:12px;font-size:12px;color:#536471}.quote-unavailable svg{width:15px;height:15px}.quote-unavailable a{color:#1d9bf0}.profile-feed .pagination{padding:0 16px;margin:23px 0}.profile-feed .empty-state{border:0;border-radius:0;background:#fff;padding:45px 20px}.profile-aside{position:sticky;top:24px;margin-top:24px;min-width:0}.profile-info{background:#fff;border:1px solid #eff3f4;border-radius:16px;padding:22px}.profile-info h2{font-size:19px;font-weight:750}.profile-info dl{margin:20px 0}.profile-info dl>div{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #eff3f4;font-size:12px}.profile-info dt{color:#536471}.profile-info dd{margin:0;color:#0f1419;text-align:right}.profile-info p{color:#536471;font-size:12px;margin:18px 0;line-height:1.8}.profile-info .button{border-radius:24px;color:#0f1419}.profile-tip{display:flex;align-items:center;gap:6px;padding:20px 12px;color:#81919c;font-size:11px}.profile-tip svg{width:13px;height:13px}
 @media(max-width:1250px){.user-list{grid-template-columns:repeat(2,minmax(0,1fr))}.profile-layout{grid-template-columns:minmax(0,650px);justify-content:center}.profile-aside{display:none}.content:has(:is(#view-user,#view-home):not([hidden])){padding:0 22px}}
@@ -44,6 +45,22 @@
 :is(#view-user,#view-home) .profile-top {
   height:60px;
   border-bottom:0;
+  cursor:pointer;
+}
+.timeline-top-button {
+  display:block;
+  max-width:100%;
+  border:0;
+  padding:0;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  letter-spacing:inherit;
+  text-align:left;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  cursor:pointer;
 }
 :is(#view-user,#view-home) .profile-top>div {
   min-width:0;
@@ -139,7 +156,7 @@
   grid-template-columns:40px minmax(0,1fr);
   align-items:start;
   gap:12px;
-  padding:16px 16px 24px;
+  padding:16px 16px 14px;
 }
 :is(#view-user,#view-home) .post-avatar {
   width:40px;
@@ -152,7 +169,7 @@
 :is(#view-user,#view-home) .post-header {
   gap:8px;
   flex-wrap:wrap;
-  margin:0 0 3px;
+  margin:0 0 2px;
 }
 :is(#view-user,#view-home) .timeline-author {
   display:flex;
@@ -189,7 +206,10 @@
 }
 :is(#view-user,#view-home) .post-text {
   font-size:15px;
-  line-height:1.55;
+  line-height:1.45;
+}
+:is(#view-user,#view-home) .post-text:empty {
+  display:none;
 }
 :is(#view-user,#view-home) .post-text:has(+.expand-text):not(.expanded) {
   display:-webkit-box;
@@ -227,8 +247,13 @@
   min-height:36px;
 }
 :is(#view-user,#view-home) .media-grid {
+  margin-top:6px;
   border-radius:16px;
   border-color:#cfd9de;
+}
+/* Image-only posts should start directly below the author, without a blank row. */
+:is(#view-user,#view-home) .post-text:empty + :is(.media-grid,.quote-card,.quote-unavailable,.media-pending) {
+  margin-top:4px;
 }
 :is(#view-user,#view-home) .profile-info {
   padding:20px;
@@ -350,7 +375,7 @@
     padding:4px 14px 10px;
   }
   :is(#view-user,#view-home) .post-body {
-    padding:12px 12px 22px;
+    padding:12px 12px 12px;
     gap:10px;
   }
   :is(#view-user,#view-home) .post-header {
@@ -389,7 +414,7 @@
     font-size:12px;
   }
   :is(#view-user,#view-home) .post-text {
-    line-height:1.5;
+    line-height:1.45;
     max-height:none;
   }
   :is(#view-user,#view-home) .expand-text {
@@ -402,7 +427,7 @@
   }
   :is(#view-user,#view-home) .quote-author {
     gap:3px 5px;
-    margin-bottom:5px;
+    margin-bottom:0;
   }
   :is(#view-user,#view-home) .quote-author strong {
     max-width:calc(100% - 28px);
@@ -412,7 +437,7 @@
     padding:8px 10px;
   }
   :is(#view-user,#view-home) .media-grid {
-    margin-top:10px;
+    margin-top:6px;
     gap:2px;
     border-radius:14px;
   }

@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"xm/internal/archive"
 )
 
@@ -33,6 +32,7 @@ type migrationJob struct {
 	Database        archive.DatabaseConfig  `json:"-"`
 	Storage         *archive.StorageProfile `json:"-"`
 	Status          string                  `json:"status"`
+	Acknowledged    bool                    `json:"acknowledged,omitempty"`
 	Phase           string                  `json:"phase"`
 	Done            int64                   `json:"done"`
 	Total           int64                   `json:"total"`
@@ -120,7 +120,7 @@ func syncDirectory(path string) error {
 		return e
 	}
 	defer f.Close()
-	return f.Sync()
+	return archive.SyncDirectory(f)
 }
 func (m *migrationManager) update(fn func(*migrationJob)) error {
 	m.mu.Lock()
@@ -181,6 +181,10 @@ func migrationDatabaseIdentity(c archive.DatabaseConfig) string {
 func (a *App) prepareMigration(input *migrationInput) error {
 	cfg := a.Config()
 	switch input.Kind {
+	case "cleanup":
+		input.Source, input.Target = "local", "remote"
+		input.Storage = nil
+		input.Database = archive.DatabaseConfig{}
 	case "database":
 		input.Storage = nil
 		if input.Source != "" && input.Source != cfg.Database.DriverName() {
@@ -222,7 +226,7 @@ func (a *App) prepareMigration(input *migrationInput) error {
 		if input.Source != "local" {
 			input.Storage = nil
 			p, err := cfg.Storage(input.Source)
-			if err != nil || (p.Kind != "s3" && p.Kind != "webdav") {
+			if err != nil || (p.Kind != "s3" && p.Kind != "webdav" && p.Kind != "smb") {
 				return errors.New("请选择已配置的远端存储")
 			}
 		}
@@ -258,12 +262,21 @@ func (a *App) prepareMigration(input *migrationInput) error {
 func (a *App) previewMigration(ctx context.Context, input migrationInput) (migrationPreview, error) {
 	cfg := a.Config()
 	p := migrationPreview{Kind: input.Kind, Source: input.Source, Target: input.Target, Destination: cfg.DataDir}
-	var disk unix.Statfs_t
-	if err := unix.Statfs(cfg.DataDir, &disk); err != nil {
+	freeBytes, err := availableDiskBytes(cfg.DataDir)
+	if err != nil {
 		return p, errors.New("无法检查本地磁盘可用空间")
 	}
-	p.FreeBytes = disk.Bavail * uint64(disk.Bsize)
+	p.FreeBytes = freeBytes
 	switch input.Kind {
+	case "cleanup":
+		if err := a.store.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies").Scan(&p.Items, &p.Bytes); err != nil {
+			return p, errors.New("无法读取本地副本记录")
+		}
+		if p.Items == 0 {
+			return p, errors.New("没有已记录的迁移副本可清理")
+		}
+		p.Destination = "已迁出的本地媒体副本"
+		p.Warning = "清理期间暂停写入。仅处理迁移留下的本地副本；逐个重新读取远端并校验大小和 SHA256，确认本地内容相同且未被归档引用后删除。校验失败的文件保留；数据库、远端文件和在用本地媒体不会删除。"
 	case "database":
 		if err := a.store.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM posts").Scan(&p.Items); err != nil {
 			return p, errors.New("无法读取推文数量")
@@ -322,11 +335,16 @@ func (a *App) previewMigration(ctx context.Context, input migrationInput) (migra
 func (a *App) migrationStatus(w http.ResponseWriter, r *http.Request) {
 	profiles := []map[string]string{}
 	for _, p := range a.Config().StorageProfiles {
-		if p.Kind == "s3" || p.Kind == "webdav" {
+		if p.Kind == "s3" || p.Kind == "webdav" || p.Kind == "smb" {
 			profiles = append(profiles, map[string]string{"id": p.ID, "name": p.Name, "kind": p.Kind})
 		}
 	}
-	respond(w, 200, map[string]any{"job": a.migrations.snapshot(), "database_driver": a.Config().Database.DriverName(), "active_storage": a.Config().ActiveStorage(), "sources": profiles, "maintenance": a.maintenance.Load()})
+	var copies, copyBytes int64
+	if err := a.store.DB.QueryRowContext(r.Context(), "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies").Scan(&copies, &copyBytes); err != nil {
+		problem(w, 500, "无法读取本地副本统计")
+		return
+	}
+	respond(w, 200, map[string]any{"local_copies": map[string]int64{"items": copies, "bytes": copyBytes}, "job": a.migrations.snapshot(), "database_driver": a.Config().Database.DriverName(), "active_storage": a.Config().ActiveStorage(), "sources": profiles, "maintenance": a.maintenance.Load()})
 }
 func (a *App) migrationPreview(w http.ResponseWriter, r *http.Request) {
 	input := migrationInput{Kind: r.URL.Query().Get("kind"), Source: r.URL.Query().Get("source"), Target: r.URL.Query().Get("target")}
@@ -349,7 +367,7 @@ func (a *App) startMigration(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	if input.Confirm != "开始迁移" {
+	if input.Confirm != "开始迁移" && input.Confirm != "清理本地副本" {
 		problem(w, 400, "请输入“开始迁移”确认")
 		return
 	}
@@ -371,6 +389,10 @@ func (a *App) startMigration(w http.ResponseWriter, r *http.Request) {
 				input.Target = "new"
 			}
 		}
+	}
+	if (input.Kind == "cleanup") != (input.Confirm == "清理本地副本") {
+		problem(w, 400, "确认文字与操作不匹配")
+		return
 	}
 	if err := a.prepareMigration(&input); err != nil {
 		problem(w, 400, err.Error())
@@ -429,6 +451,32 @@ func (a *App) pauseMigration(w http.ResponseWriter, r *http.Request) {
 	m.cancel()
 	respond(w, 200, map[string]string{"message": "已请求暂停，正在安全结束当前步骤"})
 }
+func (a *App) acknowledgeMigration(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	m := a.migrations
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running || m.closing || m.job == nil || m.job.Status != "completed" || input.ID == "" || input.ID != m.job.ID {
+		problem(w, 409, "迁移状态已变化，请刷新后确认已完成的任务")
+		return
+	}
+	if !m.job.Acknowledged {
+		// Keep the journal for recovery/auditing; acknowledgement only hides its UI.
+		previous := *m.job
+		m.job.Acknowledged = true
+		if err := m.persistLocked(); err != nil {
+			*m.job = previous
+			problem(w, 500, err.Error())
+			return
+		}
+	}
+	respond(w, 200, map[string]string{"message": "已确认完成，迁移进度已隐藏"})
+}
 func (m *migrationManager) run(ctx context.Context, j migrationJob) {
 	defer m.wg.Done()
 	a := m.app
@@ -450,6 +498,9 @@ func (m *migrationManager) run(ctx context.Context, j migrationJob) {
 	err := ctx.Err()
 	if err == nil && j.Kind == "database" {
 		err = m.copyDatabase(ctx, j)
+	}
+	if err == nil && j.Kind == "cleanup" {
+		err = m.cleanupLocalCopies(ctx)
 	}
 	if err == nil && j.Kind == "media" {
 		a.changeMu.Lock()
@@ -495,6 +546,9 @@ func (m *migrationManager) run(ctx context.Context, j migrationJob) {
 				current.Status = "paused"
 				current.Phase = "已暂停"
 				current.Message = "已完成项保留；可手动继续，源数据未删除。"
+				if j.Kind == "cleanup" {
+					current.Message = "已清理项不会恢复，剩余副本保留；可继续清理。"
+				}
 			} else if err != nil {
 				current.Status = "failed"
 				current.Phase = "失败"
@@ -503,6 +557,9 @@ func (m *migrationManager) run(ctx context.Context, j migrationJob) {
 				current.Status = "completed"
 				current.Phase = "完成"
 				current.Message = "迁移及校验完成；源文件保留，新媒体保存到目标存储。"
+				if j.Kind == "cleanup" {
+					current.Message = "本地副本清理完成；远端媒体和本地数据库保留。"
+				}
 			}
 		})
 		if finishErr != nil {

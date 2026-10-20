@@ -105,12 +105,12 @@ func (s *setupWizard) candidate(v setupInput) (archive.Config, error) {
 	case "", "keep":
 	case "local":
 		c.MediaStorage = "local"
-	case "webdav", "s3":
+	case "webdav", "s3", "smb":
 		p := v.Storage
 		p.Kind = v.StorageKind
 		p.ID = "setup_" + randomToken()[:20]
 		if p.Name == "" {
-			p.Name = map[string]string{"webdav": "我的 WebDAV", "s3": "我的 S3"}[p.Kind]
+			p.Name = map[string]string{"webdav": "我的 WebDAV", "s3": "我的 S3", "smb": "我的 Samba"}[p.Kind]
 		}
 		if p.Timeout == 0 {
 			p.Timeout = 120

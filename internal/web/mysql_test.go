@@ -87,6 +87,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	cfg := archive.Config{DataDir: t.TempDir(), DefaultInterval: 3600, RequestTimeout: 5, ScrollDelay: 1, MaxScrolls: 1, MaxMediaBytes: 1024}
 	muted := false
 	cfg.VideoDefaultMuted, cfg.ImageCacheSeconds, cfg.VideoCacheSeconds = &muted, 7200, 120
+	cfg.VideoLoop = true
 	source, e := archive.OpenStore(cfg.DataDir)
 	if e != nil {
 		t.Fatal(e)
@@ -139,12 +140,19 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	if _, e = source.DB.Exec("INSERT INTO post_bookmarks(post_id,created_at) VALUES('100',123)"); e != nil {
 		t.Fatal(e)
 	}
+	if _, e = source.DB.Exec("INSERT INTO account_preferences(target,show_in_timeline) VALUES('archived',0)"); e != nil {
+		t.Fatal(e)
+	}
 	counts, e := dest.store.CopySQLiteToMySQL(ctx, filepath.Join(cfg.DataDir, archive.DefaultSQLiteFile))
 	if e != nil {
 		t.Fatal(e)
 	}
 	if counts["admin_accounts"] != 1 || counts["system_settings"] != 1 || counts["storage_profiles"] != 1 || counts["x_cookies"] != 1 || counts["posts"] != 2 || counts["notification_deliveries"] != 1 {
 		t.Fatal(counts)
+	}
+	var shown bool
+	if e = dest.store.DB.QueryRow("SELECT show_in_timeline FROM account_preferences WHERE target='archived'").Scan(&shown); e != nil || shown || counts["account_preferences"] != 1 {
+		t.Fatal("migration lost account preference", e)
 	}
 	if counts["post_bookmarks"] != 1 {
 		t.Fatal("CLI migration lost bookmark", counts)
@@ -153,7 +161,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	if e != nil || migrated.Database.DriverName() != "mysql" || migrated.DataDir != destCfg.DataDir {
 		t.Fatal("runtime migration overrode bootstrap", e)
 	}
-	if migrated.VideoMutedByDefault() || migrated.ImageCacheSeconds != 7200 || migrated.VideoCacheSeconds != 120 {
+	if migrated.VideoMutedByDefault() || !migrated.VideoLoop || migrated.ImageCacheSeconds != 7200 || migrated.VideoCacheSeconds != 120 {
 		t.Fatal("SQLite to MySQL migration lost media preferences")
 	}
 	if _, e = newAuth(dest.store, false); e != nil {

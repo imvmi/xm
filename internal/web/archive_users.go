@@ -26,10 +26,11 @@ func archiveUsersCTE(target string) (string, []any) {
 func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 	cte, args := archiveUsersCTE(target)
 	rows, err := db.Query(cte+`SELECT u.username,COALESCE(i.user_id,''),COALESCE(i.current_username,u.username),
- m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.last_finished,0),
+ m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.last_finished,0),COALESCE(m.show_in_timeline,a.show_in_timeline,1),
  COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0)
  FROM users u LEFT JOIN target_identities i ON i.target=u.username
  LEFT JOIN monitors m ON m.username=u.username
+ LEFT JOIN account_preferences a ON a.target=u.username
  LEFT JOIN posts p ON p.id=(SELECT t.post_id FROM target_posts t WHERE t.target=u.username ORDER BY length(t.post_id) DESC,t.post_id DESC LIMIT 1)
  LEFT JOIN profiles f ON f.id=p.author_id ORDER BY u.username`, args...)
 	if err != nil {
@@ -40,7 +41,7 @@ func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 	for rows.Next() {
 		u := UserView{StatsPending: true}
 		var raw string
-		if err := rows.Scan(&u.Username, &u.UserID, &u.CurrentUsername, &u.Monitored, &u.Enabled, &u.LastRun, &u.Interval, &raw, &u.Protected); err != nil {
+		if err := rows.Scan(&u.Username, &u.UserID, &u.CurrentUsername, &u.Monitored, &u.Enabled, &u.LastRun, &u.ShowInTimeline, &u.Interval, &raw, &u.Protected); err != nil {
 			return nil, err
 		}
 		u.Name, u.Bio = archive.AuthorDetails([]byte(raw))

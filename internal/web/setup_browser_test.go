@@ -89,6 +89,11 @@ func TestSetupBrowserNewAndExisting(t *testing.T) {
 				fill(map[string]any{"existing-password": input.Password})
 			} else {
 				wait(`!busy && !document.getElementById('step-storage').hidden`)
+				eval(`(()=>{el('media-kind').value='smb';el('media-kind').dispatchEvent(new Event('change'));el('media-endpoint').value='smb://nas/archive';return true})()`)
+				if !eval(`!el('remote-fields').hidden && !el('webdav-fields').hidden && el('s3-fields').hidden && el('media-user').required && el('media-password').required && el('media-endpoint').checkValidity() && el('media-endpoint-help').textContent.includes('445')`) {
+					t.Fatal("Samba setup fields or URL validation incorrect")
+				}
+				eval(`(()=>{el('media-kind').value='local';el('media-kind').dispatchEvent(new Event('change'));return true})()`)
 				eval(`(()=>{document.getElementById('setup-next').click();return true})()`)
 				wait(`!busy && !document.getElementById('step-account').hidden`)
 				fill(map[string]any{"setup-username": input.Username, "setup-password": input.Password, "setup-confirm": input.Password})

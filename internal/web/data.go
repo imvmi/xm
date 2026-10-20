@@ -130,7 +130,16 @@ func scanMonitor(row scanner) (Monitor, error) {
 	return m, err
 }
 func monitors(db *database.DB) ([]Monitor, error) {
-	r, err := db.Query("SELECT " + monitorColumns + " FROM monitors m ORDER BY m.username")
+	return monitorList(db, true)
+}
+
+func monitorList(db *database.DB, stats bool) ([]Monitor, error) {
+	columns := monitorColumns
+	if !stats {
+		// Runtime polling must not count an account's full archive every six seconds.
+		columns = strings.Replace(columns, "(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)", "-1", 1)
+	}
+	r, err := db.Query("SELECT " + columns + " FROM monitors m ORDER BY m.username")
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +237,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 	// Visibility applies to archive roots on the home feed, not to an account's
 	// own archive or embedded quotes. A root shared by visible/hidden archives
 	// remains visible once. Archives without a monitor remain visible by default.
-	where := " WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,1)=1)"
+	where := " WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target LEFT JOIN account_preferences ap ON ap.target=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,ap.show_in_timeline,1)=1)"
 	args := []any{}
 	if target != "" {
 		from = " FROM target_posts t JOIN posts p ON p.id=t.post_id"
@@ -246,7 +255,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 			seed += " WHERE target=?"
 			prefixArgs = append(prefixArgs, target)
 		} else {
-			seed = "SELECT DISTINCT t.post_id,t.post_id FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE COALESCE(m.show_in_timeline,1)=1"
+			seed = "SELECT DISTINCT t.post_id,t.post_id FROM target_posts t LEFT JOIN monitors m ON m.username=t.target LEFT JOIN account_preferences ap ON ap.target=t.target WHERE COALESCE(m.show_in_timeline,ap.show_in_timeline,1)=1"
 		}
 		prefix = "WITH RECURSIVE related(root,id) AS (" + seed + " UNION SELECT r.root,p.quote_id FROM related r JOIN posts p ON p.id=r.id WHERE p.quote_id<>'') "
 	}
@@ -334,6 +343,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 }
 
 type UserView struct {
+	ShowInTimeline  bool   `json:"show_in_timeline"`
 	UserID          string `json:"user_id"`
 	AvatarURL       string `json:"avatar_url"`
 	CurrentUsername string `json:"current_username"`

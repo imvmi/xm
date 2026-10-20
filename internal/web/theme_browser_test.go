@@ -58,7 +58,7 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 		deadline := time.Now().Add(8 * time.Second)
 		for !eval(js) {
 			if time.Now().After(deadline) {
-				detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({view:typeof state==='undefined'?'no state':state.view,count:typeof state==='undefined'?0:state.postIDs.size,loading:typeof state==='undefined'?null:state.postsLoading,login:document.getElementById('login-error')?.textContent,toast:document.getElementById('toast')?.textContent})`))
+				detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({view:typeof state==='undefined'?'no state':state.view,count:typeof state==='undefined'?0:state.postIDs.size,loading:typeof state==='undefined'?null:state.postsLoading,scroll:scrollY,width:innerWidth,login:document.getElementById('login-error')?.textContent,toast:document.getElementById('toast')?.textContent})`))
 				t.Fatalf("UI timed out %s: %s", js, detail)
 			}
 			select {
@@ -91,12 +91,28 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 		for _, view := range []string{"home", "user/alice", "archive", "monitors", "activity", "notifications", "settings"} {
 			eval(`(()=>{location.hash=` + fmt.Sprintf("%q", view) + `;return true})()`)
 			name := view
+			if view == "monitors" {
+				name = "archive"
+			}
 			if view == "user/alice" {
 				name = "user"
 			}
 			wait(fmt.Sprintf(`state.view===%q && !$('view-'+state.view).hidden`, name))
 			if name == "home" || name == "user" {
 				wait(`state.postIDs.size>0 && !state.postsLoading && !!document.querySelector('#posts .post-body')`)
+				for _, selector := range []string{".timeline-top-button", "[data-timeline-top]"} {
+					if !eval(`(()=>{window.scrollTo({top:500,behavior:'instant'});window.topClickSnapshot={request:state.postRequest,tab:state.timelineTab,first:$('posts').firstElementChild};return scrollY>0})()`) {
+						t.Fatal("timeline fixture cannot scroll", view, width)
+					}
+					eval(`(()=>{requestAnimationFrame(()=>requestAnimationFrame(()=>document.querySelector('#view-'+state.view+' ` + selector + `').click()));return true})()`)
+					wait(`scrollY===0`)
+					if !eval(`state.postRequest===topClickSnapshot.request && state.timelineTab===topClickSnapshot.tab && $('posts').firstElementChild===topClickSnapshot.first`) {
+						t.Fatal("return to top reloaded or changed timeline", view, width)
+					}
+				}
+				if !eval(`(()=>{const tab=document.querySelector('#view-'+state.view+' .timeline-tabs button.selected'),post=document.querySelector('#posts .post');return getComputedStyle(tab).color==='rgb(231, 233, 234)' && getComputedStyle(tab,'::after').backgroundColor==='rgb(29, 155, 240)' && getComputedStyle(post).backgroundColor==='rgb(0, 0, 0)' && getComputedStyle(post).borderBottomColor==='rgb(47, 51, 54)'})()`) {
+					t.Fatal("Twitter-style dark palette or selected tab contrast", view, width)
+				}
 			}
 			if name == "settings" {
 				wait(`$('archive-theme').value==='dark'`)
@@ -105,6 +121,7 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 				if !eval(`$('remote-cache-panel').hidden && $('remote-cache-note').hidden && !$('remote-cache-panel').getBoundingClientRect().height && !$('remote-cache-note').getBoundingClientRect().height`) {
 					t.Fatal("remote cache controls visible for local storage", width)
 				}
+				eval(`(()=>{$('settings-tab-display').click();return true})()`)
 			}
 			if !eval(`document.documentElement.scrollWidth<=innerWidth`) {
 				t.Fatalf("overflow %s at %d", view, width)
@@ -113,10 +130,10 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 				t.Fatalf("light surface in dark %s at %d", view, width)
 			}
 			if name == "home" || name == "user" {
-				if !eval(`getComputedStyle(document.querySelector('#app>main')).backgroundColor==='rgb(21, 26, 23)' && getComputedStyle(document.querySelector('.sidebar nav a.active')).color==='rgb(228, 233, 227)'`) {
+				if !eval(`getComputedStyle(document.querySelector('#app>main')).backgroundColor==='rgb(0, 0, 0)' && getComputedStyle(document.querySelector('.sidebar nav a.active')).color==='rgb(231, 233, 234)'`) {
 					t.Fatal("reading page or navigation overrides theme", view, width)
 				}
-				if !eval(`(()=>{const p=document.querySelector('#posts .post-body');return parseFloat(getComputedStyle(p).paddingBottom)>=20 && getComputedStyle(document.querySelector('#posts .post-text')).color==='rgb(228, 233, 227)'})()`) {
+				if !eval(`(()=>{const p=document.querySelector('#posts .post-body');return parseFloat(getComputedStyle(p).paddingBottom)<=14 && parseFloat(getComputedStyle(p).paddingBottom)>=12 && parseFloat(getComputedStyle(document.querySelector('#posts .post-text')).lineHeight)/parseFloat(getComputedStyle(document.querySelector('#posts .post-text')).fontSize)<=1.46 && getComputedStyle(document.querySelector('#posts .post-text')).color==='rgb(231, 233, 234)'})()`) {
 					t.Fatal("post spacing or contrast", view, width)
 				}
 			}

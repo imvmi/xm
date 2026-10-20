@@ -3,10 +3,10 @@
 html[data-theme=light] { color-scheme:light; }
 html[data-theme=dark] {
   color-scheme:dark;
-  --bg:#151a17; --paper:#1e2521; --ink:#e4e9e3; --muted:#adb8b0;
-  --line:#3c4840; --green:#a3c5a6; --green-light:#293b30;
-  --orange:#e6b27c; --side:#171e19; --shadow:0 10px 40px #0004;
-  --surface-raised:#26312a; --accent:#75c4fa;
+  --bg:#000000; --paper:#000000; --ink:#e7e9ea; --muted:#71767b;
+  --line:#2f3336; --green:#1d9bf0; --green-light:#031018;
+  --orange:#ffad1f; --side:#000000; --shadow:0 10px 40px #0004;
+  --surface-raised:#16181c; --accent:#1d9bf0;
 }
 html[data-theme=dark] body { background:var(--bg); color:var(--ink); }
 html[data-theme=dark] :is(#app.app,#login-view,dialog) {
@@ -25,8 +25,8 @@ html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(
   background:var(--paper); border-color:var(--line);
 }
 html[data-theme=dark] #app.app>main { background:var(--bg); }
-html[data-theme=dark] #app.app :is(#view-user,#view-home) { --line:#3c4840; --muted:#adb8b0; }
-html[data-theme=dark] #app.app .profile-top { background:#1e2521f2; border-color:var(--line); }
+html[data-theme=dark] #app.app :is(#view-user,#view-home) { --line:#2f3336; --muted:#71767b; }
+html[data-theme=dark] #app.app .profile-top { background:#000000d9; border-color:var(--line); }
 html[data-theme=dark] #app.app :is(.profile-cover,.job-position,.empty-icon) {
   background:var(--surface-raised); color:var(--muted);
 }
@@ -55,7 +55,8 @@ html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(input,textarea,select
   background:var(--surface-raised); border-color:var(--line); color:var(--ink);
 }
 html[data-theme=dark] :is(#app.app,#login-view,dialog) .search-box input { background:transparent; border:0; }
-html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(input,textarea)::placeholder { color:#a0aea4; }
+html[data-theme=dark] #app.app .video-controls .video-seek { background:transparent; border:0; color:#fff; }
+html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(input,textarea)::placeholder { color:#71767b; }
 html[data-theme=dark] #app.app :is(.timeline-tabs,.timeline-result,.timeline-posts .post,
   .media-grid,.quote-card,.profile-info dl>div,.user-card footer,td,th,
   .notification-events,.notification-delivery,.advanced-settings,.settings-tabs,
@@ -64,26 +65,27 @@ html[data-theme=dark] #app.app :is(.media-grid,.quote-unavailable,.storage-note,
   background:var(--surface-raised); color:var(--muted); border-color:var(--line);
 }
 html[data-theme=dark] #app.app :is(.timeline-tabs button.selected,.timeline-author strong,.quote-author strong) { color:var(--ink); }
+html[data-theme=dark] #app.app :is(#view-home,#view-user) .timeline-tabs button.selected { color:var(--ink); }
 html[data-theme=dark] #app.app :is(.expand-text,.quote-unavailable a,.timeline-handle:hover,.quote-handle:hover,.profile-x-link:hover) { color:var(--accent); }
 html[data-theme=dark] #app.app :is(.timeline-tabs button.selected:after) { background:var(--accent); }
-html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(.secondary:hover,.back-link:hover,.profile-top .icon-button:hover,.timeline-tabs button:hover,.sidebar nav a:hover) { background:#304237; }
+html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(.secondary:hover,.back-link:hover,.profile-top .icon-button:hover,.timeline-tabs button:hover,.sidebar nav a:hover) { background:#181818; }
 html[data-theme=dark] #app.app .sidebar nav a { color:var(--muted); }
 html[data-theme=dark] #app.app .sidebar nav a.active { color:var(--ink); background:var(--green-light); }
 html[data-theme=dark] #app.app :is(.settings-tabs button,.text-button,.checkpoint-status,.job-phase,.form-details summary,.advanced-settings summary) { color:var(--green); }
-html[data-theme=dark] :is(#app.app,#login-view,dialog) .primary { color:#142519; background:#a3c5a6; }
-html[data-theme=dark] :is(#app.app,#login-view,dialog) .primary:hover { background:#bbd9bd; }
-html[data-theme=dark] #app.app .badge { background:#293e30; color:#c3dfb9; }
-html[data-theme=dark] #app.app .badge.neutral { background:#303a33; color:#c2ccc5; }
+html[data-theme=dark] :is(#app.app,#login-view,dialog) .primary { color:#0f1419; background:#eff3f4; }
+html[data-theme=dark] :is(#app.app,#login-view,dialog) .primary:hover { background:#d7dbdc; }
+html[data-theme=dark] #app.app .badge { background:#002d20; color:#00ba7c; }
+html[data-theme=dark] #app.app .badge.neutral { background:#16181c; color:#b1b5b8; }
 html[data-theme=dark] #app.app :is(.badge.warn,.media-pending,.notice) { background:#3b3020; color:#f0cd92; border-color:#665235; }
-html[data-theme=dark] #app.app .badge.running { background:#203b47; color:#acd9ee; }
+html[data-theme=dark] #app.app .badge.running { background:#031e30; color:#1d9bf0; }
 html[data-theme=dark] #app.app .badge.error { background:#482c29; color:#f5b0a1; }
 html[data-theme=dark] :is(#app.app,#login-view,dialog) :is(.table-sub.error,.form-error,.diagnostic-result.error,.text-button.delete) { color:#f5b0a1; }
 html[data-theme=dark] dialog:not(.image-dialog) { background:var(--paper); border-color:var(--line); }
-html[data-theme=dark] ::selection { background:#375949; color:#fff; }
+html[data-theme=dark] ::selection { background:#063b60; color:#fff; }
 /* All timelines retain readable space after text, media, and quoted cards. */
 #view-home .profile-top>div { flex:1; }
 #view-home .profile-top .muted { font-size:12px; }
 #view-home .timeline-author strong a:hover { text-decoration:underline; }
 @media(max-width:760px) {
-  .sidebar nav { grid-template-columns:repeat(6,minmax(0,1fr)); }
+  .sidebar nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
 }

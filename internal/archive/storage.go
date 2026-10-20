@@ -59,14 +59,17 @@ func (p StorageProfile) Validate() error {
 	if !storageID.MatchString(p.ID) || p.ID == "local" || strings.TrimSpace(p.Name) == "" || len(p.Name) > 100 {
 		return errors.New("存储名称或标识无效")
 	}
-	if p.Kind != "webdav" && p.Kind != "s3" {
-		return errors.New("存储类型必须为 WebDAV 或 S3")
+	if p.Kind != "webdav" && p.Kind != "s3" && p.Kind != "smb" {
+		return errors.New("存储类型必须为 WebDAV、S3 或 Samba (SMB)")
 	}
 	if p.Timeout < 5 || p.Timeout > 3600 {
 		return errors.New("存储请求超时必须为 5–3600 秒")
 	}
 	if p.Prefix != "" && !safeObjectKey(p.Prefix) {
 		return errors.New("存储前缀必须为相对目录，不能包含空段或 ..")
+	}
+	if p.Kind == "smb" {
+		return p.validateSMB()
 	}
 	if p.Endpoint != "" {
 		u, err := url.Parse(p.Endpoint)
@@ -132,6 +135,9 @@ func NewRemote(cfg Config, id string) (*Remote, error) {
 	if err = p.Validate(); err != nil {
 		return nil, err
 	}
+	if p.Kind == "smb" {
+		return &Remote{profile: p}, nil
+	}
 	proxy := ""
 	if p.UseProxy {
 		proxy = cfg.Proxy
@@ -151,7 +157,11 @@ func NewRemote(cfg Config, id string) (*Remote, error) {
 	}
 	return b, nil
 }
-func (b *Remote) Close()                     { b.client.CloseIdleConnections() }
+func (b *Remote) Close() {
+	if b.client != nil {
+		b.client.CloseIdleConnections()
+	}
+}
 func (b *Remote) Key(relative string) string { return path.Join(b.profile.Prefix, relative) }
 func (b *Remote) request(ctx context.Context, method, key string, body io.Reader, size int64, headers map[string]string) (*http.Response, error) {
 	if !safeObjectKey(key) {
@@ -193,6 +203,9 @@ func storageError(err error) error {
 	return errors.New("远程存储操作失败，请检查连接、凭据和权限")
 }
 func (b *Remote) Put(ctx context.Context, key string, body io.ReadSeeker, size int64, contentType, hash string) error {
+	if b.profile.Kind == "smb" {
+		return b.smbPut(ctx, key, body, size, hash)
+	}
 	if !safeObjectKey(key) {
 		return errors.New("无效的远程对象路径")
 	}
@@ -225,6 +238,9 @@ func (b *Remote) Put(ctx context.Context, key string, body io.ReadSeeker, size i
 	return nil
 }
 func (b *Remote) Size(ctx context.Context, key string) (int64, error) {
+	if b.profile.Kind == "smb" {
+		return b.smbSize(ctx, key)
+	}
 	if !safeObjectKey(key) {
 		return 0, errors.New("无效的远程对象路径")
 	}
@@ -246,6 +262,9 @@ func (b *Remote) Size(ctx context.Context, key string) (int64, error) {
 	return resp.ContentLength, nil
 }
 func (b *Remote) Open(ctx context.Context, key string, offset int64) (io.ReadCloser, error) {
+	if b.profile.Kind == "smb" {
+		return b.smbOpen(ctx, key, offset)
+	}
 	if !safeObjectKey(key) || offset < 0 {
 		return nil, errors.New("无效的远程读取范围")
 	}
@@ -294,6 +313,9 @@ func (b *Remote) Open(ctx context.Context, key string, offset int64) (io.ReadClo
 	return body, nil
 }
 func (b *Remote) Delete(ctx context.Context, key string) error {
+	if b.profile.Kind == "smb" {
+		return b.smbDelete(ctx, key)
+	}
 	if !safeObjectKey(key) {
 		return errors.New("无效的远程对象路径")
 	}

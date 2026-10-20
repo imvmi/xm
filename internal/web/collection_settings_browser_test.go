@@ -54,7 +54,35 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.settings!==null && !document.getElementById('view-settings').hidden && document.getElementById('scroll-delay').value==='3'`)
+	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='X 登录' && $('settings-tab-display').textContent==='界面显示' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===3 && $('settings-display').textContent.includes('与「归档存储」中的服务器缓存相互独立')`) {
+		t.Fatal("navigation and settings organization are inconsistent")
+	}
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();return true})()`)
+	// The global switch saves immediately without submitting collection drafts.
+	wait(`!$('global-auto-collection').disabled && state.overview!==null`)
+	if !eval(`$('settings-collection').contains($('global-auto-collection')) && !$('collection-settings-form').contains($('global-auto-collection')) && $('global-auto-collection').getAttribute('role')==='switch' && $('global-auto-collection').getAttribute('aria-checked')===String(!state.settings.polling_paused)`) {
+		t.Fatal("global auto collection switch has wrong location or initial state")
+	}
+	eval(`(()=>{window.initialPollingPaused=state.settings.polling_paused;$('queue-interval').value='17';$('queue-interval').dispatchEvent(new Event('input',{bubbles:true}));$('global-auto-collection').click();return true})()`)
+	wait(`!globalCollectionPending && !$('global-auto-collection').disabled && state.overview.paused!==window.initialPollingPaused && $('global-auto-collection').getAttribute('aria-checked')===String(!state.overview.paused)`)
+	if !eval(`$('queue-interval').value==='17' && settingsFormDirty('collection-settings-form')`) {
+		t.Fatal("switch erased the collection draft")
+	}
+	if a.Config().QueueInterval != 0 {
+		t.Fatal("switch submitted an unrelated draft")
+	}
+	eval(`(()=>{$('global-auto-collection').click();return true})()`)
+	wait(`!globalCollectionPending && !$('global-auto-collection').disabled && state.overview.paused===window.initialPollingPaused`)
+	// A failed save must keep the last confirmed switch state and allow retry.
+	eval(`(()=>{window.savedSettingsAPI=api;api=async(path,method,...args)=>{if(path==='/settings'&&method==='PUT')throw new Error('模拟保存失败');return window.savedSettingsAPI(path,method,...args)};$('global-auto-collection').click();return true})()`)
+	wait(`!globalCollectionPending && !$('global-auto-collection').disabled && $('toast').textContent==='模拟保存失败'`)
+	if !eval(`$('global-auto-collection').getAttribute('aria-checked')===String(!window.initialPollingPaused)`) {
+		t.Fatal("failed save changed the global switch")
+	}
+	eval(`(()=>{api=window.savedSettingsAPI;$('queue-interval').value='0';$('queue-interval').dispatchEvent(new Event('input',{bubbles:true}));return true})()`)
+	if !eval(`!$('settings-tab-network') && $('settings-collection').contains($('settings-form')) && $('settings-collection').contains($('test-chrome')) && !$('collection-settings-form').contains($('settings-form'))`) {
+		t.Fatal("proxy and browser diagnostics must be independent forms within collection settings")
+	}
 	if !eval(`!document.getElementById('settings-collection').hidden && !document.getElementById('request-interval') && !document.getElementById('max-posts-per-run') && !document.getElementById('page-budget') && !document.getElementById('max-scrolls') && document.getElementById('default-interval').value==='1' && document.getElementById('queue-interval').value==='0' && document.getElementById('scroll-delay').value==='3' && document.getElementById('scroll-jitter').value==='0' && document.getElementById('timeline-idle-seconds').value==='24' && document.getElementById('known-boundary-posts').value==='3' && !document.getElementById('request-budget-mode') && document.getElementById('rate-limit-mode').value==='balanced' && document.getElementById('request-timeout').value==='60' && document.getElementById('max-media-mib').value==='512' && document.getElementById('browser-max-age').value==='6' && document.getElementById('browser-max-tasks').value==='100' && !document.getElementById('monitor-default-form')`) {
 		values, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify(Object.fromEntries(['default-interval','queue-interval','scroll-delay','scroll-jitter','timeline-idle-seconds','known-boundary-posts','rate-limit-mode','request-timeout','max-media-mib','browser-max-age','browser-max-tasks','media-retry-initial','media-retry-max','request-interval','request-budget-mode','max-posts-per-run','page-budget','max-scrolls','monitor-default-form'].map(id=>[id,document.getElementById(id)?.value??null])))`))
 		t.Fatal("settings defaults/location incorrect", values)
@@ -73,10 +101,10 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && state.authenticated && !document.getElementById('request-interval') && !document.getElementById('max-posts-per-run') && document.getElementById('scroll-delay').value==='6' && document.getElementById('scroll-jitter').value==='2' && document.getElementById('scroll-spacing-help').textContent.includes('4～8 秒') && document.getElementById('default-interval').value==='2' && document.getElementById('queue-interval').value==='45' && document.getElementById('timeline-idle-seconds').value==='40' && !document.getElementById('collection-timeout') && document.getElementById('browser-max-age').value==='12' && !document.getElementById('request-budget-mode') && document.getElementById('browser-max-tasks').value==='250' && document.getElementById('media-retry-max').value==='48'`)
 	// A draft survives leaving settings and saving another form.
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();document.getElementById('browser-max-age').value='8';document.getElementById('browser-max-age').dispatchEvent(new Event('input',{bubbles:true}));location.hash='monitors';return true})()`)
-	wait(`state.view==='monitors'`)
+	wait(`state.view==='archive' && location.hash==='#accounts'`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.view==='settings' && document.getElementById('browser-max-age').value==='8' && !document.getElementById('settings-draft-notice').hidden`)
-	eval(`(()=>{document.getElementById('settings-tab-network').click();document.querySelector('#settings-form button[type="submit"]').click();return true})()`)
+	eval(`(()=>{document.getElementById('settings-tab-collection').click();document.querySelector('#settings-form button[type="submit"]').click();return true})()`)
 	wait(`document.getElementById('toast').textContent.includes('代理设置已保存')`)
 	if !eval(`document.getElementById('browser-max-age').value==='8' && settingsFormDirty('collection-settings-form')`) {
 		t.Fatal("saving proxy erased collection draft")

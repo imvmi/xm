@@ -6,8 +6,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
 function fixture(){
- const nodes=new Map(), requests=[], observer={disconnect(){},observe(){this.observed++},observed:0};
- const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html=''},insertAdjacentHTML(_,html){this.html+=html},querySelector(){return $('heading')}});return nodes.get(id)};
+ const nodes=new Map(), requests=[], observer={disconnect(){this.targets=[]},observe(target){this.observed++;this.targets.push(target)},observed:0,targets:[]};
+ const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',children:[],attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html='';this.children=[]},insertAdjacentHTML(_,html){this.html+=html;this.children.push(...[...html.matchAll(/<article class="post" data-post-id="([^"]+)"/g)].map(m=>({id:m[1]})))},querySelector(){return $('heading')}});return nodes.get(id)};
  const state={authenticated:true,view:'user',target:'alice',timelineTab:'posts',postRequest:0,postIDs:new Set(),postsLoading:false,postsError:false,hasMore:false,offset:0,total:0};
  const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:()=>{},api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
  vm.runInContext(source.slice(source.indexOf('function displayPostText('),source.indexOf("$('posts').addEventListener")),ctx);
@@ -61,6 +61,39 @@ test('home uses the global timeline and continues by cursor without recounting',
  f.requests[1].resolve({...f.page(['98'],-1),next_cursor:'98',has_more:false});await pending;
  assert.equal(f.state.total,3);assert.equal(f.state.postIDs.size,3);assert.equal(f.state.hasMore,false);
 });
+test('home and account feeds prefetch at the third-last post, then move the trigger',async()=>{
+ for(const view of ['home','user']){
+  const f=fixture();f.state.view=view;
+  let pending=f.ctx.refreshPosts();
+  f.requests[0].resolve({...f.page(['10','9','8','7','6'],10),has_more:true});await pending;
+  const old=f.$('posts').children[2];
+  assert.equal(f.observer.targets[0],old);
+  assert.equal(f.observer.targets[1],f.$('timeline-loader'));
+  f.observer.callback([{target:old,isIntersecting:true},{target:f.$('timeline-loader'),isIntersecting:true}]);
+  assert.equal(f.requests.length,2);
+  f.observer.callback([{target:old,isIntersecting:true}]);
+  assert.equal(f.requests.length,2);
+  f.requests[1].resolve({...f.page(['5','4','3'],10),has_more:true});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.observer.targets[0],f.$('posts').children[5]);
+  f.observer.callback([{target:old,isIntersecting:true}]);
+  assert.equal(f.requests.length,2,'old trigger cannot request another page');
+  // Removing a bookmark shifts the trigger to the new third-last post.
+  f.$('posts').children.pop();f.ctx.updateTimelineLoader();
+  assert.equal(f.observer.targets[0],f.$('posts').children[4]);
+ }
+});
+test('short pages prefetch from the first post; completed and failed pages stop observing',async()=>{
+ const f=fixture();let pending=f.ctx.refreshPosts();
+ f.requests[0].resolve({...f.page(['2','1'],3),has_more:true});await pending;
+ const first=f.$('posts').children[0];
+ assert.equal(f.observer.targets[0],first);
+ pending=f.ctx.loadMorePosts();f.requests[1].reject(Error('offline'));await pending;
+ assert.equal(f.observer.targets.length,0);
+ f.observer.callback([{target:first,isIntersecting:true}]);assert.equal(f.requests.length,2);
+ pending=f.ctx.loadMorePosts();f.requests[2].resolve({...f.page(['0'],3),has_more:false});await pending;
+ assert.equal(f.observer.targets.length,0);
+});
 test('bookmark feeds carry the account scope and composite cursor',async()=>{
  const f=fixture();f.state.timelineTab='bookmarks';
  let pending=f.ctx.refreshPosts();
@@ -91,6 +124,18 @@ test('the author handle opens the source post without redundant reply controls',
  assert.match(html,/<a class="timeline-handle" href="https:\/\/x\.com\/i\/status\/42"[^>]*>@Vickiehavefun<\/a>/);
  assert.doesNotMatch(html,/>\s*回复\s*</);
  assert.doesNotMatch(html,/查看原推文|post-footer/);
+});
+test('media links do not leave trailing blank lines; meaningful paragraphs remain intact',()=>{
+ const f=fixture();
+ for(const text of ['https://t.co/photo','\n\nhttps://t.co/photo',' \n https://t.co/photo \n']){
+  assert.equal(f.ctx.displayPostText({text,media:[{}]}),'');
+ }
+ assert.equal(f.ctx.displayPostText({text:'正文\n\n https://t.co/photo',media:[{}]}),'正文');
+ assert.equal(f.ctx.displayPostText({text:'正文\nhttps://t.co/one\nhttps://t.co/two',media:[{},{}]}),'正文');
+ assert.equal(f.ctx.displayPostText({text:'第一行\n第二行\n\n下一段\n\nhttps://t.co/photo',media:[{}]}),'第一行\n第二行\n\n下一段');
+ assert.equal(f.ctx.displayPostText({text:'外部链接\nhttps://t.co/article',media:[]}),'外部链接\nhttps://t.co/article');
+ const html=f.ctx.quoteHTML({quote_id:'77',quote:{id:'77',username:'alice',text:'引用正文\n\n https://t.co/photo',media:[{}]}});
+ assert.match(html,/<div class="post-text quote-text">引用正文<\/div>/);
 });
 test('an archived quote links its handle without a separate source footer',()=>{
  const f=fixture();

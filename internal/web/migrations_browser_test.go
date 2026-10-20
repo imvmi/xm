@@ -88,7 +88,7 @@ func TestMigrationBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
 	wait(`migrationState?.job?.status==='failed' && !$('migration-retry').hidden`)
-	if !eval(`$('migration-message').textContent.includes('失败') && !$('migration-failures-panel').hidden`) {
+	if !eval(`$('migration-message').textContent.includes('失败') && !$('migration-failures-panel').hidden && $('migration-acknowledge').hidden`) {
 		t.Fatal("failure not visible")
 	}
 	if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
@@ -108,16 +108,26 @@ func TestMigrationBrowser(t *testing.T) {
 	wait(`!$('migration-confirm-panel').hidden && migrationRetry`)
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
 	wait(`migrationState?.job?.status==='completed'`)
-	if !eval(`$('migration-progress').value===$('migration-progress').max && $('migration-retry').hidden`) {
+	if !eval(`$('migration-progress').value===$('migration-progress').max && $('migration-retry').hidden && !$('migration-acknowledge').hidden && !$('migration-job-panel').hidden`) {
 		t.Fatal("completion state incorrect")
 	}
+	eval(`(()=>{$('migration-acknowledge').click();return true})()`)
+	wait(`!!migrationState?.job?.acknowledged && $('migration-job-panel').hidden`)
+	if err := chromedp.Do(browser, chromedp.Reload()); err != nil {
+		t.Fatal(err)
+	}
+	wait(`typeof migrationState!=='undefined' && !!migrationState?.job?.acknowledged && $('migration-job-panel').hidden`)
+	eval(`(()=>{$('settings-tab-migration').click();return true})()`)
 	// Local storage can select the configured S3 or add either remote type.
 	eval(`(()=>{$('migration-source').value='local';$('migration-source').dispatchEvent(new Event('change'));$('migration-storage-target').value='new';$('migration-storage-target').dispatchEvent(new Event('change'));return true})()`)
 	if !eval(`!$('migration-remote-fields').hidden && !$('migration-s3-fields').hidden && [...$('migration-storage-target').options].some(o=>o.value==='s3-test')`) {
 		t.Fatal("local outbound choices missing")
 	}
-	for _, kind := range []string{"s3", "webdav"} {
+	for _, kind := range []string{"s3", "webdav", "smb"} {
 		eval(fmt.Sprintf(`(()=>{$('migration-remote-kind').value=%q;$('migration-remote-kind').dispatchEvent(new Event('change'));return true})()`, kind))
+		if kind == "smb" && !eval(`!$('migration-webdav-fields').hidden && $('migration-s3-fields').hidden && $('migration-proxy-option').hidden && $('migration-remote-endpoint').placeholder.startsWith('smb://') && $('migration-endpoint-help').textContent.includes('数据库留在本机')`) {
+			t.Fatal("SMB configuration fields incorrect")
+		}
 		for _, width := range []int64{1280, 390} {
 			if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 844)); err != nil {
 				t.Fatal(err)

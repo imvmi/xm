@@ -12,6 +12,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"xm/internal/database"
 )
 
 type MigrationMedia struct {
@@ -28,7 +30,7 @@ type MigrationMedia struct {
 // Source objects and download attempt counters are never changed or deleted.
 func (s *Store) LocalizeMedia(ctx context.Context, cfg Config, item MigrationMedia) error {
 	profile, storageErr := cfg.Storage(item.StorageID)
-	if storageErr != nil || (profile.Kind != "s3" && profile.Kind != "webdav") {
+	if storageErr != nil || (profile.Kind != "s3" && profile.Kind != "webdav" && profile.Kind != "smb") {
 		return errors.New("源远端存储配置不可用")
 	}
 	if item.Bytes <= 0 || len(item.SHA256) != 64 {
@@ -58,7 +60,8 @@ func (s *Store) LocalizeMedia(ctx context.Context, cfg Config, item MigrationMed
 		n, e := io.Copy(h, io.LimitReader(f, item.Bytes+1))
 		return e == nil && n == item.Bytes && hex.EncodeToString(h.Sum(nil)) == item.SHA256
 	}
-	if f, e := root.Open(rel); e == nil {
+	// Windows FlushFileBuffers requires a writable handle, including retries.
+	if f, e := root.OpenFile(rel, os.O_RDWR, 0); e == nil {
 		valid := verify(f)
 		syncErr := f.Sync()
 		f.Close()
@@ -76,7 +79,7 @@ func (s *Store) LocalizeMedia(ctx context.Context, cfg Config, item MigrationMed
 		if e != nil {
 			return errors.New("无法创建远端存储连接")
 		}
-		defer remote.client.CloseIdleConnections()
+		defer remote.Close()
 		r, e := remote.Open(ctx, item.Key, 0)
 		if e != nil {
 			return errors.New("远端读取失败，请检查网络、权限和源文件后重试")
@@ -120,7 +123,7 @@ func (s *Store) LocalizeMedia(ctx context.Context, cfg Config, item MigrationMed
 		if e != nil {
 			return errors.New("本地目录同步失败")
 		}
-		e = d.Sync()
+		e = SyncDirectory(d)
 		d.Close()
 		if e != nil {
 			return errors.New("本地目录同步失败")
@@ -206,7 +209,12 @@ func (s *Store) RemoteizeMedia(ctx context.Context, cfg Config, item MigrationMe
 			return errors.New("远端文件回读或 SHA256 校验失败，保留本地引用")
 		}
 	}
-	result, err := s.DB.ExecContext(ctx, `UPDATE media SET storage_id=?,local_path='',object_key=?,updated_at=? WHERE post_id=? AND media_id=? AND status='done' AND storage_id='local' AND local_path=? AND bytes=? AND sha256=?`, target, key, now(), item.PostID, item.MediaID, item.LocalPath, item.Bytes, item.SHA256)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("无法开始媒体索引事务")
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE media SET storage_id=?,local_path='',object_key=?,updated_at=? WHERE post_id=? AND media_id=? AND status='done' AND storage_id='local' AND local_path=? AND bytes=? AND sha256=?`, target, key, now(), item.PostID, item.MediaID, item.LocalPath, item.Bytes, item.SHA256)
 	if err != nil {
 		return errors.New("远端副本已验证，但更新媒体索引失败；可安全重试")
 	}
@@ -214,5 +222,13 @@ func (s *Store) RemoteizeMedia(ctx context.Context, cfg Config, item MigrationMe
 	if err != nil || n != 1 {
 		return errors.New("媒体索引已变化，未覆盖；请重试")
 	}
-	return nil
+	copyID := sha256.Sum256([]byte(item.PostID + "\x00" + item.MediaID + "\x00" + item.LocalPath))
+	_, err = tx.ExecContext(ctx, database.Upsert(s.DB.Dialect,
+		`INSERT INTO media_local_copies(copy_id,post_id,media_id,local_path,storage_id,object_key,bytes,sha256) VALUES(?,?,?,?,?,?,?,?)`,
+		[]string{"copy_id"}, []string{"storage_id", "object_key", "bytes", "sha256"}),
+		hex.EncodeToString(copyID[:]), item.PostID, item.MediaID, item.LocalPath, target, key, item.Bytes, item.SHA256)
+	if err != nil {
+		return errors.New("无法记录本地副本，媒体索引未切换")
+	}
+	return tx.Commit()
 }

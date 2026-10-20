@@ -230,6 +230,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/migrations/preview", a.migrationPreview)
 	mux.HandleFunc("POST /api/migrations", a.startMigration)
 	mux.HandleFunc("POST /api/migrations/pause", a.pauseMigration)
+	mux.HandleFunc("POST /api/migrations/acknowledge", a.acknowledgeMigration)
 	mux.HandleFunc("PUT /api/storage/cache", a.updateRemoteMediaCache)
 	mux.HandleFunc("DELETE /api/storage/cache", a.clearRemoteMediaCache)
 	mux.HandleFunc("POST /api/cookies", a.importCookie)
@@ -239,7 +240,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/proxy-test", a.testProxy)
 	mux.HandleFunc("POST /api/chrome-test", a.testChrome)
 	mux.HandleFunc("GET /api/monitors", func(w http.ResponseWriter, r *http.Request) {
-		v, err := monitors(a.store.DB)
+		v, err := monitorList(a.store.DB, r.URL.Query().Get("stats") != "0")
 		if err != nil {
 			problem(w, 500, "读取监控列表失败")
 			return
@@ -269,6 +270,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/posts", a.posts)
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users/stats", a.userStats)
+	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
 	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
 		load := archiveUsersFor
 		if r.URL.Query().Get("stats") == "0" {
@@ -461,7 +463,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -481,6 +483,7 @@ type settingsInput struct {
 	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
 	Paused              *bool   `json:"polling_paused"`
 	ArchiveTheme        *string `json:"archive_theme"`
+	VideoLoop           *bool   `json:"video_loop"`
 	VideoDefaultMuted   *bool   `json:"video_default_muted"`
 	ImageCacheSeconds   *int    `json:"image_cache_seconds"`
 	VideoCacheSeconds   *int    `json:"video_cache_seconds"`
@@ -585,6 +588,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.TimelinePageSize = *v.TimelinePageSize
+	}
+	if v.VideoLoop != nil {
+		cfg.VideoLoop = *v.VideoLoop
 	}
 	if v.VideoDefaultMuted != nil {
 		cfg.VideoDefaultMuted = v.VideoDefaultMuted
@@ -738,6 +744,15 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
+	// Re-adding a renamed archived account must reuse its original archive key.
+	var canonical string
+	resolveErr := a.store.DB.QueryRow("SELECT target FROM target_identities WHERE target=? OR current_username=? ORDER BY CASE WHEN target=? THEN 0 ELSE 1 END,target LIMIT 1", m.Username, m.Username, m.Username).Scan(&canonical)
+	if resolveErr == nil {
+		m.Username = canonical
+	} else if !errors.Is(resolveErr, sql.ErrNoRows) {
+		problem(w, 500, "无法读取账号身份")
+		return
+	}
 	var existing string
 	e := a.store.DB.QueryRow("SELECT m.username FROM monitors m JOIN target_identities i ON i.target=m.username WHERE i.current_username=? LIMIT 1", m.Username).Scan(&existing)
 	if e == nil {
@@ -754,6 +769,10 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 		repliesBaseline = "not_started"
 	}
 	showInTimeline := true
+	if err := a.store.DB.QueryRow("SELECT show_in_timeline FROM account_preferences WHERE target=?", m.Username).Scan(&showInTimeline); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		problem(w, 500, "读取显示偏好失败")
+		return
+	}
 	if input.ShowInTimeline != nil {
 		showInTimeline = *input.ShowInTimeline
 	}
@@ -833,17 +852,28 @@ func (a *App) editMonitorTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	var exists int
-	err := a.store.DB.QueryRow("SELECT 1 FROM monitors WHERE username=?", r.PathValue("username")).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		problem(w, 404, "账号监控不存在")
-		return
-	}
+	target := r.PathValue("username")
+	tx, err := a.store.DB.Begin()
 	if err != nil {
-		problem(w, 500, "读取显示设置失败")
+		problem(w, 500, "保存显示设置失败")
 		return
 	}
-	_, err = a.store.DB.Exec("UPDATE monitors SET show_in_timeline=? WHERE username=?", *input.ShowInTimeline, r.PathValue("username"))
+	defer tx.Rollback()
+	var exists int
+	err = tx.QueryRow("SELECT 1 FROM monitors WHERE username=? UNION SELECT 1 FROM target_posts WHERE target=? LIMIT 1", target, target).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		problem(w, 404, "账号不存在")
+		return
+	}
+	if err == nil {
+		_, err = tx.Exec(database.Upsert(a.store.DB.Dialect, "INSERT INTO account_preferences(target,show_in_timeline) VALUES(?,?)", []string{"target"}, []string{"show_in_timeline"}), target, *input.ShowInTimeline)
+	}
+	if err == nil {
+		_, err = tx.Exec("UPDATE monitors SET show_in_timeline=? WHERE username=?", *input.ShowInTimeline, target)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		problem(w, 500, "保存显示设置失败")
 		return
@@ -857,27 +887,44 @@ func (a *App) deleteMonitor(w http.ResponseWriter, r *http.Request) {
 	target := r.PathValue("username")
 	current, _ := a.scheduler.Current()
 	if current == target {
-		problem(w, 409, "请先停止当前采集，再移除账号")
+		problem(w, 409, "请先停止当前采集，再取消监控")
 		return
 	}
-	res, err := a.store.DB.Exec("DELETE FROM monitors WHERE username=?", target)
+	tx, err := a.store.DB.Begin()
 	if err != nil {
-		problem(w, 500, "移除失败")
+		problem(w, 500, "取消监控失败")
 		return
 	}
-	if err = missing(res); err != nil {
-		problem(w, 404, err.Error())
+	defer tx.Rollback()
+	var shown bool
+	err = tx.QueryRow("SELECT show_in_timeline FROM monitors WHERE username=?", target).Scan(&shown)
+	if errors.Is(err, sql.ErrNoRows) {
+		problem(w, 404, "监控账号不存在")
 		return
 	}
-	if err = cancelMonitorJobs(a.store.DB, target, "监控已移除，排队任务已取消"); err != nil {
-		problem(w, 500, "取消排队任务失败")
+	// Snapshot the legacy active-monitor preference before removing its row.
+	// Archive-only preferences survive cancellation, re-addition and migrations.
+	if err == nil {
+		_, err = tx.Exec(database.Upsert(a.store.DB.Dialect, "INSERT INTO account_preferences(target,show_in_timeline) VALUES(?,?)", []string{"target"}, []string{"show_in_timeline"}), target, shown)
+	}
+	if err == nil {
+		_, err = tx.Exec("DELETE FROM monitors WHERE username=?", target)
+	}
+	if err == nil {
+		_, err = tx.Exec("UPDATE collection_jobs SET status='cancelled',finished_at=?,message=? WHERE target=? AND finished_at=0", time.Now().Unix(), "监控已取消，排队任务已取消", target)
+	}
+	if err == nil {
+		_, err = tx.Exec("DELETE FROM collection_progress WHERE target=?", target)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		problem(w, 500, "取消监控失败")
 		return
 	}
-	if _, err = a.store.DB.Exec("DELETE FROM collection_progress WHERE target=?", target); err != nil {
-		problem(w, 500, "清理分页断点失败")
-		return
-	}
-	respond(w, 200, map[string]string{"message": "已移除监控，归档内容保留"})
+	a.invalidateStats()
+	respond(w, 200, map[string]string{"message": "已取消监控，归档内容和首页显示偏好保留"})
 }
 
 func (a *App) resetProgress(w http.ResponseWriter, r *http.Request) {

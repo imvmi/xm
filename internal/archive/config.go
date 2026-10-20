@@ -41,6 +41,7 @@ type Config struct {
 	PollingPaused        bool                  `json:"polling_paused"`
 	ArchiveTheme         string                `json:"archive_theme"`
 	VideoDefaultMuted    *bool                 `json:"video_default_muted,omitempty"`
+	VideoLoop            bool                  `json:"video_loop"`
 	ImageCacheSeconds    int                   `json:"image_cache_seconds"`
 	VideoCacheSeconds    int                   `json:"video_cache_seconds"`
 	TimelinePageSize     int                   `json:"timeline_page_size"`

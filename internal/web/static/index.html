@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN" data-theme-preference="system" data-theme="light">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><script src="/assets/theme.js"></script><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"><link rel="stylesheet" href="/assets/home.css"><link rel="stylesheet" href="/assets/theme.css"><link rel="stylesheet" href="/assets/media.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><script src="/assets/theme.js"></script><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><script defer src="/assets/gallery.js"></script><script defer src="/assets/video.js"></script><script defer src="/assets/accounts.js"></script><link rel="stylesheet" href="/assets/accounts.css"><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"><link rel="stylesheet" href="/assets/home.css"><link rel="stylesheet" href="/assets/theme.css"><link rel="stylesheet" href="/assets/media.css"></head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
 <svg class="svg-defs" aria-hidden="true"><defs>
@@ -36,7 +36,7 @@
 <div id="app" class="app" hidden>
   <aside class="sidebar">
     <a class="brand" href="#home"><span class="brand-mark">x<span>m</span></span><span>私人动态档案</span></a>
-    <nav aria-label="主导航"><a href="#home" data-view="home"><svg><use href="#i-home"/></svg><span class="nav-text">首页</span></a><a href="#archive" data-view="archive"><svg><use href="#i-grid"/></svg><span class="nav-text">推文归档</span><span id="nav-count" class="nav-count">0</span></a><a href="#monitors" data-view="monitors"><svg><use href="#i-users"/></svg><span class="nav-text">账号监控</span></a><a href="#activity" data-view="activity"><svg><use href="#i-clock"/></svg><span class="nav-text">任务中心</span></a><a href="#notifications" data-view="notifications"><svg><use href="#i-bell"/></svg><span class="nav-text">通知</span></a><a href="#settings" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-text">设置</span></a></nav>
+    <nav aria-label="主导航"><a href="#home" data-view="home"><svg><use href="#i-home"/></svg><span class="nav-text">首页</span></a><a href="#accounts" data-view="archive"><svg><use href="#i-users"/></svg><span class="nav-text">账号</span></a><a href="#activity" data-view="activity"><svg><use href="#i-clock"/></svg><span class="nav-text">任务</span></a><a href="#notifications" data-view="notifications"><svg><use href="#i-bell"/></svg><span class="nav-text">通知</span></a><a href="#settings" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-text">设置</span></a></nav>
     <div class="sidebar-bottom"><button id="logout" class="logout" aria-label="退出登录" title="退出登录"><svg aria-hidden="true"><use href="#i-exit"/></svg><span>退出登录</span></button></div>
   </aside>
   <main id="main-content" tabindex="-1">
@@ -46,16 +46,22 @@
       <section id="view-home" class="view">
         <div class="profile-layout">
           <div class="profile-feed" id="home-feed">
-            <header class="profile-top"><div><h1>主时间线</h1><span id="home-timeline-description" class="muted">已开启首页显示的账号 · 按发布时间倒序</span></div><button id="refresh-home" class="icon-button" aria-label="刷新主时间线"><svg><use href="#i-refresh"/></svg></button></header>
+            <header class="profile-top" data-timeline-top><div><h1><button class="timeline-top-button" type="button" aria-label="主时间线，返回顶部" title="返回顶部">主时间线</button></h1><span id="home-timeline-description" class="muted">已开启首页显示的账号 · 按发布时间倒序</span></div><button id="refresh-home" class="icon-button" aria-label="刷新主时间线"><svg><use href="#i-refresh"/></svg></button></header>
             <div class="timeline-tabs" role="tablist" aria-label="主时间线类型"><button id="home-tab-all" type="button" role="tab" aria-controls="timeline-panel" aria-selected="true" class="selected">全部</button><button id="home-tab-bookmarks" type="button" role="tab" aria-controls="timeline-panel" aria-selected="false" tabindex="-1">收藏</button></div>
           </div>
-          <aside class="profile-aside"><div class="profile-info"><h2>你的动态时间线</h2><p>汇集已开启首页显示的账号动态。可在「账号监控」中调整；隐藏不影响采集与归档。引用内容随原推文展示。</p><a href="#archive" class="button secondary wide">浏览用户档案</a></div></aside>
+          <aside class="profile-aside"><div class="profile-info"><h2>你的动态时间线</h2><p>汇集已开启首页显示的账号动态。可在「账号」中调整；隐藏不影响采集与归档。引用内容随原推文展示。</p><a href="#accounts" class="button secondary wide">浏览账号归档</a></div></aside>
         </div>
       </section>
       <section id="view-archive" class="view" hidden>
-        <div class="page-heading"><div><h1>推文归档</h1><p>查看关注账号的已保存动态。</p></div><div class="heading-actions"><button id="refresh-archive" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加账号</button></div></div>
-        <div class="stats" aria-label="归档概览"><div><span>已保存推文</span><strong id="stat-posts">—</strong><small>今日 <span id="stat-today">0</span> 条 · UTC</small></div><div><span>监控账号</span><strong id="stat-monitors">—</strong><small><span id="stat-active">0</span> 个正在监控</small></div><div><span>已归档媒体</span><strong id="stat-media">—</strong><small>图片、视频与动图</small></div><div><span>存储占用</span><strong id="stat-bytes">—</strong><small>本地与远程媒体</small></div></div>
-        <div class="collection-head"><h2>用户档案 <span id="user-count" class="count-label">0 位用户</span></h2><label class="search-box"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="user-search" type="search" placeholder="搜索名称或用户名" aria-label="搜索归档用户"></label></div>
+        <div class="page-heading"><div><h1>账号</h1><p>浏览归档、管理采集，每个账号只显示一次。</p></div><div class="heading-actions"><button id="archive-overview-toggle" type="button" class="button secondary" popovertarget="archive-overview" aria-controls="archive-overview" aria-expanded="false">归档概览</button><button id="refresh-archive" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加账号</button></div></div>
+        <div id="archive-overview" class="account-overview" popover="auto" role="region" aria-label="归档概览"><div class="account-overview-heading"><h2>归档概览</h2><button type="button" class="icon-button" popovertarget="archive-overview" popovertargetaction="hide" aria-label="关闭归档概览">×</button></div><div class="account-stats-grid" aria-label="归档概览"><div><span>已保存推文</span><strong id="stat-posts">—</strong><small>今日 <span id="stat-today">0</span> 条 · UTC</small></div><div><span>监控账号</span><strong id="stat-monitors">—</strong><small><span id="stat-active">0</span> 个正在监控</small></div><div><span>已归档媒体</span><strong id="stat-media">—</strong><small>图片、视频与动图</small></div><div><span>存储占用</span><strong id="stat-bytes">—</strong><small>本地与远程媒体</small></div></div></div>
+        <div class="account-toolbar">
+          <label class="search-box"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="user-search" type="search" placeholder="搜索名称、当前或原用户名" aria-label="搜索账号"></label>
+          <select id="monitor-filter" aria-label="筛选账号"><option value="all">全部账号</option><option value="enabled">自动采集已启用</option><option value="paused">自动采集已暂停</option><option value="archived">仅保留归档</option><option value="attention">需关注</option><option value="visible">首页显示</option><option value="hidden">首页隐藏</option></select>
+          <select id="monitor-sort" aria-label="账号排序"><option value="username">账号名 A–Z</option><option value="posts-desc">推文数量：多 → 少</option><option value="posts-asc">推文数量：少 → 多</option><option value="recent">最近采集优先</option></select>
+        </div>
+        <div class="account-list-summary"><span id="user-count">正在读取账号…</span><span>首页显示与自动采集相互独立</span></div>
+        <p id="account-monitor-status" class="muted" role="status" hidden></p>
         <div id="user-list" class="user-list" aria-live="polite"></div>
         <p id="user-status" class="muted" role="status" hidden></p>
         <div id="user-empty" class="empty-state" hidden><div class="empty-icon"><svg aria-hidden="true"><use href="#i-users"/></svg></div><h3>开始你的第一份归档</h3><p>添加一个监控账号，采集的动态会保存在这里。</p><button class="button secondary" data-action="add">添加监控账号</button></div>
@@ -64,7 +70,7 @@
       <section id="view-user" class="view" hidden>
         <div class="profile-layout">
           <div class="profile-feed">
-            <header class="profile-top"><a href="#archive" class="back-link" aria-label="返回用户列表">←</a><div><h1 id="profile-top-name"></h1><span id="profile-top-count" class="muted"></span></div><button id="refresh-user" class="icon-button" aria-label="刷新用户推文"><svg><use href="#i-refresh"/></svg></button></header>
+            <header class="profile-top" data-timeline-top><a href="#accounts" class="back-link" aria-label="返回账号列表">←</a><div><h1><button id="profile-top-name" class="timeline-top-button" type="button" aria-label="账号时间线，返回顶部" title="返回顶部"></button></h1><span id="profile-top-count" class="muted"></span></div><button id="refresh-user" class="icon-button" aria-label="刷新用户推文"><svg><use href="#i-refresh"/></svg></button></header>
             <div id="profile-header"></div>
             <div class="timeline-tabs" role="tablist" aria-label="用户动态类型"><button id="tab-posts" role="tab" aria-controls="timeline-panel" aria-selected="true" class="selected">推文</button><button id="tab-replies" role="tab" aria-controls="timeline-panel" aria-selected="false" tabindex="-1">回复</button><button id="tab-media" role="tab" aria-controls="timeline-panel" aria-selected="false" tabindex="-1">媒体</button><button id="tab-bookmarks" role="tab" aria-controls="timeline-panel" aria-selected="false" tabindex="-1">收藏</button></div>
             <div id="timeline-panel" role="tabpanel" aria-labelledby="tab-posts">
@@ -75,21 +81,11 @@
             <div id="timeline-loader" class="timeline-loader"><span id="load-status" role="status"></span><button id="load-more" class="button secondary" hidden>加载更多</button></div>
             </div>
           </div>
-          <aside class="profile-aside"><div class="profile-info"><h2>归档信息</h2><div id="profile-summary"></div><p>引用内容与原推文一起保存。图片和视频均从配置的归档存储读取。</p><a href="#monitors" class="button secondary wide">管理账号监控</a></div><div class="profile-tip"><svg><use href="#i-lock"/></svg>只有登录管理员才能查看这些内容。</div></aside>
+          <aside class="profile-aside"><div class="profile-info"><h2>归档信息</h2><div id="profile-summary"></div><p>引用内容与原推文一起保存。图片和视频均从配置的归档存储读取。</p><a href="#accounts" class="button secondary wide">管理账号</a></div><div class="profile-tip"><svg><use href="#i-lock"/></svg>只有登录管理员才能查看这些内容。</div></aside>
         </div>
-      </section>
-      <section id="view-monitors" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>账号监控</h1><p>管理自动采集与首页显示，已归档内容始终保留。</p></div><div class="heading-actions"><button id="pause-all" class="button secondary">暂停自动采集</button><button class="button primary" data-action="add"><svg><use href="#i-plus"/></svg>添加账号</button></div></div>
-        <div class="monitor-toolbar">
-          <label class="search-box"><svg><use href="#i-search"/></svg><input id="monitor-search" type="search" placeholder="搜索当前或原用户名" aria-label="搜索账号"></label>
-          <select id="monitor-filter" aria-label="筛选账号"><option value="all">全部账号</option><option value="enabled">自动采集已启用</option><option value="paused">自动采集已暂停</option><option value="visible">首页显示</option><option value="hidden">首页隐藏</option></select>
-          <select id="monitor-sort" aria-label="账号排序"><option value="username">账号名 A–Z</option><option value="posts-desc">推文数量：多 → 少</option><option value="posts-asc">推文数量：少 → 多</option><option value="recent">最近采集优先</option></select>
-        </div>
-        <div class="monitor-list-summary"><span id="monitor-count" aria-live="polite"></span><span>主时间线开关仅控制首页显示，不影响采集。</span></div>
-        <div class="table-panel monitor-table"><table><thead><tr><th>账号</th><th>主时间线</th><th>采集状态</th><th>采集计划</th><th>推文数量</th><th>操作</th></tr></thead><tbody id="monitor-rows"></tbody></table><p id="monitor-no-match" class="empty-filter" hidden>没有匹配的账号，试试其他用户名或筛选条件。</p><div id="monitor-empty" class="empty-state compact" hidden><h3>还没有监控账号</h3><p>支持公开账号，以及当前登录账号已获准关注的锁推账号。</p><button class="button primary" data-action="add">添加账号</button></div></div>
       </section>
       <section id="view-activity" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>任务中心</h1><p>查看当前任务、等待队列与最近 20 次已结束的执行。</p></div><button id="refresh-runs" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新任务</button></div>
+        <div class="page-heading"><div><h1>任务</h1><p>查看当前任务、等待队列与最近 20 次已结束的执行。</p></div><button id="refresh-runs" class="button secondary"><svg><use href="#i-refresh"/></svg>刷新任务</button></div>
         <div id="queue-wait" class="notice activity-wait" hidden></div>
         <section class="activity-section"><div class="activity-heading"><h2>当前任务</h2><span id="current-job-count" class="count-label">0</span></div><div id="current-job" class="job-list"></div></section>
         <section class="activity-section"><div class="activity-heading"><h2>等待队列</h2><span id="queue-count" class="count-label">0</span></div><div id="job-queue" class="job-list"></div></section>
@@ -113,10 +109,11 @@
         <div class="panel notification-history"><div class="panel-heading"><div><h2>最近发送记录</h2><p>最近 30 条记录。临时失败最多自动重试 5 次。</p></div><button id="notification-refresh" class="button secondary" type="button">刷新记录</button></div><div id="notification-deliveries" class="panel-body"></div></div>
       </section>
       <section id="view-settings" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>设置</h1><p>管理采集频率、X 登录与网络连接，查看归档保存位置。</p></div></div>
+        <div class="page-heading"><div><h1>设置</h1><p>管理登录凭据、采集、界面显示、归档存储与数据迁移。</p></div></div>
         <p id="settings-draft-notice" class="notice" role="status" hidden>有未保存修改。切换页面会保留草稿，刷新或关闭页面前请保存。</p>
-        <div class="settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">X 账号</button><button type="button" role="tab" id="settings-tab-collection" aria-controls="settings-collection" aria-selected="false" data-settings-tab="collection" tabindex="-1">采集设置</button><button type="button" role="tab" id="settings-tab-display" aria-controls="settings-display" aria-selected="false" data-settings-tab="display" tabindex="-1">归档显示</button><button type="button" role="tab" id="settings-tab-network" aria-controls="settings-network" aria-selected="false" data-settings-tab="network" tabindex="-1">网络代理</button><button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="false" data-settings-tab="storage" tabindex="-1">归档存储</button><button type="button" role="tab" id="settings-tab-migration" aria-controls="settings-migration" aria-selected="false" data-settings-tab="migration" tabindex="-1">数据迁移</button></div>
+        <div class="settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">X 登录</button><button type="button" role="tab" id="settings-tab-collection" aria-controls="settings-collection" aria-selected="false" data-settings-tab="collection" tabindex="-1">采集设置</button><button type="button" role="tab" id="settings-tab-display" aria-controls="settings-display" aria-selected="false" data-settings-tab="display" tabindex="-1">界面显示</button><button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="false" data-settings-tab="storage" tabindex="-1">归档存储</button><button type="button" role="tab" id="settings-tab-migration" aria-controls="settings-migration" aria-selected="false" data-settings-tab="migration" tabindex="-1">数据迁移</button></div>
         <section id="settings-account" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-account">
+          <p class="field-help">这里管理采集时使用的 X 登录凭据，不是 XM 管理员登录。要添加或管理被采集的账号，请前往<a href="#accounts">「账号」</a>。</p>
           <div class="panel"><div class="panel-heading"><div><h2>X 登录凭据</h2><p>仅采集当前 X 账号有权访问的动态。</p></div><span id="cookie-badge" class="badge neutral">未导入</span></div><div class="panel-body"><p id="cookie-status" class="muted"></p><form id="cookie-form"><label for="cookie-content">粘贴 Cookie</label><textarea id="cookie-content" rows="5" placeholder="auth_token=…; ct0=…&#10;也支持 JSON 和 Netscape 格式" autocomplete="off" spellcheck="false"></textarea><div class="file-row"><label class="button secondary file-button">选择 Cookie 文件<input id="cookie-file" type="file" accept=".json,.txt" hidden></label><span id="cookie-file-name" class="muted">或直接粘贴到上方</span></div><p class="field-help">auth_token 与 ct0 明文保存在数据库中，导入后不会回显。锁推账号需要先获准关注。</p><button class="button primary" type="submit">保存 Cookie</button></form></div></div>
           <div class="panel"><div class="panel-heading"><div><h2>从 API 获取 Cookie</h2><p>保存接口配置，手动获取或在登录失效时自动恢复。</p></div></div><div class="panel-body">
             <form id="cookie-api-form" autocomplete="off"><fieldset id="cookie-api-fields" class="cookie-api-fields">
@@ -135,11 +132,11 @@
               <div class="form-actions"><button class="button secondary" type="submit" value="save">保存接口配置</button><button class="button primary" type="submit" value="fetch">保存并获取 Cookie</button></div>
             </fieldset><p id="cookie-api-result" class="field-help" role="status" aria-live="polite"></p></form>
           </div></div>
-          <div class="panel"><div class="panel-heading"><div><h2>限流状态</h2><p>手动清除 XM 在收到 429 后设置的本地冷却。</p></div></div><div class="panel-body"><p class="field-help">清空后，已启用的任务将按自动轮询和暂停设置继续执行。归档数据、分页断点和排队任务会保留。此操作不能解除 X 服务器端的限制，仍可能再次收到 429。</p><button id="reset-rate-limit" class="button secondary" type="button">清空限流状态</button><p id="rate-limit-reset-result" class="field-help" role="status" aria-live="polite"></p></div></div>
-          <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#monitors">前往账号监控 →</a></p>
+          <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#accounts">前往账号 →</a></p>
         </section>
         <section id="settings-collection" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-collection" hidden>
           <div class="panel"><div class="panel-heading"><div><h2>采集设置</h2><p>所有监控账号共用。修改后请保存，正在运行的任务继续使用原设置。</p></div></div><div class="panel-body">
+            <div class="global-collection-control"><div><h3 id="global-collection-label">全局自动采集</h3><p id="global-collection-help" class="field-help">切换后立即保存。关闭后暂停所有账号的自动采集，当前任务继续执行，仍可手动采集；开启后按各账号的采集设置运行。</p></div><button id="global-auto-collection" type="button" class="timeline-switch" role="switch" aria-checked="false" aria-labelledby="global-collection-label" aria-describedby="global-collection-help" disabled><span class="switch-track" aria-hidden="true"></span><span id="global-collection-state">加载中</span></button></div>
             <form id="collection-settings-form">
               <section class="collection-plan" aria-labelledby="collection-plan-title"><h3 id="collection-plan-title">采集计划</h3><p id="plan-summary" class="group-summary"></p>
                 <div class="field-pair"><div><label for="default-interval">自动采集周期（小时）</label><input id="default-interval" type="number" min="1" max="168" step="any" required value="6"></div><div><label for="queue-interval">账号之间的等待时间（秒）</label><input id="queue-interval" type="number" min="0" max="3600" step="1" required value="60"></div></div>
@@ -176,34 +173,40 @@
               <p id="collection-settings-result" class="field-help" role="status" aria-live="polite"></p>
             </form>
           </div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>网络代理</h2><p>用于访问 X 和下载媒体。通知渠道可独立选择是否使用。</p></div></div><div class="panel-body"><form id="settings-form"><label for="proxy-mode">连接方式</label><select id="proxy-mode"><option value="direct">直连</option><option value="proxy">使用代理</option></select><div id="proxy-fields"><label for="proxy-url">新代理地址</label><input id="proxy-url" type="password" autocomplete="new-password" placeholder="http://127.0.0.1:7890 或 socks5://…"><p id="proxy-label" class="field-help"></p><p class="field-help">支持 HTTP、HTTPS、SOCKS5 及用户名密码。留空保留已保存的代理。</p></div><div class="form-actions"><button class="button primary" type="submit">保存代理设置</button><button id="test-proxy" class="button secondary" type="button">测试连通性</button></div><p id="proxy-result" class="field-help" role="status"></p></form></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>限流与恢复</h2><p>手动清除 XM 在收到 429 后设置的采集冷却。</p></div></div><div class="panel-body"><p class="field-help">清空后，已启用的任务将按自动轮询和暂停设置继续执行。归档数据、分页断点和排队任务会保留。此操作不能解除 X 服务器端的限制，仍可能再次收到 429。</p><button id="reset-rate-limit" class="button secondary" type="button">清除采集冷却</button><p id="rate-limit-reset-result" class="field-help" role="status" aria-live="polite"></p></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>Chrome 与登录环境</h2><p>检查服务器采集 X 所需的完整运行条件。</p></div><span id="chrome-mode" class="badge neutral">Headless</span></div><div class="panel-body"><p class="muted">诊断会启动 Chrome，并使用数据库中已保存的 Cookie 打开 X；不会读取或保存推文。</p><div class="form-actions"><button id="test-chrome" class="button secondary" type="button">测试 Chrome 与 Cookie</button></div><p id="chrome-result" class="field-help diagnostic-result" role="status"></p></div></div>
+          <p class="settings-caption">诊断会分别显示 Chrome、Cookie、X 网络和登录状态。</p>
         </section>
         <section id="settings-display" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-display" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>归档显示</h2><p>自定义页面外观、时间线加载数量、媒体播放与客户端缓存。</p></div></div><div class="panel-body">
+          <div class="panel"><div class="panel-heading"><div><h2>界面显示</h2><p>设置全站外观、时间线加载、视频播放与浏览器缓存。</p></div></div><div class="panel-body">
             <form id="archive-display-form">
+              <section class="display-preference-group" aria-labelledby="display-appearance-title"><h3 id="display-appearance-title">外观与时间线</h3>
               <label for="archive-theme">主题模式</label><select id="archive-theme"><option value="system">跟随系统</option><option value="light">日间模式</option><option value="dark">夜间模式</option></select>
               <p class="field-help">跟随系统时，页面会根据设备当前的外观偏好自动切换。</p>
               <label for="timeline-page-size">时间线每次加载推文数量</label><input id="timeline-page-size" type="number" min="10" max="1000" step="1" required value="24">
-              <p class="field-help">用于归档首页和用户时间线的每批加载数量，范围 10～1000 条。</p>
-              <h3>媒体播放与客户端缓存</h3>
+              <p class="field-help">用于首页和账号时间线的每批加载数量，范围 10～1000 条。</p>
+              </section>
+              <section class="display-preference-group" aria-labelledby="display-video-title"><h3 id="display-video-title">视频播放</h3>
+              <label class="check-label"><input id="video-loop" type="checkbox"> 视频循环播放</label>
+              <p class="field-help">默认关闭。开启后，点击播放的视频将在结束时自动重播。</p>
               <label class="check-label"><input id="video-default-muted" type="checkbox" checked> 视频默认静音</label>
-              <p class="field-help">视频点击后才加载，不生成封面。此开关控制每次开始播放时是否静音，也可在播放器内临时开启或关闭声音。</p>
+              <p class="field-help">视频点击后才加载，不生成封面。此开关控制每次开始播放时是否静音，单击画面可切换全屏与内嵌，通过独立按钮播放、暂停或临时调整声音。</p>
+              </section>
+              <section class="display-preference-group" aria-labelledby="display-cache-title"><h3 id="display-cache-title">浏览器缓存</h3><p class="field-help">保存在当前设备的浏览器中，对本地和远端存储均有效；与「归档存储」中的服务器缓存相互独立。</p>
               <div class="field-pair"><div><label for="image-cache-hours">图片缓存时间（小时）</label><input id="image-cache-hours" type="number" min="1" max="720" step="1" required value="168"></div><div><label for="video-cache-minutes">视频缓存时间（分钟）</label><input id="video-cache-minutes" type="number" min="1" max="1440" step="1" required value="10"></div></div>
               <p class="field-help">原图默认 168 小时（7 天），原视频默认 10 分钟；不压缩或转码。有效期不等于自动删除时间，浏览器自行管理缓存空间。修改影响新响应，已缓存的内容可能继续使用原有效期；个人设备退出登录后也可能保留缓存。头像固定缓存 1 小时。</p>
+              </section>
               <div class="form-actions"><button class="button primary" type="submit">保存显示设置</button></div><p id="archive-display-result" class="field-help" role="status" aria-live="polite"></p>
             </form>
           </div></div>
         </section>
-        <section id="settings-network" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-network" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>网络代理</h2><p>用于访问 X 和下载媒体。通知渠道可独立选择是否使用。</p></div></div><div class="panel-body"><form id="settings-form"><label for="proxy-mode">连接方式</label><select id="proxy-mode"><option value="direct">直连</option><option value="proxy">使用代理</option></select><div id="proxy-fields"><label for="proxy-url">新代理地址</label><input id="proxy-url" type="password" autocomplete="new-password" placeholder="http://127.0.0.1:7890 或 socks5://…"><p id="proxy-label" class="field-help"></p><p class="field-help">支持 HTTP、HTTPS、SOCKS5 及用户名密码。留空保留已保存的代理。</p></div><div class="form-actions"><button class="button primary" type="submit">保存代理设置</button><button id="test-proxy" class="button secondary" type="button">测试连通性</button></div><p id="proxy-result" class="field-help" role="status"></p></form></div></div>
-          <div class="panel"><div class="panel-heading"><div><h2>Chrome 与登录环境</h2><p>检查服务器采集 X 所需的完整运行条件。</p></div><span id="chrome-mode" class="badge neutral">Headless</span></div><div class="panel-body"><p class="muted">诊断会启动 Chrome，并使用数据库中已保存的 Cookie 打开 X；不会读取或保存推文。</p><div class="form-actions"><button id="test-chrome" class="button secondary" type="button">测试 Chrome 与 Cookie</button></div><p id="chrome-result" class="field-help diagnostic-result" role="status"></p></div></div>
-          <p class="settings-caption">诊断会分别显示 Chrome、Cookie、X 网络和登录状态。MySQL 使用独立的 TCP 连接。</p>
-        </section>
         <section id="settings-storage" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-storage" hidden>
-          <div class="storage-lock-note"><svg><use href="#i-lock"/></svg><div><strong>存储目的地受保护</strong><p>通过“数据迁移”切换数据库，或在本地与远端之间迁移媒体。<span id="remote-cache-note" hidden>远程媒体缓存可在下方调整。</span></p></div></div>
+          <div class="storage-lock-note"><svg><use href="#i-lock"/></svg><div><strong>存储目的地受保护</strong><p>通过“数据迁移”切换数据库，或在本地与远端之间迁移媒体。<span id="remote-cache-note" hidden>远端媒体的服务器缓存可在下方调整。</span></p></div></div>
           <div class="storage-summary-grid"><div class="panel"><div class="panel-heading"><div><h2>归档数据库</h2></div></div><div class="panel-body"><h3 id="database-label">数据库</h3><p id="database-help" class="field-help"></p></div></div>
           <div class="panel storage-panel"><div class="panel-heading"><div><h2>媒体存储</h2></div><span id="storage-badge" class="badge neutral">本地磁盘</span></div><div id="storage-readonly" class="panel-body"><h3 id="storage-readonly-name"></h3><p id="storage-readonly-detail" class="muted"></p><p class="field-help">图片、视频和引用媒体保存在此位置；凭据不会下发到浏览器。</p></div></div></div>
-          <div id="remote-cache-panel" class="panel remote-cache-panel" hidden><div class="panel-heading"><div><h2>远程媒体本地缓存</h2><p>减少 WebDAV / S3 的重复读取和视频范围请求。</p></div><span id="remote-cache-badge" class="badge neutral">未启用</span></div><div class="panel-body"><form id="remote-cache-form"><label class="check-label"><input id="remote-cache-enabled" type="checkbox">启用本地磁盘缓存</label><div class="field-pair"><div><label for="remote-cache-size">容量上限</label><div class="input-unit"><input id="remote-cache-size" type="number" min="64" max="102400" step="64" required><span>MiB</span></div></div><div><label>当前占用</label><p id="remote-cache-usage" class="cache-usage">0 B</p></div></div><p class="field-help">首次访问会完整读取远程媒体并写入缓存，之后优先从本地返回；空间超限时自动淘汰最久未使用的文件。超过缓存容量的单个文件仍直接从远程读取。</p><div class="form-actions"><button class="button primary" type="submit">保存缓存设置</button><button id="remote-cache-clear" class="button secondary" type="button">清空本地缓存</button></div><p id="remote-cache-result" class="field-help" role="status" aria-live="polite"></p></form></div></div>
-          <p class="settings-caption">数据库保存正文、Cookie、管理员凭据和运行配置；媒体文件与启动配置需一并备份，本地缓存无需备份。</p>
+          <div id="remote-cache-panel" class="panel remote-cache-panel" hidden><div class="panel-heading"><div><h2>服务器媒体缓存</h2><p>在 XM 服务器上缓存 WebDAV / S3 媒体，减少远端重复读取；不是浏览器缓存。</p></div><span id="remote-cache-badge" class="badge neutral">未启用</span></div><div class="panel-body"><form id="remote-cache-form"><label class="check-label"><input id="remote-cache-enabled" type="checkbox">启用服务器磁盘缓存</label><div class="field-pair"><div><label for="remote-cache-size">容量上限</label><div class="input-unit"><input id="remote-cache-size" type="number" min="64" max="102400" step="64" required><span>MiB</span></div></div><div><label>当前占用</label><p id="remote-cache-usage" class="cache-usage">0 B</p></div></div><p class="field-help">首次访问会完整读取远程媒体并写入缓存，之后优先从本地返回；空间超限时自动淘汰最久未使用的文件。超过缓存容量的单个文件仍直接从远程读取。</p><div class="form-actions"><button class="button primary" type="submit">保存缓存设置</button><button id="remote-cache-clear" class="button secondary" type="button">清空服务器缓存</button></div><p id="remote-cache-result" class="field-help" role="status" aria-live="polite"></p></form></div></div>
+          <p class="settings-caption">数据库保存正文、Cookie、管理员凭据和运行配置；媒体文件与启动配置需一并备份，服务器缓存无需备份。</p>
         </section>
         <section id="settings-migration" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-migration" hidden>
           <p class="field-help">数据库与媒体文件分别迁移，一次执行一个任务。本地指运行 XM 的服务器磁盘，源数据库和源文件会保留。</p>
@@ -241,9 +244,9 @@
                 </div>
                 <div id="migration-remote-fields" hidden>
                   <div class="migration-fields">
-                    <div><label for="migration-remote-kind">远端类型</label><select id="migration-remote-kind"><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></select></div>
+                    <div><label for="migration-remote-kind">远端类型</label><select id="migration-remote-kind"><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option><option value="smb">Samba (SMB)</option></select></div>
                     <div><label for="migration-remote-name">连接名称</label><input id="migration-remote-name" placeholder="我的远端存储" autocomplete="off"></div>
-                    <div class="migration-field-wide"><label for="migration-remote-endpoint">服务地址</label><input id="migration-remote-endpoint" type="url" placeholder="https://…" autocomplete="off"><p class="field-help">S3 留空使用 AWS 官方地址；WebDAV 填写已存在的根目录地址。</p></div>
+                    <div class="migration-field-wide"><label for="migration-remote-endpoint">服务地址</label><input id="migration-remote-endpoint" type="url" placeholder="https://…" autocomplete="off"><p id="migration-endpoint-help" class="field-help">S3 留空使用 AWS 官方地址；WebDAV 填写已存在的根目录地址。</p></div>
                     <div><label for="migration-remote-prefix">目录前缀（可选）</label><input id="migration-remote-prefix" placeholder="xm" autocomplete="off"></div>
                     <div><label for="migration-remote-timeout">请求超时（秒）</label><input id="migration-remote-timeout" type="number" min="5" max="3600" value="120"></div>
                   </div>
@@ -256,22 +259,23 @@
                     <label class="check-label"><input id="migration-s3-path-style" type="checkbox" checked>使用路径样式（兼容存储）</label>
                   </div>
                   <div id="migration-webdav-fields" class="migration-fields" hidden>
-                    <div><label for="migration-webdav-user">用户名</label><input id="migration-webdav-user" autocomplete="off"></div>
+                    <div><label id="migration-user-label" for="migration-webdav-user">用户名</label><input id="migration-webdav-user" autocomplete="off"></div>
                     <div><label for="migration-webdav-password">密码</label><input id="migration-webdav-password" type="password" autocomplete="new-password"></div>
                   </div>
-                  <label class="check-label"><input id="migration-remote-proxy" type="checkbox">使用系统已配置的网络代理</label>
+                  <label id="migration-proxy-option" class="check-label"><input id="migration-remote-proxy" type="checkbox">使用系统已配置的网络代理</label>
                 </div>
                 <button id="migration-preview" type="button" class="button secondary">检查存储迁移</button>
               </div>
             </div>
           </div>
+          <div class="panel"><div class="panel-heading"><div><h2>迁移后的本地副本</h2><p>仅清理已迁出且重新校验通过的媒体，数据库保留在本机。</p></div></div><div class="panel-body"><p id="migration-cleanup-summary" class="field-help">正在读取副本统计…</p><button id="migration-cleanup-preview" type="button" class="button secondary" disabled>检查本地副本清理</button></div></div>
           <p id="migration-error" class="field-help" role="alert"></p>
           <div id="migration-preview-panel" class="panel migration-preview" hidden><div class="panel-body"><h3 id="migration-preview-title">迁移前检查</h3><p id="migration-preview-summary"></p><p id="migration-preview-warning" class="field-help"></p>
-            <div id="migration-confirm-panel" hidden><label for="migration-confirm">输入“开始迁移”确认操作</label><input id="migration-confirm" autocomplete="off" placeholder="开始迁移"><button id="migration-start" type="button" class="button primary" disabled>确认开始迁移</button></div>
+            <div id="migration-confirm-panel" hidden><label id="migration-confirm-label" for="migration-confirm">输入“开始迁移”确认操作</label><input id="migration-confirm" autocomplete="off" placeholder="开始迁移"><button id="migration-start" type="button" class="button primary" disabled>确认开始迁移</button></div>
           </div></div>
           <div id="migration-job-panel" class="panel" hidden><div class="panel-heading"><div><h2>迁移进度</h2><p id="migration-job-kind"></p></div><span id="migration-badge" class="badge neutral">未开始</span></div><div class="panel-body">
             <p id="migration-phase" role="status" aria-live="polite"></p><progress id="migration-progress" max="1" value="0" aria-label="迁移进度"></progress><p id="migration-counts" class="field-help"></p><p id="migration-message"></p>
-            <div class="form-actions"><button id="migration-pause" type="button" class="button secondary">暂停</button><button id="migration-retry" type="button" class="button secondary">继续 / 重试剩余项</button></div>
+            <div class="form-actions"><button id="migration-pause" type="button" class="button secondary">暂停</button><button id="migration-retry" type="button" class="button secondary">继续 / 重试剩余项</button><button id="migration-acknowledge" type="button" class="button primary" hidden>确认完成并隐藏</button></div>
             <details id="migration-failures-panel" hidden><summary>失败详情（最多显示 100 项）</summary><ul id="migration-failures" class="migration-failures"></ul></details>
             <p class="field-help">存储重试仅处理仍在来源存储中的文件；数据库重试会重新建立完整快照，MySQL 目标须保持为空。已切换后新增的数据不会同步回源位置。</p>
           </div></div>
@@ -280,10 +284,10 @@
     </div>
   </main>
 </div>
-<dialog id="monitor-dialog"><form id="monitor-form"><div class="dialog-heading"><div><h2 id="monitor-dialog-title">添加监控账号</h2></div><button type="button" class="icon-button" data-close="monitor-dialog" aria-label="关闭">×</button></div><label for="monitor-username">X 用户名或主页地址</label><input id="monitor-username" placeholder="@username 或 https://x.com/username" required autocomplete="off"><p class="field-help">自动采集使用「设置 → 采集」中的统一周期。</p><label class="check-label"><input id="monitor-replies" type="checkbox">包含该账号发出的回复</label><label class="check-label"><input id="monitor-enabled" type="checkbox" checked>启用自动轮询</label><label class="check-label"><input id="monitor-timeline" type="checkbox" checked><span class="option-copy"><strong>在主时间线显示</strong><small>关闭后仍会采集，可在该账号归档中查看。</small></span></label><p class="field-help">首次采集及修改“包含回复”后会重新建立历史基线；增量采集遇到已归档边界后停止，未完成任务保留断点。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="monitor-dialog">取消</button><button class="button primary" type="submit">保存账号</button></div></form></dialog>
-<dialog id="confirm-dialog"><h2>移除监控账号？</h2><p id="confirm-text"></p><p class="muted">已归档的推文与媒体会保留。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="confirm-dialog">取消</button><button id="confirm-delete" class="button danger" type="button">移除监控</button></div></dialog>
+<dialog id="monitor-dialog"><form id="monitor-form"><div class="dialog-heading"><div><h2 id="monitor-dialog-title">添加监控账号</h2></div><button type="button" class="icon-button" data-close="monitor-dialog" aria-label="关闭">×</button></div><label for="monitor-username">X 用户名或主页地址</label><input id="monitor-username" placeholder="@username 或 https://x.com/username" required autocomplete="off"><p class="field-help">自动采集使用「设置 → 采集设置」中的统一周期。</p><label class="check-label"><input id="monitor-replies" type="checkbox">包含该账号发出的回复</label><label class="check-label"><input id="monitor-enabled" type="checkbox" checked>启用自动轮询</label><label class="check-label"><input id="monitor-timeline" type="checkbox" checked><span class="option-copy"><strong>在主时间线显示</strong><small>关闭后仍会采集，可在该账号归档中查看。</small></span></label><p class="field-help">首次采集及修改“包含回复”后会重新建立历史基线；增量采集遇到已归档边界后停止，未完成任务保留断点。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="monitor-dialog">取消</button><button class="button primary" type="submit">保存账号</button></div></form></dialog>
+<dialog id="confirm-dialog"><h2>取消监控？</h2><p id="confirm-text"></p><p class="muted">已归档的推文、媒体、收藏和首页显示偏好会保留。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="confirm-dialog">取消</button><button id="confirm-delete" class="button danger" type="button">取消监控</button></div></dialog>
 <dialog id="notification-delete-dialog"><h2>移除通知渠道？</h2><p id="notification-delete-text"></p><p class="muted">待发送消息会取消，正在发送的请求可能已经送达。历史发送记录保留。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="notification-delete-dialog">取消</button><button id="notification-delete-confirm" type="button" class="button danger">确认移除</button></div></dialog>
-<dialog id="image-dialog" class="image-dialog"><button class="image-close icon-button" data-close="image-dialog" aria-label="关闭图片">×</button><button id="image-prev" class="image-nav image-prev" type="button" aria-label="上一张图片" hidden>‹</button><img id="large-image" alt="已归档图片"><button id="image-next" class="image-nav image-next" type="button" aria-label="下一张图片" hidden>›</button><span id="image-count" class="image-count" aria-live="polite" hidden></span></dialog>
+<dialog id="image-dialog" class="image-dialog" tabindex="-1" aria-label="图片查看器：左右滑动切换，下滑关闭；方向键切换，Esc 关闭"><div id="image-viewport"><div id="image-track"><div class="image-slide" aria-hidden="true"><img id="gallery-before" alt="" draggable="false"></div><div class="image-slide"><img id="large-image" alt="已归档图片" draggable="false"></div><div class="image-slide" aria-hidden="true"><img id="gallery-after" alt="" draggable="false"></div></div></div><span id="image-count" class="image-count" aria-live="polite" hidden></span></dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 <link rel="stylesheet" href="/assets/migrations.css"><script defer src="/assets/migrations.js"></script>
 </body></html>

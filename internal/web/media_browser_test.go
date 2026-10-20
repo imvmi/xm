@@ -101,7 +101,7 @@ func TestMediaLazyPlaybackAndBrowserCache(t *testing.T) {
 		t.Fatal("browser did not reuse original image or eagerly loaded video", imageRequests, images.Load(), videos.Load())
 	}
 	eval(`(()=>{document.querySelector('.video-load').click();return true})()`)
-	wait(`document.querySelector('video').getAttribute('src')?.includes('?v=') && document.querySelector('video').muted && !document.querySelector('video').hidden`)
+	wait(`document.querySelector('video').getAttribute('src')?.includes('?v=') && document.querySelector('video').muted && !document.querySelector('video').loop && !document.querySelector('video').hidden`)
 	deadline := time.Now().Add(5 * time.Second)
 	for videos.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(25 * time.Millisecond)
@@ -113,12 +113,12 @@ func TestMediaLazyPlaybackAndBrowserCache(t *testing.T) {
 	wait(`state.view==='settings' && window.testPlayingVideo.getAttribute('src')===null && window.testPlayingVideo.paused`)
 	eval(`(()=>{$('settings-tab-display').click();return true})()`)
 	wait(`!$('settings-display').hidden && $('image-cache-hours').value==='168'`)
-	eval(`(()=>{$('video-default-muted').checked=false;$('image-cache-hours').value='48';$('video-cache-minutes').value='5';$('archive-display-form').requestSubmit();return true})()`)
-	wait(`state.settings.video_default_muted===false && state.settings.image_cache_seconds===172800 && state.settings.video_cache_seconds===300`)
+	eval(`(()=>{$('video-default-muted').checked=false;$('video-loop').checked=true;$('image-cache-hours').value='48';$('video-cache-minutes').value='5';$('archive-display-form').requestSubmit();return true})()`)
+	wait(`state.settings.video_default_muted===false && state.settings.video_loop===true && state.settings.image_cache_seconds===172800 && state.settings.video_cache_seconds===300`)
 	eval(`(()=>{location.hash='home';return true})()`)
 	wait(`state.view==='home' && !state.postsLoading && !!document.querySelector('.video-load')`)
 	eval(`(()=>{document.querySelector('.video-load').click();return true})()`)
-	if !eval(`document.querySelector('video').muted===false && document.querySelector('video').getAttribute('src')!==null`) {
+	if !eval(`document.querySelector('video').muted===false && document.querySelector('video').loop && document.querySelector('video').getAttribute('src')!==null`) {
 		t.Fatal("saved mute preference not applied")
 	}
 	// Force loading even if Chrome requires an extra gesture for unmuted play.

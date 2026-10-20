@@ -1,0 +1,5 @@
+/app/
+/.download-token
+/.download-path
+/download-url.txt
+/__pycache__/
