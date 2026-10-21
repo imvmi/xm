@@ -34,6 +34,9 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	if _, err := a.store.DB.Exec("UPDATE monitors SET last_error='请求暂时失败，请检查网络连接后重试；已有推文与分页断点均已保留。',baseline_status='blocked' WHERE username='long_username15'"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := a.store.DB.Exec("UPDATE monitors SET replies=1 WHERE username='bob'"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(a.Handler())
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
@@ -71,6 +74,14 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	if !eval(`document.querySelector('[data-view=archive] .nav-text').textContent==='账号' && document.querySelector('#view-archive h1').textContent==='账号' && !document.querySelector('#view-monitors') && document.querySelectorAll('.sidebar nav a').length===5 && location.hash==='#accounts'`) {
 		t.Fatal("account pages not consolidated")
 	}
+	openMenu := func(username string) {
+		t.Helper()
+		eval(fmt.Sprintf(`(()=>{document.querySelector('[data-monitor="%s"][data-op=menu]').click();return true})()`, username))
+		wait(fmt.Sprintf(`$('account-menu-dialog').open && accountMenuTarget===%q`, username))
+	}
+	if !eval(`!document.querySelector('#user-list details') && [...$('user-list').children].every(card=>card.querySelectorAll('[role=switch]').length===2)`) {
+		t.Fatal("cards must contain two switches and no collection details")
+	}
 	for _, tc := range []struct{ sort, first string }{{"posts-desc", "long_username15"}, {"posts-asc", "alice"}, {"recent", "long_username15"}, {"username", "alice"}} {
 		eval(fmt.Sprintf(`(()=>{$('monitor-sort').value=%q;$('monitor-sort').dispatchEvent(new Event('change'));return true})()`, tc.sort))
 		if !eval(fmt.Sprintf(`document.querySelector('#user-list [data-op=timeline]').dataset.monitor===%q`, tc.first)) {
@@ -80,6 +91,21 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	// Inline switch saves independently and only removes the account from home.
 	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=timeline]').click();return true})()`)
 	wait(`state.monitors.find(m=>m.username==='bob').show_in_timeline===false && document.querySelector('[data-monitor=bob][data-op=timeline]').getAttribute('aria-checked')==='false'`)
+	// Collection and visibility switches save independently, without opening a menu.
+	wait(`!accountPending.size`)
+	eval(`(()=>{const original=window.fetch;window.accountToggleBodies=[];window.fetch=(url,...args)=>{if(String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT')accountToggleBodies.push(JSON.parse(args[0].body));return original(url,...args)};document.querySelector('[data-monitor=bob][data-op=toggle]').click();return true})()`)
+	wait(`!accountPending.size && !state.monitors.find(m=>m.username==='bob').enabled`)
+	if !eval(`!$('account-menu-dialog').open && !state.monitors.find(m=>m.username==='bob').show_in_timeline && state.monitors.find(m=>m.username==='bob').replies && document.querySelector('[data-monitor=bob][data-op=toggle]').getAttribute('aria-checked')==='false' && accountToggleBodies.length===1 && !('show_in_timeline' in accountToggleBodies[0])`) {
+		t.Fatal("collection toggle changed visibility or opened management")
+	}
+	// Simulate a failed save: the switch must retain its server-confirmed state.
+	eval(`(()=>{window.accountTestFetch=window.fetch;window.fetch=(url,...args)=>String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'?Promise.resolve(new Response(JSON.stringify({error:'fixture toggle failure'}),{status:500})):accountTestFetch(url,...args);document.querySelector('[data-monitor=bob][data-op=toggle]').click();return true})()`)
+	wait(`!accountPending.size && $('toast').textContent==='fixture toggle failure'`)
+	if !eval(`!state.monitors.find(m=>m.username==='bob').enabled && document.querySelector('[data-monitor=bob][data-op=toggle]').getAttribute('aria-checked')==='false'`) {
+		t.Fatal("failed toggle changed state")
+	}
+	eval(`(()=>{window.fetch=window.accountTestFetch;document.querySelector('[data-monitor=bob][data-op=toggle]').click();return true})()`)
+	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').enabled`)
 	eval(`(()=>{$('monitor-filter').value='hidden';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
 	if !eval(`document.querySelectorAll('#user-list .account-card').length===1 && $('user-list').textContent.includes('@bob')`) {
 		t.Fatal("hidden filter")
@@ -95,9 +121,10 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	if !eval(`document.querySelector('[data-monitor=bob][data-op=timeline]').getAttribute('aria-checked')==='false'`) {
 		t.Fatal("preference lost on reload")
 	}
-	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=edit]').click();return true})()`)
+	openMenu("bob")
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
 	wait(`$('monitor-dialog').open`)
-	if !eval(`!$('monitor-timeline').checked && $('monitor-enabled').checked`) {
+	if !eval(`!$('account-menu-dialog').open && !$('monitor-timeline').checked && $('monitor-enabled').checked`) {
 		t.Fatal("edit did not load preference")
 	}
 	eval(`(()=>{$('monitor-timeline').checked=true;document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
@@ -106,10 +133,20 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	if !eval(`!$('user-empty').hidden && document.querySelectorAll('#user-list .account-card').length===0`) {
 		t.Fatal("empty search")
 	}
-	eval(`(()=>{$('user-search').value='';$('user-search').dispatchEvent(new Event('input'));$('monitor-sort').value='posts-desc';$('monitor-sort').dispatchEvent(new Event('change'));document.querySelector('[data-account=long_username15] .account-details').open=true;return true})()`)
+	eval(`(()=>{$('user-search').value='';$('user-search').dispatchEvent(new Event('input'));$('monitor-sort').value='posts-desc';$('monitor-sort').dispatchEvent(new Event('change'));document.querySelector('[data-account=long_username15] .account-stats').click();return true})()`)
+	wait(`$('account-menu-dialog').open && accountMenuTarget==='long_username15'`)
+	if !eval(`$('account-menu-content').textContent.includes('编辑采集设置') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
+		t.Fatal("card click did not show operations or hid the attention indicator")
+	}
+	eval(`(()=>{document.querySelector('#account-menu-content .account-details').open=true;return true})()`)
+	wait(`accountExpanded.has('long_username15:status')`)
 	// Refresh must preserve ordering and expanded diagnostics.
 	eval(`(()=>{refreshMonitors();return true})()`)
-	wait(`document.querySelector('#user-list [data-op=timeline]').dataset.monitor==='long_username15' && document.querySelector('[data-account=long_username15] .account-details').open`)
+	wait(`document.querySelector('#user-list [data-op=timeline]').dataset.monitor==='long_username15' && document.querySelector('#account-menu-content .account-details').open && $('account-menu-content').textContent.includes('已有推文与分页断点均已保留')`)
+	if err := chromedp.Do(browser, chromedp.KeyEvent("\u001b")); err != nil {
+		t.Fatal(err)
+	}
+	wait(`!$('account-menu-dialog').open`)
 	if !eval(`!$('archive-overview').matches(':popover-open') && !document.querySelector('#view-archive #pause-all') && document.querySelector('#view-archive .heading-actions').firstElementChild===$('archive-overview-toggle')`) {
 		t.Fatal("overview must be hidden by default and replace the global pause action")
 	}
@@ -129,10 +166,10 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 			if !eval(`(()=>{const grid=document.querySelector('.account-stats-grid'),box=document.querySelector('.account-overview'),cells=[...grid.children],columns=getComputedStyle(grid).gridTemplateColumns.split(' ').length;return columns===2 && box.matches(':popover-open') && box.getBoundingClientRect().left>=0 && box.getBoundingClientRect().right<=innerWidth && box.getBoundingClientRect().bottom<=innerHeight && $('stat-posts').getBoundingClientRect().left-box.getBoundingClientRect().left>=14 && Math.abs(box.getBoundingClientRect().bottom-grid.getBoundingClientRect().bottom)<=2 && cells.every(cell=>parseFloat(getComputedStyle(cell).paddingLeft)>=14 && cell.scrollWidth<=cell.clientWidth+1)})()`) {
 				t.Fatalf("archive overview spacing or columns incorrect %d %s", width, theme)
 			}
-			if !eval(`(()=>{const card=document.querySelector('[data-account=long_username15]'),name=card.querySelector('.account-name'),handle=card.querySelector('.user-handle'),closed=document.querySelector('[data-account=alice]'),summary=closed.querySelector('.account-details>summary');return [name,handle].every(el=>getComputedStyle(el).whiteSpace==='nowrap' && getComputedStyle(el).textOverflow==='ellipsis' && el.getBoundingClientRect().height<=parseFloat(getComputedStyle(el).lineHeight)+1 && el.title.includes('long_username15')) && closed.getBoundingClientRect().bottom-summary.getBoundingClientRect().bottom<=8 && summary.getBoundingClientRect().height>=40})()`) {
+			if !eval(`(()=>{const card=document.querySelector('[data-account=long_username15]'),name=card.querySelector('.account-name'),handle=card.querySelector('.user-handle'),closed=document.querySelector('[data-account=alice]'),controls=closed.querySelector('.account-controls');return [name,handle].every(el=>getComputedStyle(el).whiteSpace==='nowrap' && getComputedStyle(el).textOverflow==='ellipsis' && el.getBoundingClientRect().height<=parseFloat(getComputedStyle(el).lineHeight)+1 && el.title.includes('long_username15')) && closed.getBoundingClientRect().bottom-controls.getBoundingClientRect().bottom<=8 && !card.querySelector('.account-details')})()`) {
 				t.Fatalf("account truncation or bottom spacing incorrect %d %s", width, theme)
 			}
-			if !eval(`(()=>{const b=document.querySelector('[data-op=timeline]');return b.getBoundingClientRect().height>=44 && b.getAttribute('role')==='switch' && b.getAttribute('aria-label').includes('主时间线')})()`) {
+			if !eval(`(()=>{const card=$('user-list').firstElementChild,a=card.querySelector('[data-op=timeline]'),b=card.querySelector('[data-op=toggle]'),ar=a.getBoundingClientRect(),br=b.getBoundingClientRect();return ar.height>=44 && br.height>=44 && br.left>=ar.right && Math.abs(ar.top-br.top)<1 && [a,b].every(el=>el.getAttribute('role')==='switch') && a.getAttribute('aria-label').includes('主时间线') && b.getAttribute('aria-label').includes('自动采集')})()`) {
 				t.Fatal("switch accessibility")
 			}
 			if theme == "dark" && !eval(`(()=>{const row=document.querySelector('#user-list .account-card');const c=getComputedStyle(row).backgroundColor.match(/[\d.]+/g);return Number(c[0])<100})()`) {
@@ -158,6 +195,29 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(`!$('archive-overview').matches(':popover-open')`)
+	// Management fits desktop/mobile, preserves expanded details and closes outside.
+	for _, width := range []int64{1280, 320} {
+		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 700)); err != nil {
+			t.Fatal(err)
+		}
+		openMenu("long_username15")
+		if !eval(`(()=>{const d=$('account-menu-dialog'),r=d.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && d.scrollWidth<=d.clientWidth+1 && d.querySelector('.account-details').open})()`) {
+			t.Fatal("management popup overflow or lost details", width)
+		}
+		if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+			image, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("account-menu-%d.png", width)), image, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := chromedp.Do(browser, chromedp.MouseClickXY(2, 2)); err != nil {
+			t.Fatal(err)
+		}
+		wait(`!$('account-menu-dialog').open`)
+	}
 	eval(`(()=>{$('archive-overview-toggle').click();return true})()`)
 	if err := chromedp.Do(browser, chromedp.MouseClickXY(2, 2)); err != nil {
 		t.Fatal(err)
@@ -166,7 +226,8 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	// Cancellation retains the same archived row and its hidden-home preference.
 	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=timeline]').click();return true})()`)
 	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').show_in_timeline===false`)
-	eval(`(()=>{document.querySelector('[data-account=bob] .account-actions').open=true;document.querySelector('[data-monitor=bob][data-op=delete]').click();return true})()`)
+	openMenu("bob")
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=delete]').click();return true})()`)
 	wait(`$('confirm-dialog').open`)
 	eval(`(()=>{$('confirm-delete').click();return true})()`)
 	wait(`!$('confirm-dialog').open && !accountPending.size && state.monitors.length===2 && document.querySelectorAll('[data-account=bob]').length===1 && document.querySelector('[data-account=bob]').textContent.includes('仅保留归档')`)
@@ -181,7 +242,11 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	wait(`!accountPending.size && state.monitors.length===2 && document.querySelector('[data-monitor=bob][data-op=timeline]').getAttribute('aria-checked')==='true'`)
 	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=timeline]').click();return true})()`)
 	wait(`!accountPending.size && document.querySelector('[data-monitor=bob][data-op=timeline]').getAttribute('aria-checked')==='false'`)
-	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=readd]').click();return true})()`)
+	if !eval(`document.querySelector('[data-monitor=bob][data-op=toggle]').disabled`) {
+		t.Fatal("archive-only account allowed automatic collection without a monitor")
+	}
+	openMenu("bob")
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=readd]').click();return true})()`)
 	wait(`$('monitor-dialog').open`)
 	if !eval(`!$('monitor-timeline').checked && $('monitor-username').disabled && $('monitor-enabled').checked`) {
 		t.Fatal("re-add form reset the preference")
@@ -201,8 +266,8 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	wait(`state.view==='user' && !state.postsLoading && state.postIDs.size===2`)
 	eval(`(()=>{document.querySelector('#view-user .back-link').click();return true})()`)
 	wait(`state.view==='archive' && document.querySelectorAll('#user-list .account-card').length===3 && Math.abs(scrollY-window.savedAccountScroll)<2`)
-	if !eval(`window.savedAccountScroll>0 && $('monitor-sort').value==='posts-desc' && document.querySelector('[data-account=long_username15] .account-details').open`) {
-		detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({saved:window.savedAccountScroll,scroll:scrollY,sort:$('monitor-sort').value,expanded:[...accountExpanded],open:document.querySelector('[data-account=long_username15] .account-details').open,height:innerHeight,body:document.body.scrollHeight})`))
+	if !eval(`window.savedAccountScroll>0 && $('monitor-sort').value==='posts-desc' && accountExpanded.has('long_username15:status')`) {
+		detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({saved:window.savedAccountScroll,scroll:scrollY,sort:$('monitor-sort').value,expanded:[...accountExpanded],height:innerHeight,body:document.body.scrollHeight})`))
 		t.Fatal("directory state was lost after browsing", detail)
 	}
 }

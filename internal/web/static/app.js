@@ -432,7 +432,6 @@ function updateScrollSpacingHelp(){
   help.textContent=jitter===0?`上一轮页面请求完成后，固定等待 ${interval} 秒再滚动。`:`上一轮页面请求完成后，随机等待 ${interval-jitter}～${interval+jitter} 秒再滚动。`;
 }
 $('scroll-delay').addEventListener('input',updateScrollSpacingHelp);$('scroll-jitter').addEventListener('input',updateScrollSpacingHelp);
-function monitorPayload(m) { return {username:m.username,replies:m.replies,enabled:m.enabled,show_in_timeline:visibleInTimeline(m)}; }
 async function openMonitor(m=null,readd=false) {
   if(!state.settings)state.settings=await api('/settings');state.editing=m&&!readd?m.username:null;state.readding=readd?m.username:null;
   $('monitor-dialog-title').textContent=readd?'重新添加监控':m?'编辑监控账号':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
