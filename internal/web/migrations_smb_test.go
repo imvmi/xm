@@ -48,6 +48,9 @@ func TestSambaMigrationAndCleanup(t *testing.T) {
 	if err := a.store.DB.QueryRow("SELECT storage_id,object_key,local_path FROM media WHERE post_id='smb-photo'").Scan(&storage, &key, &local); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(key, "/media/users/") {
+		t.Fatal("SMB migration did not preserve author layout", key)
+	}
 	if storage != target || local != "" || a.Config().ActiveStorage() != target || a.Config().Database != originalDatabase {
 		t.Fatal("incorrect target or database was changed")
 	}

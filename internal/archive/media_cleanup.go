@@ -17,7 +17,7 @@ type LocalMediaCopy struct {
 }
 
 func (s *Store) LocalMediaCopies(ctx context.Context) ([]LocalMediaCopy, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT copy_id,post_id,media_id,local_path,storage_id,object_key,bytes,sha256 FROM media_local_copies ORDER BY copy_id")
+	rows, err := s.DB.QueryContext(ctx, "SELECT copy_id,post_id,media_id,local_path,storage_id,object_key,bytes,sha256 FROM media_local_copies WHERE storage_id<>'local' ORDER BY copy_id")
 	if err != nil {
 		return nil, err
 	}

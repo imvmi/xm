@@ -56,7 +56,7 @@ func mediaRelativePath(j MediaJob, ext string) (string, error) {
 		return "", errors.New("媒体作者目录无效")
 	}
 	switch ext {
-	case ".jpg", ".png", ".webp", ".gif", ".avif", ".mp4":
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".mp4":
 	default:
 		return "", errors.New("媒体扩展名无效")
 	}

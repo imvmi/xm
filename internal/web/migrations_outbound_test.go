@@ -95,14 +95,20 @@ func TestMigrationLocalToRemote(t *testing.T) {
 				input.Target = "new"
 				input.Storage = &profile
 			}
+			localPath := func(id string) string {
+				if id == "two" {
+					return "media/users/alice_123/existing.jpg"
+				}
+				return "media/" + id + ".jpg"
+			}
 			for id, payload := range map[string]string{"one": "local photo one", "two": "local photo two"} {
 				if err := a.store.SavePosts("alice", []archive.Post{{ID: id, Assets: []archive.Asset{{ID: "photo", Kind: "photo"}}}}); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.MkdirAll(filepath.Join(cfg.DataDir, "media"), 0700); err != nil {
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(cfg.DataDir, localPath(id))), 0700); err != nil {
 					t.Fatal(err)
 				}
-				rel := "media/" + id + ".jpg"
+				rel := localPath(id)
 				if err := os.WriteFile(filepath.Join(cfg.DataDir, rel), []byte(payload), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -141,7 +147,7 @@ func TestMigrationLocalToRemote(t *testing.T) {
 				t.Fatal("failure changed local pointer or attempts")
 			}
 			for _, id := range []string{"one", "two"} {
-				data, err := os.ReadFile(filepath.Join(cfg.DataDir, "media", id+".jpg"))
+				data, err := os.ReadFile(filepath.Join(cfg.DataDir, localPath(id)))
 				if err != nil || string(data) != "local photo "+id {
 					t.Fatal("source file changed", err)
 				}
@@ -160,6 +166,13 @@ func TestMigrationLocalToRemote(t *testing.T) {
 			if j.Status != "completed" || j.Done != 1 || j.Target != target || uploads.Load() != before {
 				t.Fatalf("resume did not reuse verified object: %+v", j)
 			}
+			var key string
+			if err := a.store.DB.QueryRow("SELECT object_key FROM media WHERE post_id='one'").Scan(&key); err != nil || !strings.HasPrefix(key, "archive/media/users/") {
+				t.Fatal("outbound path lost author layout", key, err)
+			}
+			if err := a.store.DB.QueryRow("SELECT object_key FROM media WHERE post_id='two'").Scan(&key); err != nil || key != "archive/"+localPath("two") {
+				t.Fatal("existing users path was renamed", key, err)
+			}
 			response := b.request("GET", "/media/one/photo", nil, "", false)
 			ok(t, response, 200)
 			if response.Body.String() != "local photo one" {
@@ -174,6 +187,23 @@ func TestMigrationLocalToRemote(t *testing.T) {
 				if strings.Contains(status.Body.String(), secret) || strings.Contains(string(journal), secret) {
 					t.Fatal("credentials leaked")
 				}
+			}
+			// A stable users path must not overwrite a different remote file.
+			hash := sha256.Sum256([]byte("local photo two"))
+			if err := a.store.MediaResult(archive.MediaJob{PostID: "two", ID: "photo"}, localPath("two"), int64(len("local photo two")), hex.EncodeToString(hash[:]), nil); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			for objectPath := range objects {
+				if strings.HasSuffix(objectPath, key) {
+					objects[objectPath] = "keep conflicting content"
+				}
+			}
+			mu.Unlock()
+			before = uploads.Load()
+			ok(t, b.request("POST", "/api/migrations", migrationInput{Kind: "media", Source: "local", Target: target, Confirm: "开始迁移"}, "http://localhost", true), 202)
+			if j = waitMigration(t, a); j.Status != "failed" || j.Failed != 1 || uploads.Load() != before {
+				t.Fatal("conflicting remote file was overwritten", j)
 			}
 		})
 	}

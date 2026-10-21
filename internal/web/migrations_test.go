@@ -128,6 +128,10 @@ func TestMigrationMediaValidationRetryAndSafety(t *testing.T) {
 	if response.Body.String() != "verified migration photo" {
 		t.Fatal("stable URL did not read local copy")
 	}
+	var localPath string
+	if err := a.store.DB.QueryRow("SELECT local_path FROM media WHERE post_id='10'").Scan(&localPath); err != nil || !strings.HasPrefix(localPath, "media/users/") {
+		t.Fatal("remote migration did not restore author layout", localPath, err)
+	}
 	beforeCalls := calls.Load()
 	ok(t, b.request("POST", "/api/migrations", input, "http://localhost", true), 202)
 	j = waitMigration(t, a)

@@ -269,7 +269,7 @@ func (a *App) previewMigration(ctx context.Context, input migrationInput) (migra
 	p.FreeBytes = freeBytes
 	switch input.Kind {
 	case "cleanup":
-		if err := a.store.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies").Scan(&p.Items, &p.Bytes); err != nil {
+		if err := a.store.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies WHERE storage_id<>'local'").Scan(&p.Items, &p.Bytes); err != nil {
 			return p, errors.New("无法读取本地副本记录")
 		}
 		if p.Items == 0 {
@@ -340,11 +340,21 @@ func (a *App) migrationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var copies, copyBytes int64
-	if err := a.store.DB.QueryRowContext(r.Context(), "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies").Scan(&copies, &copyBytes); err != nil {
+	if err := a.store.DB.QueryRowContext(r.Context(), "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media_local_copies WHERE storage_id<>'local'").Scan(&copies, &copyBytes); err != nil {
 		problem(w, 500, "无法读取本地副本统计")
 		return
 	}
-	respond(w, 200, map[string]any{"local_copies": map[string]int64{"items": copies, "bytes": copyBytes}, "job": a.migrations.snapshot(), "database_driver": a.Config().Database.DriverName(), "active_storage": a.Config().ActiveStorage(), "sources": profiles, "maintenance": a.maintenance.Load()})
+	job := a.migrations.snapshot()
+	if job != nil {
+		switch job.Kind {
+		case "media", "database", "cleanup":
+		default:
+			// Retired tools may leave a journal, but must not expose unusable
+			// progress or retry controls after an upgrade.
+			job = nil
+		}
+	}
+	respond(w, 200, map[string]any{"local_copies": map[string]int64{"items": copies, "bytes": copyBytes}, "job": job, "database_driver": a.Config().Database.DriverName(), "active_storage": a.Config().ActiveStorage(), "sources": profiles, "maintenance": a.maintenance.Load()})
 }
 func (a *App) migrationPreview(w http.ResponseWriter, r *http.Request) {
 	input := migrationInput{Kind: r.URL.Query().Get("kind"), Source: r.URL.Query().Get("source"), Target: r.URL.Query().Get("target")}
