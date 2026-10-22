@@ -15,6 +15,7 @@ async function refreshStorage(){
  $('remote-cache-clear').disabled=!cache.used_bytes;
  $('remote-cache-badge').textContent=cache.enabled?'已启用':'未启用';
  $('remote-cache-badge').className='badge '+(cache.enabled?'':'neutral');
+ await refreshAvatarCache();
 }
 $('remote-cache-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
  const submitted=settingsSnapshot('remote-cache-form');
@@ -25,4 +26,19 @@ $('remote-cache-form').addEventListener('submit',event=>{event.preventDefault();
 });});
 $('remote-cache-clear').addEventListener('click',()=>action($('remote-cache-clear'),async()=>{
  await api('/storage/cache','DELETE');$('remote-cache-result').textContent='服务器缓存已清空；归档源文件未受影响。';toast('服务器缓存已清空');await refreshStorage();
+}));
+
+async function refreshAvatarCache(){
+ const info=await api('/settings/avatars');
+ $('avatar-cache-status').textContent=`已保存 ${info.sources||0} 个来源 · 已缓存 ${info.cached||0} 张（${bytes(info.used_bytes||0)}）· 待迁移 ${info.legacy||0} 张`;
+}
+$('avatar-migrate').addEventListener('click',()=>action($('avatar-migrate'),async()=>{
+ const result=await api('/settings/avatars/migrate','POST',{});
+ $('avatar-cache-result').textContent=`已导入 ${result.imported} 个来源、迁移 ${result.migrated} 张头像；保留 ${result.retained} 项，失败 ${result.failed} 项。`+(result.retained?'保留项缺少有效来源或已有更新来源，等待下次采集补齐。':'')+(result.failed?'请检查数据目录权限和旧文件后重试。':'');
+ await refreshAvatarCache();
+}));
+$('avatar-cache-clear').addEventListener('click',()=>action($('avatar-cache-clear'),async()=>{
+ const result=await api('/settings/avatars/cache','DELETE');
+ $('avatar-cache-result').textContent=`已清理 ${result.cleared} 张头像缓存，下次查看时自动下载；来源 URL 和缺少来源的旧头像已保留。`;
+ await refreshAvatarCache();
 }));

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var archiveTables = []string{"api_credentials", "api_idempotency", "api_audit", "storage_profiles", "notification_channels", "system_settings", "admin_accounts", "media_directories", "cookie_sources", "x_cookies", "posts", "post_bookmarks", "profiles", "target_identities", "account_preferences", "target_posts", "media", "media_local_copies", "runs", "request_budgets", "run_metrics", "collection_progress", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries"}
+var archiveTables = []string{"avatar_sources", "api_credentials", "api_idempotency", "api_audit", "storage_profiles", "notification_channels", "system_settings", "admin_accounts", "media_directories", "cookie_sources", "x_cookies", "posts", "post_bookmarks", "profiles", "target_identities", "account_preferences", "target_posts", "media", "media_local_copies", "runs", "request_budgets", "run_metrics", "collection_progress", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries"}
 
 // CopySQLiteToMySQL copies a consistent read-only SQLite snapshot into an empty
 // MySQL schema. Destination writes commit as one transaction; source is untouched.
@@ -62,7 +62,7 @@ func (s *Store) CopySQLiteToMySQL(ctx context.Context, source string) (map[strin
 		}
 		if exists == 0 {
 			switch table {
-			case "api_credentials", "api_idempotency", "api_audit", "media_local_copies", "account_preferences", "post_bookmarks", "request_budgets", "run_metrics", "collection_progress", "cookie_sources", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries":
+			case "avatar_sources", "api_credentials", "api_idempotency", "api_audit", "media_local_copies", "account_preferences", "post_bookmarks", "request_budgets", "run_metrics", "collection_progress", "cookie_sources", "monitors", "collection_jobs", "web_state", "notification_targets", "notification_seen", "notification_incidents", "notification_deliveries":
 				// CLI-only archives may not have started the web service yet.
 			default:
 				return nil, fmt.Errorf("源数据库缺少当前版本必需的表 %s，不支持旧版结构迁移", table)

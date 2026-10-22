@@ -186,6 +186,9 @@ func (s *Store) SaveTargetProfile(target string, p Profile) error {
 	if _, err = tx.Exec(database.Upsert(tx.Dialect, `INSERT INTO profiles VALUES(?,?,?,?)`, []string{"id"}, []string{"username", "protected", "checked_at"}), p.ID, p.Username, p.Protected, now()); err != nil {
 		return err
 	}
+	if err = saveAvatarSource(tx, p); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

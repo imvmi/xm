@@ -13,6 +13,7 @@ const systemSettingsDDL = `CREATE TABLE IF NOT EXISTS system_settings(id INTEGER
 // Shared logical schema: SQLite and MySQL use the same keys and constraints.
 // Per-service credentials are columns, not one opaque configuration document.
 var settingsSchema = []string{
+	`CREATE TABLE IF NOT EXISTS avatar_sources(user_id VARCHAR(64) PRIMARY KEY,source_url TEXT NOT NULL,updated_at VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS api_credentials(id VARCHAR(64) PRIMARY KEY,name VARCHAR(100) NOT NULL,description TEXT NOT NULL,secret_hash VARCHAR(64) NOT NULL,secret_tail VARCHAR(8) NOT NULL,scopes TEXT NOT NULL,accounts TEXT NOT NULL,all_accounts BOOLEAN NOT NULL,enabled BOOLEAN NOT NULL,revoked_at BIGINT NOT NULL,expires_at BIGINT NOT NULL,created_at BIGINT NOT NULL,last_used_at BIGINT NOT NULL,request_limit INTEGER NOT NULL,task_limit INTEGER NOT NULL,queue_limit INTEGER NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS api_idempotency(id VARCHAR(64) PRIMARY KEY,credential_id VARCHAR(64) NOT NULL,request_hash VARCHAR(64) NOT NULL,status_code INTEGER NOT NULL,response TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS api_audit(id VARCHAR(64) PRIMARY KEY,credential_id VARCHAR(64) NOT NULL,action VARCHAR(255) NOT NULL,status_code INTEGER NOT NULL,created_at BIGINT NOT NULL)`,
@@ -102,7 +103,7 @@ func migrateSettings(db *database.DB) error {
 	if _, err = db.Exec("UPDATE system_settings SET default_interval_seconds=3600 WHERE default_interval_seconds<3600"); err != nil {
 		return err
 	}
-	_, err = db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 17, now())
+	_, err = db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 18, now())
 	return err
 }
 

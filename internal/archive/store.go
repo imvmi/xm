@@ -133,8 +133,18 @@ func EndRunTx(tx *database.Tx, id int64, status string, count int, message strin
 	return err
 }
 func (s *Store) SaveProfile(p Profile) error {
-	_, err := s.DB.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO profiles VALUES(?,?,?,?)`, []string{"id"}, []string{"username", "protected", "checked_at"}), p.ID, p.Username, p.Protected, now())
-	return err
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(database.Upsert(tx.Dialect, `INSERT INTO profiles VALUES(?,?,?,?)`, []string{"id"}, []string{"username", "protected", "checked_at"}), p.ID, p.Username, p.Protected, now()); err != nil {
+		return err
+	}
+	if err = saveAvatarSource(tx, p); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) SavePosts(target string, posts []Post) error {
 	return s.SaveCollectionPage(target, 0, Page{Posts: posts})

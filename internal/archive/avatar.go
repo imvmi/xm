@@ -21,6 +21,7 @@ type avatarMetadata struct {
 	ETag         string    `json:"etag,omitempty"`
 	LastModified string    `json:"last_modified,omitempty"`
 	CheckedAt    time.Time `json:"checked_at"`
+	RetryAfter   time.Time `json:"retry_after,omitempty"`
 }
 
 func AvatarFilename(userID string) (string, error) {
@@ -35,11 +36,19 @@ func AvatarExists(dataDir, userID string) bool {
 	if err != nil {
 		return false
 	}
-	st, err := os.Stat(filepath.Join(dataDir, "avatars", name))
-	return err == nil && st.Mode().IsRegular()
+	for _, dir := range []string{AvatarCacheDir(dataDir), filepath.Join(dataDir, "avatars")} {
+		st, err := os.Lstat(filepath.Join(dir, name))
+		if err == nil && st.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 func avatarURL(raw string) (*url.URL, error) {
+	if len(raw) > 4096 {
+		return nil, errors.New("头像 URL 过长")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() != "pbs.twimg.com" || u.Port() != "" && u.Port() != "443" {
 		return nil, errors.New("头像 URL 必须来自 pbs.twimg.com HTTPS 地址")
@@ -62,6 +71,12 @@ func DownloadAvatar(ctx context.Context, cfg Config, p Profile) error {
 }
 
 func downloadAvatar(ctx context.Context, base *http.Client, dataDir string, p Profile) error {
+	unlock := lockAvatar(p.ID)
+	defer unlock()
+	return downloadAvatarLocked(ctx, base, dataDir, p)
+}
+
+func downloadAvatarLocked(ctx context.Context, base *http.Client, dataDir string, p Profile) (result error) {
 	if p.AvatarURL == "" {
 		return nil
 	}
@@ -73,10 +88,24 @@ func downloadAvatar(ctx context.Context, base *http.Client, dataDir string, p Pr
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(dataDir, "avatars")
+	dir := AvatarCacheDir(dataDir)
 	metaPath := filepath.Join(dir, name+".json")
 	meta := readAvatarMetadata(metaPath)
-	hasAvatar := AvatarExists(dataDir, p.ID)
+	hasAvatar := cachedAvatarExists(dataDir, p.ID)
+	if meta.SourceURL == p.AvatarURL && time.Now().Before(meta.RetryAfter) {
+		return errors.New("头像下载暂不可用，请稍后重试")
+	}
+	defer func() {
+		if result != nil && ctx.Err() == nil {
+			// Bound repeated cache-miss requests when the upstream is unavailable.
+			// Leave validators tied to their previous source if a refresh failed.
+			if !hasAvatar {
+				meta = avatarMetadata{SourceURL: p.AvatarURL}
+			}
+			meta.RetryAfter = time.Now().Add(time.Minute)
+			_ = writeAvatarMetadata(metaPath, meta)
+		}
+	}()
 	if hasAvatar && meta.SourceURL == p.AvatarURL && !meta.CheckedAt.IsZero() && time.Since(meta.CheckedAt) >= 0 && time.Since(meta.CheckedAt) < avatarRefreshInterval {
 		return nil
 	}

@@ -34,7 +34,7 @@ func TestDownloadAvatarCachesImageAndRejectsUnsafeContent(t *testing.T) {
 	if !AvatarExists(dir, "42") {
 		t.Fatal("cached avatar not found")
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "avatars", "42"))
+	got, err := os.ReadFile(filepath.Join(AvatarCacheDir(dir), "42"))
 	if err != nil || string(got) != string(png) {
 		t.Fatal("cached avatar differs", err)
 	}
@@ -53,7 +53,7 @@ func TestDownloadAvatarCachesImageAndRejectsUnsafeContent(t *testing.T) {
 	if err = downloadAvatar(context.Background(), client, dir, p); err == nil {
 		t.Fatal("non-image avatar accepted")
 	}
-	got, _ = os.ReadFile(filepath.Join(dir, "avatars", "42"))
+	got, _ = os.ReadFile(filepath.Join(AvatarCacheDir(dir), "42"))
 	if string(got) != string(png) {
 		t.Fatal("failed refresh damaged existing avatar")
 	}
@@ -67,7 +67,7 @@ func TestDownloadAvatarCachesImageAndRejectsUnsafeContent(t *testing.T) {
 
 func TestDownloadAvatarUsesConditionalRefresh(t *testing.T) {
 	dir := t.TempDir()
-	avatarDir := filepath.Join(dir, "avatars")
+	avatarDir := AvatarCacheDir(dir)
 	if err := PrivateDir(avatarDir); err != nil {
 		t.Fatal(err)
 	}

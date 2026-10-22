@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -76,6 +77,10 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 		if _, err = s.DB.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", earliest.Int64); err != nil {
 			return nil, err
 		}
+	}
+	// Upgrade legacy avatar files locally; cosmetic failures must not prevent login.
+	if result, migrationErr := s.MigrateLegacyAvatars(context.Background(), cfg.DataDir); migrationErr != nil || result.Failed > 0 {
+		log.Printf("头像迁移未全部完成，可在设置中重试（失败 %d）", result.Failed)
 	}
 	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
 	a.api.windows = make(map[string]apiWindow)
@@ -229,6 +234,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.settings)
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
 	mux.HandleFunc("POST /api/settings/cleanup", a.cleanupData)
+	mux.HandleFunc("GET /api/settings/avatars", a.avatarSettings)
+	mux.HandleFunc("POST /api/settings/avatars/migrate", a.migrateAvatars)
+	mux.HandleFunc("DELETE /api/settings/avatars/cache", a.clearAvatars)
 	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
 	mux.HandleFunc("GET /api/notifications", a.notificationSettings)
 	mux.HandleFunc("POST /api/notifications/channels", a.saveNotificationChannel)
@@ -292,11 +300,13 @@ func (a *App) Handler() http.Handler {
 			problem(w, 500, "读取用户归档失败")
 			return
 		}
-		dataDir := a.Config().DataDir
+		ids := make([]string, 0, len(users))
+		for _, user := range users {
+			ids = append(ids, user.UserID)
+		}
+		avatars := a.avatarURLs(r.Context(), ids)
 		for i := range users {
-			if archive.AvatarExists(dataDir, users[i].UserID) {
-				users[i].AvatarURL = "/avatars/" + users[i].UserID
-			}
+			users[i].AvatarURL = avatars[users[i].UserID]
 		}
 		respond(w, 200, users)
 	})
@@ -1050,23 +1060,20 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取推文失败")
 		return
 	}
-	avatars := map[string]string{}
-	dataDir := a.Config().DataDir
-	var addAvatar func(*PostView)
-	addAvatar = func(p *PostView) {
-		if _, checked := avatars[p.AuthorID]; !checked {
-			avatars[p.AuthorID] = ""
-			if archive.AvatarExists(dataDir, p.AuthorID) {
-				avatars[p.AuthorID] = "/avatars/" + p.AuthorID
-			}
-		}
-		p.AvatarURL = avatars[p.AuthorID]
+	ids := []string{}
+	var visit func(*PostView, func(*PostView))
+	visit = func(p *PostView, fn func(*PostView)) {
+		fn(p)
 		if p.Quote != nil {
-			addAvatar(p.Quote)
+			visit(p.Quote, fn)
 		}
 	}
 	for i := range v.Items {
-		addAvatar(&v.Items[i])
+		visit(&v.Items[i], func(p *PostView) { ids = append(ids, p.AuthorID) })
+	}
+	avatars := a.avatarURLs(r.Context(), ids)
+	for i := range v.Items {
+		visit(&v.Items[i], func(p *PostView) { p.AvatarURL = avatars[p.AuthorID] })
 	}
 	respond(w, 200, v)
 }
@@ -1141,13 +1148,7 @@ func (a *App) avatar(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	root, err := os.OpenRoot(filepath.Join(a.Config().DataDir, "avatars"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer root.Close()
-	f, err := root.Open(name)
+	f, err := a.openAvatar(r, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
