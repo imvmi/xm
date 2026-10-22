@@ -87,10 +87,10 @@ func attachReplyPreviews(db *database.DB, items []PostView) error {
 }
 
 type ReplyContext struct {
-	Items      []ReplySummary `json:"items"`
-	NextCursor string         `json:"next_cursor,omitempty"`
-	End        string         `json:"end"`
-	MissingID  string         `json:"missing_id,omitempty"`
+	Items      []PostView `json:"items"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+	End        string     `json:"end"`
+	MissingID  string     `json:"missing_id,omitempty"`
 }
 
 // Fetch only archived ancestors, in bounded pages. This endpoint is protected
@@ -101,7 +101,7 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "推文 ID 无效")
 		return
 	}
-	result := ReplyContext{Items: []ReplySummary{}, End: "beginning"}
+	result := ReplyContext{Items: []PostView{}, End: "beginning"}
 	seen := map[string]bool{}
 	for len(result.Items) < 20 {
 		if seen[id] {
@@ -123,7 +123,7 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, "读取上下文失败")
 			return
 		}
-		result.Items = append(result.Items, replySummary(p, 0))
+		result.Items = append(result.Items, p)
 		if p.ReplyTo == "" {
 			break
 		}
@@ -136,16 +136,22 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 	for left, right := 0, len(result.Items)-1; left < right; left, right = left+1, right-1 {
 		result.Items[left], result.Items[right] = result.Items[right], result.Items[left]
 	}
-	a.attachReplyAvatars(r, result.Items)
+	if err := attachPosts(a.store.DB, result.Items); err != nil {
+		problem(w, 500, "读取上下文失败")
+		return
+	}
+	list := PostList{Items: result.Items}
+	a.attachPostAvatars(r, &list)
+	result.Items = list.Items
 	respond(w, 200, result)
 }
 
 // Replies contains only immediate children; siblings are never presented as a
 // single chain. Further levels are fetched explicitly, keeping each page bounded.
 type ReplyList struct {
-	Items      []ReplySummary `json:"items"`
-	NextCursor string         `json:"next_cursor,omitempty"`
-	HasMore    bool           `json:"has_more"`
+	Items      []PostView `json:"items"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+	HasMore    bool       `json:"has_more"`
 }
 
 func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +181,7 @@ func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取回复失败")
 		return
 	}
-	result := ReplyList{Items: []ReplySummary{}}
+	result := ReplyList{Items: []PostView{}}
 	for rows.Next() {
 		p, scanErr := scanPost(rows)
 		if scanErr != nil {
@@ -183,7 +189,7 @@ func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, "读取回复失败")
 			return
 		}
-		result.Items = append(result.Items, replySummary(p, 0))
+		result.Items = append(result.Items, p)
 	}
 	err = rows.Err()
 	rows.Close()
@@ -196,17 +202,12 @@ func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
 		result.HasMore = true
 		result.NextCursor = result.Items[19].ID
 	}
-	a.attachReplyAvatars(r, result.Items)
+	if err := attachPosts(a.store.DB, result.Items); err != nil {
+		problem(w, 500, "读取回复失败")
+		return
+	}
+	list := PostList{Items: result.Items}
+	a.attachPostAvatars(r, &list)
+	result.Items = list.Items
 	respond(w, 200, result)
-}
-
-func (a *App) attachReplyAvatars(r *http.Request, items []ReplySummary) {
-	ids := make([]string, 0, len(items))
-	for _, p := range items {
-		ids = append(ids, p.AuthorID)
-	}
-	avatars := a.avatarURLs(r.Context(), ids)
-	for i := range items {
-		items[i].AvatarURL = avatars[items[i].AuthorID]
-	}
 }

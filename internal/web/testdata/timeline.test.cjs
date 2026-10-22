@@ -118,12 +118,12 @@ test('an in-flight bookmark page is refreshed after a collection change',async()
  f.requests[1].resolve(f.page([],0));await pending;
  assert.equal(f.state.postIDs.size,0);assert.equal(f.state.total,0);
 });
-test('the author handle opens the source post and replies retain context access',()=>{
+test('the author handle opens the source post and reply cards open their thread page',()=>{
  const f=fixture();
  const html=f.ctx.postHTML({id:'42',username:'Vickiehavefun',name:'Vickie',created_at:1,text:'reply',reply_to:'41',media:[]});
  assert.match(html,/<a class="timeline-handle" href="https:\/\/x\.com\/i\/status\/42"[^>]*>@Vickiehavefun<\/a>/);
  assert.doesNotMatch(html,/>\s*回复\s*</);
- assert.match(html,/data-reply-context="42"/);
+ assert.match(html,/data-open-post="42"/);
  assert.match(html,/https:\/\/x\.com\/i\/status\/41/);
  assert.doesNotMatch(html,/post-footer/);
 });

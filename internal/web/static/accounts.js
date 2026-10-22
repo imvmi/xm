@@ -64,7 +64,7 @@ function accountCard(u){
 }
 function accountManagementHTML(u){
  const key=escape(u.username),action=(op,text,extra='')=>`<button type="button" class="text-button ${extra}" data-monitor="${key}" data-op="${op}">${text}</button>`;
- let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${collectionActions(u)}${action('edit','配置编辑')}${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}`):action('readd','重新添加监控');
+ let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${collectionActions(u)}<button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${key}" data-op="replies"><span>包含回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">包含该账号发出的回复。切换后立即保存，并重新建立历史采集基线；已归档内容保留。</p>${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}`):action('readd','重新添加监控');
  if(accountPending.has(u.username))operations=operations.replace(/<button\b([^>]*)>/g,(tag,attrs)=>attrs.includes('disabled')?tag:`<button disabled${attrs}>`);
  const detail=u.monitored&&!u.runtime_pending?`<details class="account-details" data-detail="${key}:status"${accountExpanded.has(u.username+':status')?' open':''}><summary>采集详情${accountNeedsAttention(u)?' · 需关注':''}</summary><div>${baselineHTML(u)}${checkpointHTML(u)}${u.last_error?`<p class="account-error">${escape(u.last_error)}</p>`:''}${monitorNextStep(u)}<p>最近结束：${u.last_finished?escape(date(u.last_finished,true)):'尚未采集'}</p><p>${!u.enabled||state.overview?.paused?'自动采集已暂停':u.next_run>state.overview?.server_time?'下次：'+escape(date(u.next_run,true)):'等待调度'} · 每 ${number(u.interval_seconds/3600)} 小时</p><p>上轮新增 ${number(u.new_posts)} 条</p><a class="account-task-link" href="#activity">查看任务 →</a></div></details>`:'';
  const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往采集设置恢复。':'自动采集按统一周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
@@ -157,15 +157,20 @@ async function handleAccountAction(event){
  if(b.disabled)return;
  const u=accountRows().find(u=>u.username===b.dataset.monitor);if(!u)return;
  if(accountPending.has(u.username))return;
- if(b.closest('#account-menu-dialog'))$('account-menu-dialog').close();
- if(b.dataset.op==='edit'){await action(b,()=>openMonitor(u));return;}
- if(b.dataset.op==='readd'){await action(b,()=>openMonitor(u,true));return;}
+ if(b.closest('#account-menu-dialog')&&b.dataset.op!=='replies')$('account-menu-dialog').close();
+ if(b.dataset.op==='readd'){await action(b,()=>openMonitor(u));return;}
  if(b.dataset.op==='rescan'&&!window.confirm('重新扫描将清除未完成的分页断点，并从最新内容重新扫描。已归档内容不会删除。是否继续？'))return;
  accountPending.add(u.username);renderUsers();
  try{
   const target=encodeURIComponent(u.username);
   switch(b.dataset.op){
    case 'timeline':await api('/users/'+target+'/timeline','PUT',{show_in_timeline:!visibleInTimeline(u)});toast(visibleInTimeline(u)?'已从首页隐藏，归档与采集不受影响':'已在首页显示');break;
+   case 'replies':{
+    await api('/monitors/'+target,'PUT',{replies:!u.replies,enabled:!!u.enabled});
+    monitorRequest++;
+    const monitor=state.monitors.find(m=>m.username===u.username);if(monitor)monitor.replies=!u.replies;
+    toast(u.replies?'已关闭包含回复':'已开启包含回复');break;
+   }
    case 'toggle':await api('/monitors/'+target,'PUT',{replies:!!u.replies,enabled:!u.enabled});toast(u.enabled?'已关闭自动采集':state.overview?.paused?'账号自动采集已开启；全局仍暂停，请在采集设置中恢复':'已开启自动采集');break;
    case 'reset-progress':await api('/monitors/'+target+'/reset-progress','POST');toast('断点已重置，等待采集');break;
    case 'stop':await api('/monitors/'+target+'/stop','POST');toast('已请求停止并暂停监控');break;
@@ -175,5 +180,9 @@ async function handleAccountAction(event){
   }
   await refreshAccountsAfterChange();
  }catch(err){toast(err.message,true);}
- finally{accountPending.delete(u.username);renderUsers();}
+ finally{
+  const restoreFocus=b.dataset.op==='replies'&&accountMenuTarget===u.username&&$('account-menu-dialog').open&&[document.body,$('account-menu-dialog')].includes(document.activeElement);
+  accountPending.delete(u.username);renderUsers();
+  if(restoreFocus)document.querySelector('#account-menu-content [data-op="replies"]')?.focus({preventScroll:true});
+ }
 }

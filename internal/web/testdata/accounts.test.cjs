@@ -69,18 +69,18 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.match(menu,/<details[^>]* open>/);
  assert.match(menu,/采集详情/);
  assert.match(menu,/error &lt;img&gt;/);
- assert.match(menu,/data-op="edit"/);
- assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|取消监控/);
+ assert.match(menu,/role="switch" aria-checked="false"[^>]*data-op="replies"/);
+ assert.doesNotMatch(menu,/data-op="edit"|data-op="toggle"|data-op="delete"|查看归档|取消监控/);
 });
 test('archive-only and unresolved runtime accounts cannot toggle collection',()=>{
  const f=fixture();
  const archived=f.rows()[1];
  assert.match(f.ctx.accountCard(archived),/aria-checked="false"[^>]*data-op="toggle" disabled/);
  assert.match(f.ctx.accountManagementHTML(archived),/data-op="readd"/);
- assert.doesNotMatch(f.ctx.accountManagementHTML(archived),/采集详情|data-op="delete"/);
+ assert.doesNotMatch(f.ctx.accountManagementHTML(archived),/采集详情|data-op="replies"|data-op="delete"/);
  const pending=fixture(false),u=pending.rows()[0];
  assert.match(pending.ctx.accountCard(u),/data-op="toggle" disabled/);
- assert.doesNotMatch(pending.ctx.accountManagementHTML(u),/data-op="edit"|data-op="run"/);
+ assert.doesNotMatch(pending.ctx.accountManagementHTML(u),/data-op="replies"|data-op="run"/);
 });
 test('global pause remains distinct from an enabled per-account switch',()=>{
  const f=fixture();f.state.overview={paused:true};

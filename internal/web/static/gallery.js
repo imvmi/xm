@@ -7,7 +7,7 @@ function galleryPosition(offset=0,animate=false){
  galleryTrack.style.transform=`translate3d(calc(-100% + ${offset}px),0,0)`;
 }
 function galleryVerticalPosition(offset=0,animate=false){
- const progress=Math.min(1,Math.max(0,offset)/Math.max(1,galleryViewport.clientHeight));
+ const progress=Math.min(1,Math.abs(offset)/Math.max(1,galleryViewport.clientHeight));
  galleryViewport.classList.toggle('animating',animate);
  galleryViewport.style.transform=`translate3d(0,${offset}px,0) scale(${1-progress*.15})`;
  $('image-dialog').style.backgroundColor=`rgba(0,0,0,${1-progress*.8})`;
@@ -68,11 +68,11 @@ async function loadNextGalleryImage(){
  showGalleryImage(imageIndex);
  if(next)settleGallery(1);
 }
-function dismissGallery(){
+function dismissGallery(direction=1){
  gallerySession++;galleryLoading=false;
  if(matchMedia('(prefers-reduced-motion: reduce)').matches){$('image-dialog').close();return;}
  galleryBusy=true;galleryClosing=true;
- galleryVerticalPosition(galleryViewport.clientHeight,true);
+ galleryVerticalPosition((direction<0?-1:1)*galleryViewport.clientHeight,true);
  clearTimeout(galleryTimer);galleryTimer=setTimeout(()=>$('image-dialog').close(),240);
 }
 function stepGallery(delta){if(!galleryDrag)settleGallery(delta);}
@@ -91,7 +91,7 @@ galleryViewport.addEventListener('pointermove',event=>{
   drag.axis=Math.abs(dy)>Math.abs(dx)?'vertical':'horizontal';
  }
  drag.dx=dx;drag.dy=dy;
- if(drag.axis==='vertical'){galleryVerticalPosition(dy>0?dy:dy*.2);return;}
+ if(drag.axis==='vertical'){galleryVerticalPosition(dy);return;}
  const edge=(imageIndex===0&&dx>0)||(imageIndex===imageGallery.length-1&&dx<0);
  galleryPosition(Math.max(-galleryViewport.clientWidth,Math.min(galleryViewport.clientWidth,dx))*(edge ? .25 : 1));
 });
@@ -101,7 +101,8 @@ galleryViewport.addEventListener('pointerup',event=>{
  if(galleryViewport.hasPointerCapture(event.pointerId))galleryViewport.releasePointerCapture(event.pointerId);
  if(drag.axis==='vertical'){
   const threshold=Math.min(160,Math.max(80,galleryViewport.clientHeight*.18));
-  if(drag.dy>threshold||(drag.dy>48&&performance.now()-drag.start<220))dismissGallery();else settleGallery();
+  const distance=Math.abs(drag.dy);
+  if(distance>threshold||(distance>48&&performance.now()-drag.start<220))dismissGallery(drag.dy);else settleGallery();
   return;
  }
  const threshold=Math.min(80,Math.max(40,galleryViewport.clientWidth*.18));

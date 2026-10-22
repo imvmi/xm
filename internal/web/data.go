@@ -214,8 +214,10 @@ type PostList struct {
 }
 
 const replyAuthorSQL = "COALESCE(NULLIF(p.reply_to_author_id,''),(SELECT parent.author_id FROM posts parent WHERE parent.id=p.reply_to),'')"
-const selfReplySQL = "(p.reply_to<>'' AND p.author_id<>'' AND p.author_id=" + replyAuthorSQL + ")"
-const ordinaryOrSelfReplySQL = "(p.reply_to='' OR " + selfReplySQL + ")"
+
+// Express the root predicate without making SQLite prefer posts_reply over the
+// timeline ordering index; this keeps the first page free of a full sort.
+const rootPostSQL = "length(p.reply_to)=0"
 
 const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)` + `,` + replyAuthorSQL + `,EXISTS(SELECT 1 FROM posts child WHERE child.reply_to=p.id AND child.id<>p.id)`
 
@@ -254,9 +256,9 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 		where = " WHERE t.target=?"
 		args = append(args, target)
 	} else {
-		// Self-replies continue the author's own posts; other replies remain
-		// in the account replies tab. Quotes and bookmarks keep their behavior.
-		where += " AND " + ordinaryOrSelfReplySQL
+		// Replies belong to their parent thread and never become independent
+		// entries on the home timeline.
+		where += " AND " + rootPostSQL
 	}
 	// Only filtered requests need quote traversal. Seed it from the selected
 	// archive instead of expanding every post (including unrelated quotes).
@@ -279,7 +281,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 	media := `EXISTS (SELECT 1 FROM related r JOIN media a ON a.post_id=r.id WHERE r.root=p.id`
 	switch section {
 	case "posts":
-		where += " AND " + ordinaryOrSelfReplySQL
+		where += " AND " + rootPostSQL
 	case "replies":
 		where += " AND p.reply_to<>''"
 	case "media":

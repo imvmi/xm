@@ -36,11 +36,11 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 		target, section, query, kind string
 		want                         []string
 	}{
-		{"", "", "", "", []string{"201", "200", "100"}},
-		{"alice", "posts", "", "", []string{"201", "200", "100"}},
+		{"", "", "", "", []string{"100"}},
+		{"alice", "posts", "", "", []string{"100"}},
 		{"alice", "replies", "", "", []string{"204", "203", "202", "201", "200"}},
-		{"", "", "续篇", "", []string{"200"}},
-		{"", "", "", "video", []string{"201"}},
+		{"", "", "续篇", "", []string{}},
+		{"", "", "", "video", []string{}},
 		{"", "", "", "photo", []string{"100"}}, // Context media must not change root filtering.
 	} {
 		got, err := listPosts(a.store.DB, tc.target, tc.query, tc.kind, tc.section, 0, 20)
@@ -59,18 +59,14 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 		}
 	}
 	first, err := listPostsPage(a.store.DB, "", "", "", "", 0, 1, "", true)
-	if err != nil || first.NextCursor != "201" || !first.HasMore {
+	if err != nil || first.NextCursor != "100" || first.HasMore {
 		t.Fatal(first, err)
-	}
-	second, err := listPostsPage(a.store.DB, "", "", "", "", 0, 2, first.NextCursor, false)
-	if err != nil || !reflect.DeepEqual(replyIDs(second.Items), []string{"200", "100"}) || second.HasMore {
-		t.Fatal(second, err)
 	}
 	// Unknown parent arriving later immediately enables classification, without a rescan.
 	if err = a.store.SavePosts("alice", []archive.Post{{ID: "997", AuthorID: "42", Username: "oldname"}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := listPosts(a.store.DB, "", "关系未知", "", "", 0, 20)
+	got, err := listPosts(a.store.DB, "alice", "关系未知", "", "replies", 0, 20)
 	if err != nil || len(got.Items) != 1 || !got.Items[0].SelfReply {
 		t.Fatal(got, err)
 	}
@@ -148,7 +144,7 @@ func TestSelfReplyDatabaseCopy(t *testing.T) {
 	if err = a.store.CopyDatabase(context.Background(), dst, nil); err != nil {
 		t.Fatal(err)
 	}
-	result, err := listPosts(dst.DB, "", "", "", "", 0, 20)
+	result, err := listPosts(dst.DB, "alice", "", "", "replies", 0, 20)
 	if err != nil || len(result.Items) != 1 || !result.Items[0].SelfReply || result.Items[0].ReplyToAuthorID != "42" || result.Items[0].ReplyTo != "100" {
 		t.Fatal("migration lost self-reply identity", result, err)
 	}
@@ -161,7 +157,7 @@ func TestArchivedRepliesAcrossAuthors(t *testing.T) {
 		t.Fatal(err)
 	}
 	others := []archive.Post{
-		{ID: "200", AuthorID: "88", Username: "bob", ReplyTo: "100", Text: "reply to alice"},
+		{ID: "200", AuthorID: "88", Username: "bob", ReplyTo: "100", Text: "reply to alice", Assets: []archive.Asset{{ID: "reply-photo", Kind: "photo"}}},
 		{ID: "201", AuthorID: "99", Username: "carol", ReplyTo: "200", Text: "reply to bob"},
 		{ID: "202", AuthorID: "88", Username: "bob", Text: "@alice mention only"},
 		{ID: "203", AuthorID: "88", Username: "bob", ReplyTo: "999", Text: "another parent"},
@@ -195,7 +191,7 @@ func TestArchivedRepliesAcrossAuthors(t *testing.T) {
 		return result
 	}
 	first := read("")
-	if len(first.Items) != 20 || first.Items[0].ID != "101" || first.Items[1].ID != "200" || first.Items[1].Username != "bob" || !first.Items[1].HasReplies || !first.HasMore || first.NextCursor != "1017" {
+	if len(first.Items) != 20 || first.Items[0].ID != "101" || first.Items[1].ID != "200" || first.Items[1].Username != "bob" || !first.Items[1].HasReplies || len(first.Items[1].Media) != 1 || first.Items[1].Media[0].ID != "reply-photo" || !first.HasMore || first.NextCursor != "1017" {
 		t.Fatal(first)
 	}
 	second := read(first.NextCursor)

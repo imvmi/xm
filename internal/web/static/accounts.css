@@ -43,6 +43,8 @@
 .account-action-list { display:flex;flex-direction:column;gap:4px; }
 .account-action-list :is(button,a) { display:block;min-height:44px;text-align:left;padding:10px 12px;border:0;border-radius:8px;font:inherit;color:var(--ink);background:transparent;overflow-wrap:anywhere;white-space:normal; }
 .account-action-list :is(button,a):hover { background:var(--bg); }
+.account-action-list .account-replies-switch { display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%; }
+.account-replies-help { margin:0 12px 10px;color:var(--muted);font-size:12px;line-height:1.7; }
 .account-details { margin-top:6px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);overflow-wrap:anywhere; }
 .account-details>summary { padding:10px 0;cursor:pointer;min-height:40px; }
 .account-details>div { padding:0 0 6px;line-height:1.7; }
@@ -64,8 +66,9 @@
  .account-toolbar .search-box { grid-column:1/-1;min-width:0; }
  .account-toolbar select { width:100%;min-width:0; }
  #view-archive .page-heading { align-items:flex-start; }
- #view-archive .heading-actions { gap:6px;justify-content:flex-end; }
- #view-archive .heading-actions .button { padding:8px 10px;font-size:12px;min-height:40px; }
+ #view-archive .heading-actions { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;margin:0;gap:8px; }
+ #view-archive .heading-actions .button { min-width:0;padding:8px 6px;font-size:12px;min-height:44px;gap:5px; }
+ #view-archive .heading-actions .button svg { width:14px;height:14px; }
  #view-archive #user-list { grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }
  #view-archive #user-list .account-card { padding:12px 10px 6px; }
  .account-card-top { flex-direction:column;gap:8px; }

@@ -122,20 +122,46 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		t.Fatal("preference lost on reload")
 	}
 	openMenu("bob")
-	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
-	wait(`$('monitor-dialog').open`)
-	if !eval(`!$('account-menu-dialog').open && !$('monitor-timeline').checked && $('monitor-enabled').checked`) {
-		t.Fatal("edit did not load preference")
+	if !eval(`!document.querySelector('#account-menu-content [data-op=edit]') && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='true'`) {
+		t.Fatal("management must expose the saved replies switch instead of configuration editing")
 	}
-	eval(`(()=>{$('monitor-timeline').checked=true;document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
-	wait(`!$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').show_in_timeline===true`)
+	// Hold the save to check duplicate prevention and preservation of other preferences.
+	eval(`(()=>{window.repliesFetch=window.fetch;window.replySaves=[];window.fetch=(url,...args)=>{if(String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'){replySaves.push(JSON.parse(args[0].body));return new Promise(resolve=>{window.finishReplySave=()=>resolve(repliesFetch(url,...args))})}return repliesFetch(url,...args)};const b=document.querySelector('#account-menu-content [data-op=replies]');b.focus();b.click();document.querySelector('#account-menu-content [data-op=replies]').click();return true})()`)
+	if !eval(`$('account-menu-dialog').open && document.querySelector('#account-menu-content [data-op=replies]').disabled && replySaves.length===1 && replySaves[0].replies===false && replySaves[0].enabled===true && !('show_in_timeline' in replySaves[0])`) {
+		t.Fatal("reply save must remain in the menu and disable duplicate submissions")
+	}
+	eval(`(()=>{window.fetch=window.repliesFetch;finishReplySave();return true})()`)
+	wait(`!accountPending.size && !state.monitors.find(m=>m.username==='bob').replies`)
+	if !eval(`$('account-menu-dialog').open && document.activeElement.dataset.op==='replies' && state.monitors.find(m=>m.username==='bob').enabled && !state.monitors.find(m=>m.username==='bob').show_in_timeline && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='false'`) {
+		t.Fatal("reply save changed another preference or lost focus")
+	}
+	// Failed saves retain the previous value and keep the management menu usable.
+	eval(`(()=>{window.fetch=(url,...args)=>String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'?Promise.resolve(new Response(JSON.stringify({error:'fixture replies failure'}),{status:500})):repliesFetch(url,...args);document.querySelector('#account-menu-content [data-op=replies]').click();return true})()`)
+	wait(`!accountPending.size && $('toast').textContent==='fixture replies failure'`)
+	if !eval(`$('account-menu-dialog').open && !state.monitors.find(m=>m.username==='bob').replies && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='false'`) {
+		t.Fatal("failed reply save changed state")
+	}
+	eval(`(()=>{window.fetch=window.repliesFetch;$('account-menu-dialog').close();document.querySelector('[data-monitor=bob][data-op=toggle]').click();return true})()`)
+	wait(`!accountPending.size && !state.monitors.find(m=>m.username==='bob').enabled`)
+	openMenu("bob")
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=replies]').click();return true})()`)
+	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').replies`)
+	if !eval(`!state.monitors.find(m=>m.username==='bob').enabled && !state.monitors.find(m=>m.username==='bob').show_in_timeline`) {
+		t.Fatal("reply save enabled automatic collection or home visibility")
+	}
+	var replies, enabled, shown int
+	if err := a.store.DB.QueryRow("SELECT replies,enabled,show_in_timeline FROM monitors WHERE username='bob'").Scan(&replies, &enabled, &shown); err != nil || replies != 1 || enabled != 0 || shown != 0 {
+		t.Fatalf("reply preference not persisted independently: %d %d %d %v", replies, enabled, shown, err)
+	}
+	eval(`(()=>{$('account-menu-dialog').close();document.querySelector('[data-monitor=bob][data-op=timeline]').click();return true})()`)
+	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').show_in_timeline===true`)
 	eval(`(()=>{$('user-search').value='does-not-exist';$('user-search').dispatchEvent(new Event('input'));return true})()`)
 	if !eval(`!$('user-empty').hidden && document.querySelectorAll('#user-list .account-card').length===0`) {
 		t.Fatal("empty search")
 	}
 	eval(`(()=>{$('user-search').value='';$('user-search').dispatchEvent(new Event('input'));$('monitor-sort').value='posts-desc';$('monitor-sort').dispatchEvent(new Event('change'));document.querySelector('[data-account=long_username15] .account-stats').click();return true})()`)
 	wait(`$('account-menu-dialog').open && accountMenuTarget==='long_username15'`)
-	if !eval(`$('account-menu-content').textContent.includes('配置编辑') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
+	if !eval(`$('account-menu-content').textContent.includes('包含回复') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
 		t.Fatal("card click did not show operations or hid the attention indicator")
 	}
 	eval(`(()=>{document.querySelector('#account-menu-content .account-details').open=true;return true})()`)
@@ -162,6 +188,9 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 			}
 			if width <= 760 && !eval(`(()=>{const cards=[...document.querySelectorAll('#user-list .account-card')],a=cards[0].getBoundingClientRect(),b=cards[1].getBoundingClientRect();return getComputedStyle($('user-list')).gridTemplateColumns.split(' ').length===2 && Math.abs(a.top-b.top)<1 && b.left>=a.right && cards.every(card=>[...card.querySelectorAll('.account-identity,.account-controls,.timeline-switch,.account-actions')].every(el=>el.scrollWidth<=el.clientWidth+1))})()`) {
 				t.Fatalf("mobile accounts must fit two per row at %d", width)
+			}
+			if width <= 760 && !eval(`(()=>{const group=document.querySelector('#view-archive .heading-actions'),r=group.getBoundingClientRect(),heading=group.parentElement.getBoundingClientRect(),buttons=[...group.children].map(b=>b.getBoundingClientRect());return Math.abs(r.width-heading.width)<1 && buttons.every(b=>Math.abs(b.top-buttons[0].top)<1 && Math.abs(b.width-buttons[0].width)<1 && b.height>=44) && [...group.children].every(b=>b.scrollWidth<=b.clientWidth+1)})()`) {
+				t.Fatalf("mobile header actions must fill one equal-width row at %d", width)
 			}
 			if !eval(`(()=>{const grid=document.querySelector('.account-stats-grid'),box=document.querySelector('.account-overview'),cells=[...grid.children],columns=getComputedStyle(grid).gridTemplateColumns.split(' ').length;return columns===2 && box.matches(':popover-open') && box.getBoundingClientRect().left>=0 && box.getBoundingClientRect().right<=innerWidth && box.getBoundingClientRect().bottom<=innerHeight && $('stat-posts').getBoundingClientRect().left-box.getBoundingClientRect().left>=14 && Math.abs(box.getBoundingClientRect().bottom-grid.getBoundingClientRect().bottom)<=2 && cells.every(cell=>parseFloat(getComputedStyle(cell).paddingLeft)>=14 && cell.scrollWidth<=cell.clientWidth+1)})()`) {
 				t.Fatalf("archive overview spacing or columns incorrect %d %s", width, theme)

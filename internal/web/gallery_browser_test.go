@@ -167,8 +167,8 @@ func TestGalleryCenteredSwipeBrowser(t *testing.T) {
 	}
 	touch(input.DispatchTouchEventTypeTouchEnd, 280)
 	wait(`!galleryBusy && imageIndex===0`)
-	// Vertical gestures follow the finger. Small/upward drags spring back;
-	// a downward swipe closes without navigating or changing the timeline position.
+	// Vertical gestures follow the finger. Small drags spring back; upward and
+	// downward swipes close without navigating or changing the timeline position.
 	eval(`(()=>{window.galleryScroll=scrollY;window.galleryHash=location.hash;return true})()`)
 	if !eval(`window.galleryScroll>0`) {
 		t.Fatal("scroll restoration fixture did not scroll")
@@ -179,9 +179,16 @@ func TestGalleryCenteredSwipeBrowser(t *testing.T) {
 	touch(input.DispatchTouchEventTypeTouchEnd, 180)
 	wait(`!galleryBusy && $('image-dialog').open`)
 	touch(input.DispatchTouchEventTypeTouchStart, 180, 450)
-	touch(input.DispatchTouchEventTypeTouchMove, 180, 250)
+	touch(input.DispatchTouchEventTypeTouchMove, 180, 425)
 	touch(input.DispatchTouchEventTypeTouchEnd, 180)
 	wait(`!galleryBusy && $('image-dialog').open`)
+	touch(input.DispatchTouchEventTypeTouchStart, 180, 450)
+	touch(input.DispatchTouchEventTypeTouchMove, 180, 250)
+	wait(`galleryDrag?.axis==='vertical' && galleryViewport.style.transform.includes('-200px')`)
+	touch(input.DispatchTouchEventTypeTouchEnd, 180)
+	wait(`!$('image-dialog').open && imageGallery.length===0 && document.body.style.overflow==='' && scrollY===window.galleryScroll && location.hash===window.galleryHash`)
+	eval(`(()=>{document.querySelector('[data-image]').click();return true})()`)
+	wait(`$('image-dialog').open && imageIndex===0`)
 	touch(input.DispatchTouchEventTypeTouchStart, 180, 350)
 	touch(input.DispatchTouchEventTypeTouchMove, 180, 550)
 	touch(input.DispatchTouchEventTypeTouchEnd, 180)

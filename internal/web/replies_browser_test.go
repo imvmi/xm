@@ -3,34 +3,33 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"xm/internal/archive"
 )
 
-func TestSelfReplyContextBrowser(t *testing.T) {
+func TestReplyThreadPageAndSwipeBackBrowser(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
-		t.Skip("offline Chrome self-reply fixture")
+		t.Skip("offline Chrome reply-thread fixture")
 	}
 	a := testApp(t)
-	posts := []archive.Post{{ID: "100", AuthorID: "42", Username: "alice", Text: "第一条：这是这段内容的起点。", CreatedAt: "2026-10-22T08:00:00Z"}}
-	for i := 101; i <= 124; i++ {
-		posts = append(posts, archive.Post{ID: fmt.Sprint(i), AuthorID: "42", Username: "alice", ReplyTo: fmt.Sprint(i - 1), ReplyToAuthorID: "42", Text: fmt.Sprintf("第 %d 条补充：自回复也应出现在主时间线，原帖摘要帮助理解上下文。", i-99), CreatedAt: "2026-10-22T08:10:00Z"})
-	}
-	posts[22].Text = `<img src=x onerror="window.replyXSS=true"> literal text`
-	posts = append(posts, archive.Post{ID: "200", AuthorID: "42", Username: "alice", ReplyTo: "199", ReplyToAuthorID: "42", Text: "这条回复的原帖尚未归档。", CreatedAt: "2026-10-22T08:20:00Z"})
-	if err := a.store.SavePosts("alice", posts); err != nil {
+	if err := a.store.SavePosts("alice", []archive.Post{
+		{ID: "100", AuthorID: "42", Username: "alice", Text: "根推文：回复只应作为附属信息。", CreatedAt: "2026-10-22T08:00:00Z"},
+		{ID: "101", AuthorID: "42", Username: "alice", ReplyTo: "100", ReplyToAuthorID: "42", Text: "Alice 的直接回复", CreatedAt: "2026-10-22T08:10:00Z"},
+		{ID: "400", AuthorID: "42", Username: "alice", Text: "另一条根推文", CreatedAt: "2026-10-22T09:00:00Z"},
+		{ID: "500", AuthorID: "42", Username: "alice", ReplyTo: "999", ReplyToAuthorID: "42", Text: "父推文缺失的回复", CreatedAt: "2026-10-22T09:10:00Z"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.store.SavePosts("bob", []archive.Post{
-		{ID: "300", AuthorID: "88", Username: "bob", ReplyTo: "124", ReplyToAuthorID: "42", Text: "来自其他用户的已归档回复"},
-		{ID: "301", AuthorID: "99", Username: "carol", ReplyTo: "300", ReplyToAuthorID: "88", Text: "对 Bob 的回复"},
+		{ID: "200", AuthorID: "88", Username: "bob", ReplyTo: "100", ReplyToAuthorID: "42", Text: "Bob 的直接回复", CreatedAt: "2026-10-22T08:20:00Z"},
+		{ID: "201", AuthorID: "99", Username: "carol", ReplyTo: "200", ReplyToAuthorID: "88", Text: `<img src=x onerror="window.replyXSS=true"> Carol 的下一层回复`, CreatedAt: "2026-10-22T08:30:00Z"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +43,7 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 	defer stop()
 	eval := func(js string) bool {
 		t.Helper()
-		v, err := chromedp.Run(browser, chromedp.Evaluate[bool](js))
+		v, err := chromedp.Run(browser, chromedp.Evaluate[bool]("Boolean("+js+")"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,10 +51,11 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 	}
 	wait := func(js string) {
 		t.Helper()
-		until := time.Now().Add(5 * time.Second)
+		until := time.Now().Add(7 * time.Second)
 		for !eval(js) {
 			if time.Now().After(until) {
-				t.Fatal("UI timeout", js)
+				detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({hash:location.hash,focus:state.focusPost,loading:state.postsLoading,context:threadContextLoading,replies:threadRepliesLoading,posts:[...document.querySelectorAll('#posts article')].map(p=>p.dataset.postId),status:$('thread-replies-status')?.textContent})`))
+				t.Fatal("UI timeout", js, detail)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -63,103 +63,62 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 	if err := chromedp.Do(browser, chromedp.EmulateViewport(390, 844), chromedp.Navigate(server.URL)); err != nil {
 		t.Fatal(err)
 	}
-	wait(`typeof state!=='undefined' && typeof openReplyContext==='function'`)
+	wait(`typeof state!=='undefined' && typeof openPostDetail==='function'`)
 	password, _ := json.Marshal(testPassword)
 	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type=submit]').click();return true})()`)
-	wait(`state.authenticated&&!state.postsLoading&&!!document.querySelector('[data-reply-context="124"]')`)
-	if !eval(`document.querySelector('[data-post-id="124"] .reply-preview-text').textContent.includes('自回复') && document.querySelector('[data-post-id="200"] .reply-preview-text').textContent.includes('尚未归档') && !window.replyXSS`) {
-		t.Fatal("reply previews incorrect")
+	wait(`state.authenticated&&!state.postsLoading&&state.postIDs.size===2`)
+	if !eval(`(()=>{const ids=[...document.querySelectorAll('#posts>article')].map(p=>p.dataset.postId);return ids.join(',')==='400,100'&&!document.body.textContent.includes('Alice 的直接回复')&&document.querySelector('[data-post-id="100"] [data-open-post="100"]').textContent.includes('查看回复')})()`) {
+		t.Fatal("replies leaked into the home timeline or reply affordance is missing")
 	}
-	screenshot := func(name string) {
+	eval(`(()=>{$('posts').style.paddingBottom='1200px';window.scrollTo(0,120);window.homeThreadScroll=scrollY;document.querySelector('[data-post-id="100"] .post-text').click();return true})()`)
+	wait(`state.focusPost==='100'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.size===2`)
+	if !eval(`location.hash==='#post/100'&&$('home-feed-title').textContent==='推文详情'&&document.querySelector('.thread-current').dataset.postId==='100'&&!!document.querySelector('.thread-reply[data-post-id="101"]')&&!!document.querySelector('.thread-reply[data-post-id="200"]')&&!document.querySelector('[data-post-id="201"]')&&!window.replyXSS`) {
+		t.Fatal("root thread page did not show only its direct archived replies")
+	}
+	if !eval(`document.querySelector('.thread-reply[data-post-id="200"] [data-open-post="200"]').textContent.includes('查看回复')`) {
+		t.Fatal("nested reply affordance missing")
+	}
+	eval(`(()=>{window.scrollTo(0,80);document.querySelector('.thread-reply[data-post-id="200"] .post-text').click();return true})()`)
+	wait(`state.focusPost==='200'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.has('201')`)
+	if !eval(`location.hash==='#post/200'&&document.querySelector('.thread-ancestor').dataset.postId==='100'&&document.querySelector('.thread-current').dataset.postId==='200'&&document.querySelector('.thread-reply').dataset.postId==='201'&&!window.replyXSS`) {
+		t.Fatal("nested thread page lost its ancestor, current post, child, or escaping")
+	}
+	touch := func(kind input.DispatchTouchEventType, x, y float64) {
 		t.Helper()
-		if dir := os.Getenv("XM_SCREENSHOT_DIR"); dir != "" {
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				t.Fatal(err)
+		if err := chromedp.Do(browser, chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+			points := []*input.TouchPoint{}
+			if kind != input.DispatchTouchEventTypeTouchEnd && kind != input.DispatchTouchEventTypeTouchCancel {
+				points = append(points, &input.TouchPoint{X: x, Y: y})
 			}
-			shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(filepath.Join(dir, name), shot, 0600); err != nil {
-				t.Fatal(err)
-			}
+			_, err := cdp.Call(ctx, target, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: kind, TouchPoints: points})
+			return err
+		})); err != nil {
+			t.Fatal(err)
 		}
 	}
-	screenshot("self-replies-mobile.png")
-	for _, theme := range []string{"light", "dark"} {
-		eval(`(()=>{applyArchiveTheme('` + theme + `');document.querySelector('[data-post-id="124"]').scrollIntoView({block:'start'});return true})()`)
-		screenshot("reply-thread-" + theme + "-mobile.png")
-		eval(`(()=>{document.querySelector('[data-reply-context="124"]').click();return true})()`)
-		wait(`$('reply-context-dialog').open&&!replyContextLoading&&$('reply-context-items').children.length===20`)
-		if !eval(`$('reply-context-items').firstElementChild.dataset.contextPost==='105' && $('reply-context-items').lastElementChild.dataset.contextPost==='124' && document.querySelectorAll('#reply-context-items [aria-current=true]').length===1 && !$('reply-context-more').hidden && !document.querySelector('#reply-context-items img') && !window.replyXSS`) {
-			t.Fatal("context ordering/current/escaping incorrect")
-		}
-		if !eval(`(()=>{const d=$('reply-context-dialog'),r=d.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&d.scrollWidth<=d.clientWidth+1})()`) {
-			t.Fatal("mobile context overflow")
-		}
-		wait(`!replyChildrenLoading && $('reply-children-items').children.length===1`)
-		if !eval(`$('reply-children-items').textContent.includes('@bob') && $('reply-children-items').textContent.includes('来自其他用户') && !$('reply-children-items').textContent.includes('@carol')`) {
-			t.Fatal("cross-author direct replies must not flatten grandchildren")
-		}
-		screenshot("reply-context-" + theme + "-mobile.png")
-		eval(`(()=>{$('reply-context-more').click();return true})()`)
-		wait(`!replyContextLoading&&$('reply-context-items').children.length===25`)
-		if !eval(`$('reply-context-items').firstElementChild.dataset.contextPost==='100'&&$('reply-context-more').hidden`) {
-			t.Fatal("earlier page not prepended")
-		}
-		eval(`(()=>{$('reply-context-dialog').close();return true})()`)
-		wait(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`)
+	touch(input.DispatchTouchEventTypeTouchStart, 45, 500)
+	touch(input.DispatchTouchEventTypeTouchMove, 300, 500)
+	wait(`detailSwipe?.axis==='horizontal'&&detailSwipe.dx>200`)
+	touch(input.DispatchTouchEventTypeTouchEnd, 300, 500)
+	wait(`state.focusPost==='100'&&!threadContextLoading&&!threadRepliesLoading`)
+	if !eval(`location.hash==='#post/100'`) {
+		t.Fatal("first right swipe did not return to the parent thread page")
 	}
-	// Navigate from a reply to its own parent chain and direct replies.
-	eval(`(()=>{openReplyContext('124');return true})()`)
-	wait(`!replyChildrenLoading && !!document.querySelector('#reply-children-items [data-context-open="300"]')`)
-	eval(`(()=>{document.querySelector('#reply-children-items [data-context-open="300"]').click();return true})()`)
-	wait(`!replyContextLoading && !replyChildrenLoading && replyContextSelected==='300' && $('reply-children-items').textContent.includes('@carol')`)
-	if !eval(`$('reply-context-items').lastElementChild.dataset.contextPost==='300' && $('reply-context-items').lastElementChild.previousElementSibling.dataset.contextPost==='124' && document.querySelectorAll('#reply-context-items [aria-current=true]').length===1`) {
-		t.Fatal("cross-author context lost parent linkage")
+	touch(input.DispatchTouchEventTypeTouchStart, 45, 500)
+	touch(input.DispatchTouchEventTypeTouchMove, 300, 500)
+	touch(input.DispatchTouchEventTypeTouchEnd, 300, 500)
+	wait(`!state.focusPost&&!state.postsLoading&&state.view==='home'`)
+	if !eval(`Math.abs(scrollY-window.homeThreadScroll)<2&&[...document.querySelectorAll('#posts>article')].map(p=>p.dataset.postId).join(',')==='400,100'`) {
+		t.Fatal("right swipe did not restore the previous timeline and scroll position")
 	}
-	eval(`(()=>{$('reply-children-jump').click();return true})()`)
-	if !eval(`$('reply-children-title').textContent.includes('@bob') && $('reply-children-items').textContent.includes('@carol') && $('reply-context-dialog').scrollTop>0`) {
-		t.Fatal("reply jump did not reveal the selected post's replies")
-	}
-	screenshot("cross-author-replies-mobile.png")
-	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
-	wait(`!$('reply-context-dialog').open && $('reply-children-items').children.length===0`)
-	eval(`(()=>{document.querySelector('[data-reply-context="200"]').click();return true})()`)
-	wait(`!replyContextLoading&&$('reply-context-status').textContent.includes('尚未归档')`)
-	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
-	wait(`$('reply-context-items').children.length===0`)
-	// A delayed response cannot repopulate a dialog closed during navigation.
-	eval(`(()=>{window.savedReplyAPI=api;api=path=>path.endsWith('/context')?new Promise(resolve=>window.finishReplyRequest=resolve):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
-	eval(`(()=>{closeReplyContext();return true})()`)
-	wait(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`)
-	eval(`(()=>{window.finishReplyRequest({items:[{id:'124',username:'alice',text:'stale'}],end:'beginning'});api=window.savedReplyAPI;return true})()`)
-	if !eval(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`) {
-		t.Fatal("stale context response applied")
-	}
-	// Failed reply requests can retry without losing the already loaded context.
-	eval(`(()=>{window.savedReplyAPI=api;api=path=>path.endsWith('/replies')?Promise.reject(new Error('回复读取失败')):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
-	wait(`!replyChildrenLoading && !replyContextLoading && $('reply-children-status').textContent==='回复读取失败'`)
-	eval(`(()=>{api=window.savedReplyAPI;$('reply-children-more').click();return true})()`)
-	wait(`!replyChildrenLoading && $('reply-children-items').children.length===1`)
-	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
-	wait(`$('reply-children-items').children.length===0`)
-	// A reply response for the previous selection cannot populate the new one.
-	eval(`(()=>{api=path=>path==='/posts/124/replies'?new Promise(resolve=>window.finishChildRequest=resolve):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
-	eval(`(()=>{openReplyContext('200');return true})()`)
-	wait(`!replyChildrenLoading && replyContextSelected==='200'`)
-	eval(`(()=>{window.finishChildRequest({items:[{id:'300',username:'bob',text:'stale'}],has_more:false});api=window.savedReplyAPI;return true})()`)
-	if !eval(`$('reply-children-items').children.length===0`) {
-		t.Fatal("stale reply response applied")
-	}
-	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
-	wait(`!$('reply-context-dialog').open && $('reply-context-items').children.length===0`)
-	// The same connected layout is used in the account timeline.
 	eval(`(()=>{location.hash='user/alice';return true})()`)
-	wait(`state.view==='user'&&!state.postsLoading&&!!document.querySelector('[data-post-id="124"] .reply-thread-rail')`)
-	if !eval(`(()=>{const card=document.querySelector('[data-post-id="124"]');return card.firstElementChild.classList.contains('reply-preview') && card.children.length===2 && card.scrollWidth<=card.clientWidth && document.documentElement.scrollWidth<=innerWidth})()`) {
-		t.Fatal("account reply thread layout or ordering incorrect")
+	wait(`state.view==='user'&&state.target==='alice'&&!state.postsLoading&&state.timelineTab==='posts'&&document.querySelectorAll('#posts>article').length===2`)
+	if !eval(`[...document.querySelectorAll('#posts>article')].map(p=>p.dataset.postId).join(',')==='400,100'`) {
+		t.Fatal("account posts tab still contains replies")
 	}
-	eval(`(()=>{document.querySelector('[data-post-id="124"]').scrollIntoView({block:'start'});return true})()`)
-	screenshot("account-reply-thread-dark-mobile.png")
+	eval(`(()=>{$('tab-replies').click();return true})()`)
+	wait(`state.timelineTab==='replies'&&!state.postsLoading&&!!document.querySelector('[data-post-id="101"]')`)
+	if !eval(`!!document.querySelector('[data-post-id="101"]')&&!!document.querySelector('[data-post-id="500"]')`) {
+		t.Fatal("account replies tab no longer exposes archived replies")
+	}
 }

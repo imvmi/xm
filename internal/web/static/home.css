@@ -82,7 +82,6 @@
   .content:has(#view-archive:not([hidden])) { padding:18px; }
   #view-archive .page-heading h1 { font-size:25px; }
   #view-archive .heading-actions .button { min-height:44px; flex:0 0 auto; font-size:12px; }
-  #view-archive .heading-actions { width:auto; margin:0; }
   #view-archive .stats { grid-template-columns:repeat(2,minmax(0,1fr)); padding:18px 0; gap:22px 0; margin-bottom:26px; }
   #view-archive .stats>div { padding:0 16px!important; border:0!important; border-radius:0; }
   #view-archive .stats>div:nth-child(odd) { padding-left:0!important; border-right:1px solid var(--line)!important; }
