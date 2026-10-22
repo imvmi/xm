@@ -13,6 +13,9 @@ const systemSettingsDDL = `CREATE TABLE IF NOT EXISTS system_settings(id INTEGER
 // Shared logical schema: SQLite and MySQL use the same keys and constraints.
 // Per-service credentials are columns, not one opaque configuration document.
 var settingsSchema = []string{
+	`CREATE TABLE IF NOT EXISTS api_credentials(id VARCHAR(64) PRIMARY KEY,name VARCHAR(100) NOT NULL,description TEXT NOT NULL,secret_hash VARCHAR(64) NOT NULL,secret_tail VARCHAR(8) NOT NULL,scopes TEXT NOT NULL,accounts TEXT NOT NULL,all_accounts BOOLEAN NOT NULL,enabled BOOLEAN NOT NULL,revoked_at BIGINT NOT NULL,expires_at BIGINT NOT NULL,created_at BIGINT NOT NULL,last_used_at BIGINT NOT NULL,request_limit INTEGER NOT NULL,task_limit INTEGER NOT NULL,queue_limit INTEGER NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS api_idempotency(id VARCHAR(64) PRIMARY KEY,credential_id VARCHAR(64) NOT NULL,request_hash VARCHAR(64) NOT NULL,status_code INTEGER NOT NULL,response TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS api_audit(id VARCHAR(64) PRIMARY KEY,credential_id VARCHAR(64) NOT NULL,action VARCHAR(255) NOT NULL,status_code INTEGER NOT NULL,created_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS media_local_copies(copy_id VARCHAR(64) PRIMARY KEY,post_id VARCHAR(64) NOT NULL,media_id VARCHAR(128) NOT NULL,local_path TEXT NOT NULL,storage_id VARCHAR(64) NOT NULL,object_key TEXT NOT NULL,bytes BIGINT NOT NULL,sha256 VARCHAR(64) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS account_preferences(target VARCHAR(64) PRIMARY KEY,show_in_timeline BOOLEAN NOT NULL DEFAULT 1)`,
 	`CREATE TABLE IF NOT EXISTS request_budgets(scope VARCHAR(64) PRIMARY KEY,state TEXT NOT NULL)`,
@@ -208,6 +211,10 @@ func ensureRunJobColumn(db *database.DB) error {
 func ensureArchiveIndexes(db *database.DB) error {
 	for _, idx := range []struct{ name, table, columns string }{
 		{"posts_author", "posts", "author_id"},
+		{"posts_quote", "posts", "quote_id"},
+		{"api_idempotency_expiry", "api_idempotency", "expires_at"},
+		{"api_idempotency_credential", "api_idempotency", "credential_id"},
+		{"api_audit_created", "api_audit", "created_at,id"},
 		{"target_identity_user", "target_identities", "user_id"},
 		{"target_identity_handle", "target_identities", "current_username"},
 		{"media_storage", "media", "storage_id"},

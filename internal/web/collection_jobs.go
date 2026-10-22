@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -77,6 +78,9 @@ func ensureCollectionModeSchema(db *database.DB) error {
 		migrations []struct{ name, definition string }
 	}{
 		{"collection_jobs", []struct{ name, definition string }{
+			{"public_id", "VARCHAR(64) NOT NULL DEFAULT ''"},
+			{"api_credential_id", "VARCHAR(64) NOT NULL DEFAULT ''"},
+			{"requested_mode", "VARCHAR(16) NOT NULL DEFAULT ''"},
 			{"mode", "VARCHAR(16) NOT NULL DEFAULT 'incremental'"},
 			{"retry_at", "BIGINT NOT NULL DEFAULT 0"},
 			{"retry_count", "INT NOT NULL DEFAULT 0"},
@@ -195,7 +199,7 @@ func ensureCollectionJob(db *database.DB, target, source string, modes ...string
 	}
 	now := time.Now().Unix()
 	order := time.Now().UnixNano()
-	result, err := db.Exec("INSERT INTO collection_jobs(target,source,status,queued_at,queue_order,mode) VALUES(?,?,'queued',?,?,?)", target, source, now, order, mode)
+	result, err := db.Exec("INSERT INTO collection_jobs(target,source,status,queued_at,queue_order,mode,public_id) VALUES(?,?,'queued',?,?,?,?)", target, source, now, order, mode, rand.Text())
 	if err != nil {
 		return CollectionJob{}, err
 	}
@@ -227,7 +231,7 @@ func enqueueCollectionJob(tx *database.Tx, target, source, mode, message string)
 		return 0, err
 	}
 	now := time.Now()
-	result, err := tx.Exec("INSERT INTO collection_jobs(target,source,status,queued_at,queue_order,message,mode) VALUES(?,?,'queued',?,?,?,?)", target, source, now.Unix(), now.UnixNano(), message, mode)
+	result, err := tx.Exec("INSERT INTO collection_jobs(target,source,status,queued_at,queue_order,message,mode,public_id) VALUES(?,?,'queued',?,?,?,?,?)", target, source, now.Unix(), now.UnixNano(), message, mode, rand.Text())
 	if err != nil {
 		return 0, err
 	}

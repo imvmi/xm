@@ -18,6 +18,7 @@ async function api(path, method='GET', data) {
 }
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
+  if(typeof resetAPICredentials==='function')resetAPICredentials();
   releaseTimelineMedia();
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
@@ -73,7 +74,8 @@ async function navigate() {
   const request=++state.navRequest;state.postRequest++;state.hasMore=false;state.postsLoading=false;clearTimeout(searchTimer);timelineObserver?.disconnect();
   const directoryScroll=accountScroll;
   accountRestoring=false;
-  let next=location.hash.slice(1);
+  let next=location.hash.slice(1);const credentialsTab=next==='settings/credentials';if(credentialsTab)next='settings';
+  if(typeof clearAPISecret==='function'&&next!=='settings')clearAPISecret();
   if(['accounts','archive','monitors'].includes(next)){next='archive';if(location.hash!=='#accounts')history.replaceState(null,'','#accounts');}
   const match=/^user\/([A-Za-z0-9_]{1,15})$/.exec(next);
   state.view=match?'user':titles[next]&&next!=='user'?next:'home';
@@ -103,7 +105,7 @@ async function navigate() {
     await refreshUsers(state.target);if(request!==state.navRequest)return;renderProfile();syncTabs();await refreshPosts();
   }
   else if(state.view==='activity')await refreshRuns();
-  else if(state.view==='settings')await refreshSettings();
+  else if(state.view==='settings'){await refreshSettings();if(credentialsTab)selectSettingsTab('credentials');}
   else if(state.view==='notifications')await refreshNotifications();
 }
 document.querySelector('.skip-link').addEventListener('click',event=>{event.preventDefault();(state.authenticated?$('main-content'):$('username')).focus();});
@@ -496,7 +498,7 @@ function selectSettingsTab(name,focus=false){
 }
 for(const button of document.querySelectorAll('[data-settings-tab]')){
  button.addEventListener('click',()=>selectSettingsTab(button.dataset.settingsTab));
- button.addEventListener('keydown',e=>{const names=['account','collection','display','storage','migration'];let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;e.preventDefault();selectSettingsTab(names[i],true);});
+ button.addEventListener('keydown',e=>{const names=[...document.querySelectorAll('[data-settings-tab]')].map(b=>b.dataset.settingsTab);let i=names.indexOf(button.dataset.settingsTab);if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;e.preventDefault();selectSettingsTab(names[i],true);});
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
@@ -509,6 +511,7 @@ async function refreshSettings() {
   await refreshCookieSource();
   await refreshStorage();
   if(typeof refreshMigrations==='function')await refreshMigrations();
+  if(typeof refreshAPICredentials==='function')await refreshAPICredentials();
 }
 async function refreshCookieSource() {
   const c=await api('/cookies/source');
@@ -549,7 +552,7 @@ $('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{
 const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['本轮未完成','warn'],budget_wait:['历史等待','neutral'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};
-const sourceLabels={manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
+const sourceLabels={api:'外部 API',manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
 const modeLabels={incremental:'增量采集',backfill:'历史补采',rescan:'重新扫描'};
 const phaseLabels={preparing:'准备任务',timeline:'读取时间线',avatar:'保存头像',media:'下载与归档媒体',finishing:'保存执行结果'};
 function durationLabel(seconds){const n=Math.max(0,Math.floor(Number(seconds)||0));return n>=3600?`${Math.floor(n/3600)} 小时 ${Math.floor(n%3600/60)} 分钟`:n>=60?`${Math.floor(n/60)} 分 ${n%60} 秒`:`${n} 秒`;}

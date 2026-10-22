@@ -60,7 +60,7 @@ func TestMigrationBrowser(t *testing.T) {
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`typeof migrationState!=='undefined' && !!migrationState`)
 	eval(`(()=>{$('settings-tab-migration').click();return true})()`)
-	if !eval(`!!$('migration-database-section') && !!$('migration-storage-section') && $('migration-source').value==='s3-test' && $('migration-storage-target').value==='local'`) {
+	if !eval(`!!$('migration-database-section') && !!$('migration-storage-section') && $('migration-source').options.length===1 && $('migration-source').value==='s3-test' && $('migration-storage-target').value==='local'`) {
 		t.Fatal("migration sections or configured direction missing")
 	}
 	for _, theme := range []string{"light", "dark"} {
@@ -88,6 +88,9 @@ func TestMigrationBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
 	wait(`migrationState?.job?.status==='failed' && !$('migration-retry').hidden`)
+	if !eval(`$('migration-source').options.length===1 && $('migration-source').value===migrationState.active_storage && migrationState.active_storage==='local'`) {
+		t.Fatal("migration source did not follow the active storage after cutover")
+	}
 	if !eval(`$('migration-message').textContent.includes('失败') && !$('migration-failures-panel').hidden && $('migration-acknowledge').hidden`) {
 		t.Fatal("failure not visible")
 	}
@@ -106,6 +109,9 @@ func TestMigrationBrowser(t *testing.T) {
 	corrupt.Store(false)
 	eval(`(()=>{$('migration-retry').click();return true})()`)
 	wait(`!$('migration-confirm-panel').hidden && migrationRetry`)
+	if !eval(`migrationChecked.source==='s3-test' && migrationChecked.target==='local' && $('migration-source').options.length===1 && $('migration-source').value==='local'`) {
+		t.Fatal("retry did not preserve the original direction independently of the current source")
+	}
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
 	wait(`migrationState?.job?.status==='completed'`)
 	if !eval(`$('migration-progress').value===$('migration-progress').max && $('migration-retry').hidden && !$('migration-acknowledge').hidden && !$('migration-job-panel').hidden`) {
@@ -119,7 +125,7 @@ func TestMigrationBrowser(t *testing.T) {
 	wait(`typeof migrationState!=='undefined' && !!migrationState?.job?.acknowledged && $('migration-job-panel').hidden`)
 	eval(`(()=>{$('settings-tab-migration').click();return true})()`)
 	// Local storage can select the configured S3 or add either remote type.
-	eval(`(()=>{$('migration-source').value='local';$('migration-source').dispatchEvent(new Event('change'));$('migration-storage-target').value='new';$('migration-storage-target').dispatchEvent(new Event('change'));return true})()`)
+	eval(`(()=>{$('migration-storage-target').value='new';$('migration-storage-target').dispatchEvent(new Event('change'));return true})()`)
 	if !eval(`!$('migration-remote-fields').hidden && !$('migration-s3-fields').hidden && [...$('migration-storage-target').options].some(o=>o.value==='s3-test')`) {
 		t.Fatal("local outbound choices missing")
 	}

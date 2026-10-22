@@ -242,7 +242,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	}
 	condition := "m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0)"
 	if cfg.PollingPaused {
-		condition = "m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0 AND q.source='manual')"
+		condition = "m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0 AND q.source IN ('manual','api'))"
 	}
 	var jobArgs []any
 	if autoBatch {
@@ -383,7 +383,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 			continue
 		}
 		m, loadErr := scanMonitor(a.store.DB.QueryRow("SELECT "+monitorColumns+" FROM monitors m WHERE m.username=?", queued.Username))
-		if errors.Is(loadErr, sql.ErrNoRows) || loadErr == nil && (!m.Enabled && !m.Requested && queueJob.Source != "manual") {
+		if errors.Is(loadErr, sql.ErrNoRows) || loadErr == nil && (!m.Enabled && !m.Requested && queueJob.Source != "manual" && queueJob.Source != "api") {
 			if jobErr = cancelMonitorJobs(a.store.DB, queued.Username, "监控已暂停或移除"); jobErr != nil {
 				a.changeMu.Unlock()
 				return true, jobErr
@@ -401,7 +401,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		if queueJob.Mode == collectionModeIncremental && automaticCollectionMode(m) == collectionModeBackfill {
 			queueJob.Mode = collectionModeBackfill
 		}
-		if cfg.PollingPaused && !m.Requested && queueJob.Source != "manual" {
+		if cfg.PollingPaused && !m.Requested && queueJob.Source != "manual" && queueJob.Source != "api" {
 			a.changeMu.Unlock()
 			interrupted = true
 			continue
@@ -896,62 +896,87 @@ func retryJobStatus(kind string) string {
 }
 
 func (s *Scheduler) queue(target string, modes ...string) error {
+	mode := collectionModeIncremental
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	_, err := s.queueAPI(target, mode, "")
+	return err
+}
+
+func (s *Scheduler) queueAPI(target, requestedMode, credentialID string) (int64, error) {
 	a := s.app
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	var err error
 	if target, err = archive.Username(target); err != nil {
-		return err
+		return 0, err
 	}
-	mode := collectionModeIncremental
-	if len(modes) > 0 {
-		mode = modes[0]
-	}
+	mode := requestedMode
 	if mode, err = normalizeCollectionMode(mode); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := a.store.LoadCookies(); err != nil {
-		return fmt.Errorf("请先导入有效格式的 Cookie")
+		return 0, fmt.Errorf("请先导入有效格式的 Cookie")
 	}
 	if state(a.store.DB, "cookie_blocked") != "" {
-		return errors.New("登录状态受限，请先重新导入 Cookie")
+		return 0, errors.New("登录状态受限，请先重新导入 Cookie")
 	}
 	tx, err := a.store.DB.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	var monitor Monitor
 	if err = tx.QueryRow("SELECT baseline_status,replies,replies_baseline_status,running,requested FROM monitors WHERE username=?", target).Scan(&monitor.BaselineStatus, &monitor.Replies, &monitor.RepliesBaseline, &monitor.Running, &monitor.Requested); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("账号不存在")
+			return 0, errors.New("账号不存在")
 		}
-		return err
+		return 0, err
+	}
+	if credentialID != "" {
+		var active int
+		if err = tx.QueryRow("SELECT COUNT(*) FROM collection_jobs WHERE target=? AND finished_at=0", target).Scan(&active); err != nil {
+			return 0, err
+		}
+		if active > 0 {
+			return 0, errors.New("账号已在队列或正在采集")
+		}
 	}
 	if monitor.Running || monitor.Requested {
-		return errors.New("账号已在队列或正在采集")
+		return 0, errors.New("账号已在队列或正在采集")
 	}
 	if mode == collectionModeIncremental {
 		mode = automaticCollectionMode(monitor)
 	}
 	if mode == collectionModeRescan {
 		if err = resetMonitorBaseline(tx, target); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	r, err := tx.Exec("UPDATE monitors SET requested=1 WHERE username=? AND running=0 AND requested=0", target)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if n, _ := r.RowsAffected(); n == 0 {
-		return errors.New("账号不存在，或已在队列/采集中")
+		return 0, errors.New("账号不存在，或已在队列/采集中")
 	}
-	if _, err = enqueueCollectionJob(tx, target, "manual", mode, "手动请求"); err != nil {
-		return err
+	source := "manual"
+	if credentialID != "" {
+		source = "api"
+	}
+	jobID, err := enqueueCollectionJob(tx, target, source, mode, "手动请求")
+	if err != nil {
+		return 0, err
+	}
+	if credentialID != "" {
+		if _, err = tx.Exec("UPDATE collection_jobs SET api_credential_id=?,requested_mode=? WHERE id=?", credentialID, requestedMode, jobID); err != nil {
+			return 0, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
-		return err
+		return 0, err
 	}
 	s.Wake()
-	return nil
+	return jobID, nil
 }

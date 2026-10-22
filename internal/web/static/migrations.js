@@ -48,10 +48,8 @@ async function refreshMigrations(){
  const key=JSON.stringify([data.database_driver,data.active_storage,data.sources]);
  if(key!==migrationConfigKey){
   resetMigrationPreview();migrationConfigKey=key;
-  const previous=$('migration-source').value;
-  const sources=[{id:'local',name:'本地磁盘'},...(data.sources||[]).filter(p=>data.active_storage==='local'||p.id===data.active_storage)];
-  $('migration-source').innerHTML=sources.map(p=>`<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('');
-  $('migration-source').value=sources.some(p=>p.id===previous)?previous:data.active_storage;
+  $('migration-source').innerHTML=`<option value="${escape(data.active_storage)}">${escape(migrationStorageName(data.active_storage))}</option>`;
+  $('migration-source').value=data.active_storage;
   migrationStorageTargets();
  }
  migrationAvailability();
@@ -90,7 +88,7 @@ async function checkMigration(kind,retry=false){
  resetMigrationPreview();migrationRetry=retry;
  const version=migrationPreviewVersion;
  try{
-  const input=migrationInput(kind);
+  const input=retry&&kind==='media'?{kind,source:migrationState.job.source,target:migrationState.job.target}:migrationInput(kind);
   const p=await api('/migrations/preview','POST',input);if(version!==migrationPreviewVersion)return;
   migrationChecked=input;
   $('migration-preview-title').textContent=kind==='cleanup'?'本地副本清理检查通过':(kind==='database'?'数据库':'存储')+'迁移检查通过';
@@ -111,9 +109,8 @@ $('migration-preview').addEventListener('click',()=>action($('migration-preview'
 $('migration-retry').addEventListener('click',()=>action($('migration-retry'),async()=>{
  const j=migrationState?.job;if(!j)return;
  if(j.kind==='media'){
-  $('migration-source').value=j.source;migrationStorageTargets();
   const known=j.target==='local'||migrationState.sources.some(p=>p.id===j.target);
-  $('migration-storage-target').value=known?j.target:'new';migrationAvailability();
+  if(j.source===migrationState.active_storage){$('migration-storage-target').value=known?j.target:'new';migrationAvailability();}
   if(!known){resetMigrationPreview();$('migration-error').textContent='该任务尚未保存目标连接，请填写远端配置后重新检查。';$('migration-remote-name').focus();return;}
  }
  if(j.kind==='database'&&j.target==='mysql'&&!$('migration-mysql-host').value){resetMigrationPreview();$('migration-error').textContent='请重新填写空 MySQL 目标连接后检查。密码不会保存在迁移记录中。';$('migration-mysql-host').focus();return;}

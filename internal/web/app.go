@@ -30,6 +30,7 @@ import (
 var static embed.FS
 
 type App struct {
+	api                externalAPIState
 	store              *archive.Store
 	configPath         string
 	configMu           sync.RWMutex
@@ -77,6 +78,7 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 		}
 	}
 	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
+	a.api.windows = make(map[string]apiWindow)
 	a.scheduler = newScheduler(a)
 	a.notifier = newNotifier(a)
 	a.restart = make(chan struct{}, 1)
@@ -216,8 +218,17 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", a.auth.logout)
 	mux.HandleFunc("GET /api/overview", a.overview)
 	mux.HandleFunc("PUT /api/posts/{id}/bookmark", a.setBookmark)
+	mux.HandleFunc("GET /api/credentials", a.listAPICredentials)
+	mux.HandleFunc("POST /api/credentials", a.saveAPICredential)
+	mux.HandleFunc("PATCH /api/credentials/{id}", a.saveAPICredential)
+	mux.HandleFunc("DELETE /api/credentials/{id}", a.revokeAPICredential)
+	mux.HandleFunc("POST /api/credentials/{id}/rotate", a.rotateAPICredential)
+	mux.HandleFunc("GET /api/credentials/audit", a.listAPIAudit)
+	mux.HandleFunc("GET /docs/api", a.apiDocs)
+	mux.HandleFunc("GET /docs/api/openapi.json", a.apiOpenAPI)
 	mux.HandleFunc("GET /api/settings", a.settings)
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
+	mux.HandleFunc("POST /api/settings/cleanup", a.cleanupData)
 	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
 	mux.HandleFunc("GET /api/notifications", a.notificationSettings)
 	mux.HandleFunc("POST /api/notifications/channels", a.saveNotificationChannel)
@@ -313,6 +324,7 @@ func (a *App) Handler() http.Handler {
 		html := strings.Replace(string(b), `data-theme-preference="system"`, `data-theme-preference="`+preference+`"`, 1)
 		_, _ = io.WriteString(w, html)
 	})
+	external := a.externalHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/media/") || strings.HasPrefix(r.URL.Path, "/avatars/") {
 			w = &mediaCacheResponseWriter{w}
@@ -323,6 +335,10 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			external.ServeHTTP(w, r)
+			return
+		}
 		mutation := r.Method != "GET" && r.Method != "HEAD"
 		if mutation && !sameOrigin(r) {
 			problem(w, 403, "不允许跨站请求")

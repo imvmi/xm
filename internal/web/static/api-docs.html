@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN" data-theme-preference="system"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>API 文档 · XM</title><link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/api-docs.css"><script defer src="/assets/api-docs.js"></script></head><body>
+<header><a class="brand" href="/">XM <span>开发者文档</span></a><nav aria-label="页面入口"><a href="/#settings/credentials">管理凭据</a><a href="/docs/api/openapi.json" download="xm-openapi.json">下载 OpenAPI</a><a href="/">返回系统</a></nav></header>
+<div class="docs-layout"><aside><nav aria-label="文档目录"><a href="#quickstart">快速开始</a><a href="#auth">认证与权限</a><a href="#accounts">账号管理</a><a href="#tasks">任务模式与状态</a><a href="#timeline">时间线与媒体</a><a href="#reliability">幂等、限流与错误</a><a href="#reference">接口参考</a></nav><small>API v1<br>站内独立文档 · 随系统更新</small></aside><main>
+<section id="quickstart"><p class="eyebrow">XM / EXTERNAL API</p><h1>连接你的归档工作流</h1><p class="lead">通过 API 管理授权账号、提交采集任务，读取已经归档的动态与媒体。</p>
+<ol><li>进入<a href="/#settings/credentials">设置 → API 凭据</a>，为调用方创建独立凭据，选择权限、账号范围与有效期。</li><li>保存创建时显示的完整密钥。关闭后无法再次查看，遗失时请轮换。</li><li>在 HTTPS 请求中传入 <code>Authorization: Bearer YOUR_API_KEY</code>。所有接口以 <code>/api/v1</code> 开头。</li></ol>
+<pre><code>curl 'https://xm.example.com/api/v1/me' \
+  -H 'Authorization: Bearer YOUR_API_KEY'</code></pre><p>本文的域名、账号名和密钥均为占位示例。将域名替换为 XM 的实际地址，将密钥保存在调用方的秘密配置中。无需登录 Cookie 或 CSRF Token。</p></section>
+<section id="auth"><h2>认证与权限</h2><p>每次请求都检查凭据有效期、启用状态和权限。撤销或轮换后，旧密钥不能发起新请求，已经受理的任务继续执行。公开文档不包含真实密钥或归档内容。</p><div class="table-wrap"><table><thead><tr><th>权限</th><th>允许的操作</th></tr></thead><tbody><tr><td><code>accounts:read</code></td><td>查询授权账号</td></tr><tr><td><code>accounts:write</code></td><td>添加账号、修改自动采集及包含回复设置</td></tr><tr><td><code>accounts:delete</code></td><td>取消监控，保留归档</td></tr><tr><td><code>tasks:read</code></td><td>查询本凭据提交的任务</td></tr><tr><td><code>tasks:create</code></td><td>提交和重试采集任务</td></tr><tr><td><code>tasks:rescan</code></td><td>与 tasks:create 一起允许重新扫描</td></tr><tr><td><code>tasks:cancel</code></td><td>取消本凭据提交的任务</td></tr><tr><td><code>timeline:read</code></td><td>读取授权账号的归档正文和引用</td></tr><tr><td><code>media:read</code></td><td>读取授权归档中的媒体、账号头像</td></tr></tbody></table></div><p>账号权限包含其归档推文内的引用内容；不包含其他账号的独立归档。外部接口不暴露收藏状态、X 登录 Cookie、管理员设置、存储连接、迁移和清理能力。未知或未授权的资源统一返回 404。</p><p>首版用于服务器之间调用，不开放浏览器跨域访问。不应将凭据嵌入公开网页或放入 URL 查询参数。</p></section>
+<section id="accounts"><h2>账号管理</h2><p>账号 <code>id</code> 是系统的稳定归档键，通常为首次添加的账号名。账号改名后，使用返回的 <code>id</code> 调用接口，展示名称使用 <code>username</code>。添加受限账号前，管理员可以提前把账号名加入凭据范围；新建账号不会自动扩大权限。</p>
+<pre><code>curl -X POST 'https://xm.example.com/api/v1/accounts' \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: create-example-001' \
+  -d '{"username":"example","enabled":false,"include_replies":false}'</code></pre>
+<p><code>enabled</code> 控制自动采集，默认 false。启用后遵守系统统一采集计划。<code>include_replies</code> 默认 false，修改后会更新历史基线。PATCH 未提供的字段保持不变；暂停自动采集会取消该账号排队任务并请求停止当前采集。</p><p><code>DELETE /accounts/{account}/monitor</code> 取消监控，保留推文与媒体；正在采集时返回 409，应先停止任务。取消监控后仍可读取已归档内容。</p></section>
+<section id="tasks"><h2>任务模式与状态</h2><div class="table-wrap"><table><thead><tr><th>mode</th><th>行为</th></tr></thead><tbody><tr><td>incremental</td><td>默认模式，检查新增内容；基线未完成时实际执行 backfill。</td></tr><tr><td>backfill</td><td>沿已有进度继续补采可访问的历史内容。</td></tr><tr><td>rescan</td><td>重置采集进度，重新建立历史基线；保留已有归档并去重。</td></tr></tbody></table></div>
+<pre><code>curl -X POST 'https://xm.example.com/api/v1/accounts/example/tasks' \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: collect-example-001' \
+  -d '{"mode":"incremental"}'</code></pre>
+<p>返回 <code>202</code> 和任务 <code>id</code> 表示已进入队列。<code>requested_mode</code> 表示请求模式，<code>mode</code> 表示实际模式；后续任务阶段可能调整实际模式。通过 <code>GET /tasks/{task}</code> 查询进度、尝试次数、读取和新增数量。</p><p>任务状态包括 queued、running、retrying、waiting_auth、waiting_rate、completed、failed、incomplete、cancelled。以 <code>finished_at &gt; 0</code> 判断任务已结束。自动重试期间任务 ID 保持不变。</p><p>同一账号只能有一个未结束任务。请求受现有队列、账号访问权限、登录状态及限流冷却约束，API 不会绕过这些限制，也不保证能获取账号的全部历史内容。</p><p><code>POST /tasks/{task}/cancel</code> 仅取消本次任务，不关闭账号自动监控；运行中的任务返回 202，需要继续查询直到结束。失败、未完成或取消的任务可以通过 retry 创建新的任务；rescan 的重试使用 backfill，继续已有进度。</p><p>凭据只能查看和取消自己提交且账号仍获授权的任务。任务历史受系统保留上限及管理员清理影响；清理后返回 404，公开 ID 不会复用。任务列表的分页游标若已被清理，请重新开始分页。</p></section>
+<section id="timeline"><h2>时间线与媒体</h2><p>时间线查询读取已有归档，不会自动发起采集。需要最新内容时，先提交任务并等待结束，再查询时间线。</p><pre><code>curl 'https://xm.example.com/api/v1/accounts/example/timeline?limit=50&amp;section=posts' \
+  -H 'Authorization: Bearer YOUR_API_KEY'</code></pre><p>分页返回 <code>items</code>、<code>has_more</code>、<code>next_cursor</code>，将 next_cursor 原样作为下一次请求的 cursor。limit 为 1～100，默认 50。时间线可按 section、媒体 kind 和关键词 q 筛选；count=1 时计算 total，默认不计算。</p><p>时间线按推文 ID 倒序。后来补采的旧推文可能落在后续页，不能仅凭最新推文 ID 保证完整同步；首版没有独立的归档变更流。</p><p>媒体对象包含媒体 ID、状态、字节数和版本。使用 <code>/posts/{post}/media/{asset}</code> 携带同一凭据读取；支持 Range 请求。头像使用 <code>/accounts/{account}/avatar</code>。首版不提供可匿名访问的签名链接。</p></section>
+<section id="reliability"><h2>幂等、限流与错误</h2><p>添加账号、提交和重试任务必须提供 Idempotency-Key。每个凭据独立记录，相同键与相同路径、方法和请求正文返回原成功响应，并带 <code>Idempotency-Replayed: true</code>。不同正文（包括不同 JSON 字节表示）不得复用同一键。</p><p>幂等键保留 24 小时，每个凭据最多 1000 个有效键。遇到 <code>idempotency_pending</code> 或 <code>result_unconfirmed</code> 时，操作可能已受理，请先查询账号或任务状态，不要立即换键提交。超过保留期不再保证幂等重放。</p><p>每分钟请求数、任务提交数及未结束任务数分别受凭据限额控制；频率窗口为服务器分钟窗口，服务重启后重新计数。超出频率返回 429 和 Retry-After。重放请求也计入调用频率。操作审计最多保留 1000 条或 30 天，最近使用时间最多每分钟更新一次。</p>
+<pre><code>{
+  "error": {
+    "code": "insufficient_scope",
+    "message": "凭据没有所需权限：tasks:create",
+    "request_id": "用于排查的请求标识"
+  }
+}</code></pre><p>400：参数错误；401：凭据无效；403：权限不足；404：资源不存在、已清理或未授权；409：任务或幂等冲突；429：限额超出；503：系统维护或暂不可用。每个响应带 X-Request-ID。媒体传输阶段的错误可能返回文本响应。</p></section>
+<section id="reference"><h2>接口参考</h2><p>下表根据服务端路由定义的 OpenAPI 文档加载。展开接口查看参数、请求示例和响应结构。</p><p id="docs-error" role="alert"></p><div id="api-reference"></div></section>
+<footer>XM API v1 · <a href="/#settings/credentials">管理凭据</a> · <a href="/docs/api/openapi.json">OpenAPI JSON</a></footer>
+</main></div></body></html>
