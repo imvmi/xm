@@ -18,7 +18,7 @@ test('append preserves existing DOM; concurrent loads and duplicate IDs are supp
  const f=fixture();let pending=f.ctx.refreshPosts();
  f.requests[0].resolve(f.page(['3','2'],4));await pending;
  f.$('posts').html+='EXPANDED_OR_PLAYING';
- pending=f.ctx.loadMorePosts();await f.ctx.loadMorePosts();
+ pending=f.ctx.loadMorePosts();assert.equal(f.ctx.loadMorePosts(),pending);
  assert.equal(f.requests.length,2);assert.match(f.requests[1].query,/offset=2/);
  f.requests[1].resolve(f.page(['2','1'],4));await pending;
  assert.match(f.$('posts').html,/EXPANDED_OR_PLAYING/);
@@ -160,4 +160,25 @@ test('profile handle opens X while archive status occupies the former action pos
  assert.doesNotMatch(html,/>在 X 查看/);
  const archived=profileHTML({username:'alice',name:'Alice',posts:1,media:0,last_saved:'2026-10-18T01:00:00Z'});
  assert.match(archived,/profile-archive-status[\s\S]*最近归档于 DATE:2026-10-18T01:00:00Z/);
+});
+
+test('media navigation skips empty pages and shares an in-flight timeline load',async()=>{
+ const f=fixture();let pending=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['9'],30),has_more:true});await pending;
+ const current={isConnected:true},next={isConnected:true},media=[current];f.$('posts').querySelectorAll=()=>media;
+ pending=f.ctx.loadMorePosts();const navigation=f.ctx.nextTimelineMedia(current,'video',()=>true);
+ assert.equal(f.requests.length,2);
+ f.requests[1].resolve({...f.page(['8'],30),has_more:true});await pending;await new Promise(setImmediate);
+ assert.equal(f.requests.length,3);
+ media.push(next);f.requests[2].resolve({...f.page(['7'],30),has_more:true});
+ assert.equal(await navigation,next);
+});
+test('closing a viewer or changing timeline cancels pending media navigation',async()=>{
+ for(const cancel of ['viewer','timeline']){
+  const f=fixture();let pending=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['9'],30),has_more:true});await pending;
+  const current={isConnected:true},next={isConnected:true},media=[current];f.$('posts').querySelectorAll=()=>media;
+  let active=true;pending=f.ctx.nextTimelineMedia(current,'video',()=>active);
+  if(cancel==='viewer')active=false;else f.state.postRequest++;
+  media.push(next);f.requests[1].resolve({...f.page(['8'],30),has_more:true});
+  assert.equal(await pending,null);assert.equal(f.requests.length,2);
+ }
 });

@@ -228,4 +228,37 @@ func TestGalleryCenteredSwipeBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('image-dialog').close();return true})()`)
 	wait(`imageGallery.length===0`)
+	// Cross-post navigation follows the selected timeline and fetches through
+	// text-only pages. Start from a non-first image to check both directions.
+	payload, err := os.ReadFile(filepath.Join(dir, "portrait.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCachedMedia(t, a, "50", "photo", ".png", payload)
+	seedCachedMedia(t, a, "49", "photo", ".png", payload)
+	for i := 0; i < 22; i++ {
+		if err := a.store.SavePosts("alice", []archive.Post{{ID: fmt.Sprint(60 + i), Username: "alice", Text: "无图片的推文"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := a.Config()
+	cfg.TimelinePageSize = 10
+	if err := a.saveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{const sheet=document.styleSheets[0];sheet.insertRule('#posts>.post{min-height:400px}',sheet.cssRules.length);refreshPosts();return true})()`)
+	wait(`!state.postsLoading && state.postIDs.size===10`)
+	eval(`(()=>{document.querySelectorAll('[data-image]')[2].click();stepGallery(1);return true})()`)
+	wait(`!galleryLoading && !galleryBusy && imageIndex===3 && $('large-image').src.includes('/media/50/') && state.postIDs.size===25`)
+	eval(`(()=>{stepGallery(1);return true})()`)
+	wait(`imageIndex===4 && $('large-image').src.includes('/media/49/')`)
+	eval(`(()=>{stepGallery(-1);stepGallery(-1);return true})()`)
+	wait(`imageIndex===2 && $('large-image').src.includes('/media/100/')`)
+	eval(`(()=>{$('image-dialog').close();return true})()`)
+	wait(`imageGallery.length===0`)
+	eval(`(()=>{document.querySelector('[data-image^="/media/50/"]').click();return true})()`)
+	wait(`imageIndex===3 && imageGallery.length===5`)
+	eval(`(()=>{location.hash='user/alice';return true})()`)
+	wait(`!$('image-dialog').open && state.view==='user' && !state.postsLoading && document.body.style.overflow===''`)
+
 }

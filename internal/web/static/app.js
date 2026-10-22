@@ -274,7 +274,12 @@ async function refreshPosts(){
  $('posts').replaceChildren();$('post-empty').hidden=true;$('result-count').textContent='…';
  await loadMorePosts();
 }
-async function loadMorePosts(){
+let timelineLoadPromise=null;
+function loadMorePosts(){
+ if(state.postsLoading)return timelineLoadPromise||Promise.resolve();
+ timelineLoadPromise=fetchMorePosts();return timelineLoadPromise;
+}
+async function fetchMorePosts(){
  if(!state.authenticated||!['user','home'].includes(state.view)||state.postsLoading||!state.hasMore)return;
  const id=state.postRequest,revision=bookmarkRevision;
  state.postsLoading=true;state.postsError=false;timelineObserver?.disconnect();updateTimelineLoader();
@@ -298,13 +303,26 @@ async function loadMorePosts(){
   }
  }
 }
+// Media viewers share the timeline's filters, cursor and in-flight request.
+async function nextTimelineMedia(current,selector,isCurrent){
+ const request=state.postRequest;
+ while(request===state.postRequest&&isCurrent()&&current.isConnected){
+  const items=[...$('posts').querySelectorAll(selector)],index=items.indexOf(current);
+  if(index<0)return null;
+  if(items[index+1])return items[index+1];
+  if(!state.hasMore)return null;
+  const offset=state.offset;
+  await loadMorePosts();
+  if(state.postsError||state.offset===offset)return null;
+ }
+ return null;
+}
 $('load-more').addEventListener('click',()=>loadMorePosts());
 $('posts').addEventListener('click',event=>{
   const bookmark=event.target.closest('[data-bookmark-id]');if(bookmark){event.preventDefault();toggleBookmark(bookmark);return;}
   const image=event.target.closest('[data-image]');if(image){
-   const grid=image.closest('.media-grid');
-   const items=[...(grid?.querySelectorAll('[data-image]')||[image])];
-   openGallery(items.map(item=>item.dataset.image),Math.max(0,items.indexOf(image)));
+   const items=[...$('posts').querySelectorAll('[data-image]')];
+   openGallery(items.map(item=>item.dataset.image),Math.max(0,items.indexOf(image)),true);
   }
   if(event.target.classList.contains('expand-text')){const text=event.target.previousElementSibling;const expanded=text.classList.toggle('expanded');event.target.textContent=expanded?'收起全文':'展开全文';}
 });

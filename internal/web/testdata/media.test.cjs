@@ -97,3 +97,29 @@ test('native fullscreen exit restores inline without resetting the video',()=>{
  assert.equal(f.shell.classList.contains('video-expanded'),false);assert.equal(f.video.currentTime,42);
  assert.equal(f.video.src,f.button.dataset.videoSrc);assert.equal(f.video.paused,false);
 });
+
+test('single click keeps an expanded video open',()=>{
+ const f=fixture();f.ctx.startTimelineVideo(f.button);
+ f.postEvents.click({target:f.video});
+ assert.equal(f.shell.classList.contains('video-expanded'),true);
+ assert.equal(f.document.body.style.overflow,'hidden');
+});
+test('next video pauses the previous player and retains an already loaded source',async()=>{
+ const f=fixture(),next=fixture();f.ctx.startTimelineVideo(f.button);
+ next.video.src='/media/99/video';next.video.currentTime=12;
+ f.ctx.nextTimelineMedia=async()=>next.shell;
+ await f.ctx.nextExpandedVideo();
+ assert.equal(f.video.paused,true);assert.equal(f.shell.classList.contains('video-expanded'),false);
+ assert.equal(next.shell.classList.contains('video-expanded'),true);assert.equal(next.video.paused,false);
+ assert.equal(next.video.src,'/media/99/video');assert.equal(next.video.currentTime,12);
+ assert.equal(f.document.body.style.overflow,'hidden');
+});
+test('leaving the player while finding the next video cancels the switch',async()=>{
+ const f=fixture(),next=fixture();f.ctx.startTimelineVideo(f.button);let finish,calls=0;
+ f.ctx.nextTimelineMedia=()=>{calls++;return new Promise(resolve=>finish=resolve)};
+ const pending=f.ctx.nextExpandedVideo();await f.ctx.nextExpandedVideo();
+ assert.equal(calls,1);
+ f.ctx.collapseExpandedVideo();finish(next.shell);await pending;
+ assert.equal(next.video.src,'');assert.equal(f.document.body.style.overflow,'auto');
+ assert.equal(f.shell.classList.contains('video-expanded'),false);
+});

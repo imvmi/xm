@@ -244,6 +244,10 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 		orderID = "t.post_id"
 		where = " WHERE t.target=?"
 		args = append(args, target)
+	} else {
+		// Replies belong to account reply tabs, not the main timeline. Embedded
+		// quotes and the separate bookmarks feed keep their existing behavior.
+		where += " AND p.reply_to=''"
 	}
 	// Only filtered requests need quote traversal. Seed it from the selected
 	// archive instead of expanding every post (including unrelated quotes).

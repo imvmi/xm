@@ -20,6 +20,8 @@
 .video-time { font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap; }
 .video-loading { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:6px 12px;border-radius:16px;background:#0009;color:#e7e9ea;font-size:13px;pointer-events:none; }
 .video-shell.video-expanded,.video-shell:fullscreen { position:fixed;inset:0;width:100%;height:100dvh;z-index:1000;border-radius:0;margin:0; }
+.video-shell.video-expanded { touch-action:pinch-zoom; }
+.video-expanded video { user-select:none; }
 .video-expanded .video-controls,.video-shell:fullscreen .video-controls { padding:24px max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); }
 .video-expanded .video-time,.video-shell:fullscreen .video-time { font-size:13px; }
 @media(pointer:coarse) { .video-controls button { width:44px;height:44px;flex-basis:44px; } }

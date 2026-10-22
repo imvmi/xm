@@ -54,6 +54,17 @@ func TestTimelineSectionsAndPagination(t *testing.T) {
 			}
 		})
 	}
+	for _, query := range []string{"", "&q=引用搜索词", "&kind=video", "&section=media"} {
+		w := b.request("GET", "/api/posts?"+query, nil, "", false)
+		ok(t, w, 200)
+		var got PostList
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Total != 1 || len(got.Items) != 1 || got.Items[0].ID != "100" || got.Items[0].Quote == nil || got.Items[0].Quote.ReplyTo != "49" {
+			t.Fatalf("home feed must exclude reply roots while preserving quotes (%s): %+v", query, got)
+		}
+	}
 	ok(t, b.request("GET", "/api/posts?section=unknown", nil, "", false), 400)
 }
 
@@ -63,7 +74,7 @@ func TestTimelineCursorAcrossAccountsAndConcurrentInserts(t *testing.T) {
 	for _, target := range []string{"alice", "bob"} {
 		if err := a.store.SavePosts(target, []archive.Post{
 			{ID: "101", Username: "alice", Raw: json.RawMessage(`{}`), Quote: &quote},
-			{ID: "99", Username: "bob", ReplyTo: "5", Raw: json.RawMessage(`{}`)},
+			{ID: "99", Username: "bob", Raw: json.RawMessage(`{}`)},
 			{ID: "9", Username: "alice", Raw: json.RawMessage(`{}`)},
 		}); err != nil {
 			t.Fatal(err)

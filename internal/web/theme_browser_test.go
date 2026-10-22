@@ -34,7 +34,7 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 	if err := a.store.SavePosts("alice", posts); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.store.SavePosts("bob", []archive.Post{{ID: "200", Username: "bob", Text: "来自另一个账号的回复，同样出现在首页。", ReplyTo: "1", Raw: json.RawMessage(`{}`), CreatedAt: "2026-10-19T11:00:00Z"}}); err != nil {
+	if err := a.store.SavePosts("bob", []archive.Post{{ID: "200", Username: "bob", Text: "来自另一个账号的推文，同样出现在首页。", Raw: json.RawMessage(`{}`), CreatedAt: "2026-10-19T11:00:00Z"}}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(a.Handler())
@@ -81,7 +81,7 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 	password, _ := json.Marshal(testPassword)
 	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type="submit"]').click();return true})()`)
 	wait(`typeof state!=='undefined' && state.view==='home' && state.postIDs.size===24 && !state.postsLoading`)
-	if !eval(`$('posts').textContent.includes('另一个账号的回复') && $('home-feed').contains($('timeline-panel')) && document.querySelector('[data-view=home]').getAttribute('aria-current')==='page'`) {
+	if !eval(`$('posts').textContent.includes('另一个账号的推文') && $('home-feed').contains($('timeline-panel')) && document.querySelector('[data-view=home]').getAttribute('aria-current')==='page'`) {
 		t.Fatal("default home missing multi-account timeline")
 	}
 	for _, width := range []int64{1280, 390} {
