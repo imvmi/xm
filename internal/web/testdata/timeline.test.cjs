@@ -6,13 +6,13 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
 function fixture(){
- const nodes=new Map(), requests=[], observer={disconnect(){this.targets=[]},observe(target){this.observed++;this.targets.push(target)},observed:0,targets:[]};
+ const notices=[],nodes=new Map(), requests=[], observer={disconnect(){this.targets=[]},observe(target){this.observed++;this.targets.push(target)},observed:0,targets:[]};
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',children:[],attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html='';this.children=[]},insertAdjacentHTML(_,html){this.html+=html;this.children.push(...[...html.matchAll(/<article class="post" data-post-id="([^"]+)"/g)].map(m=>({id:m[1]})))},querySelector(){return $('heading')}});return nodes.get(id)};
  const state={authenticated:true,view:'user',target:'alice',timelineTab:'posts',postRequest:0,postIDs:new Set(),postsLoading:false,postsError:false,hasMore:false,offset:0,total:0};
- const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:()=>{},api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
+ const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:message=>notices.push(message),api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
  vm.runInContext(source.slice(source.indexOf('function displayPostText('),source.indexOf("$('posts').addEventListener")),ctx);
  const page=(ids,total)=>({total,items:ids.map(id=>({id,username:'alice',text:`post-${id}`,media:[]}))});
- return {ctx,state,$,requests,observer,page};
+ return {ctx,state,$,requests,observer,page,notices};
 }
 test('append preserves existing DOM; concurrent loads and duplicate IDs are suppressed',async()=>{
  const f=fixture();let pending=f.ctx.refreshPosts();
@@ -181,4 +181,26 @@ test('closing a viewer or changing timeline cancels pending media navigation',as
   media.push(next);f.requests[1].resolve({...f.page(['8'],30),has_more:true});
   assert.equal(await pending,null);assert.equal(f.requests.length,2);
  }
+});
+
+test('closing a speculative consumer discards its page without advancing the cursor',async()=>{
+ const f=fixture();let p=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['5'],10),has_more:true,next_cursor:'5'});await p;
+ let active=true;p=f.ctx.loadMorePosts({background:true,isCurrent:()=>active});active=false;
+ f.requests[1].resolve({...f.page(['4'],10),has_more:true,next_cursor:'4'});await p;
+ assert.equal(f.state.offset,1);assert.equal(f.state.cursor,'5');assert.equal(f.state.postsLoading,false);assert.equal(f.state.postIDs.has('4'),false);
+});
+test('foreground navigation can promote and reuse an in-flight speculative page',async()=>{
+ const f=fixture();let p=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['5'],10),has_more:true,next_cursor:'5'});await p;
+ let active=true;p=f.ctx.loadMorePosts({background:true,isCurrent:()=>active});const foreground=f.ctx.loadMorePosts();active=false;
+ assert.equal(p,foreground);assert.equal(f.requests.length,2);
+ f.requests[1].resolve({...f.page(['4'],10),has_more:true,next_cursor:'4'});await p;
+ assert.equal(f.state.offset,2);assert.equal(f.state.cursor,'4');assert.equal(f.state.postIDs.has('4'),true);
+});
+
+test('speculative failure stays quiet and foreground navigation can retry the same cursor',async()=>{
+ const f=fixture();let p=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['5'],10),has_more:true,next_cursor:'5'});await p;
+ p=f.ctx.loadMorePosts({background:true,isCurrent:()=>true});f.requests[1].reject(new Error('offline'));await p;
+ assert.equal(f.notices.length,0);assert.equal(f.state.cursor,'5');assert.equal(f.state.postsError,true);
+ p=f.ctx.loadMorePosts();assert.match(f.requests[2].query,/before=5/);f.requests[2].resolve({...f.page(['4'],10),has_more:true,next_cursor:'4'});await p;
+ assert.equal(f.state.postsError,false);assert.equal(f.state.cursor,'4');
 });

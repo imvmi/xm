@@ -1,7 +1,9 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"xm/internal/database"
@@ -24,7 +26,19 @@ func (s *Scheduler) savePending(targets []string) error {
 func (s *Scheduler) updatePending(target string, retry bool) error {
 	s.app.changeMu.Lock()
 	defer s.app.changeMu.Unlock()
-	raw := state(s.app.store.DB, "budget_batch_pending")
+	tx, err := s.app.store.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var raw string
+	err = tx.QueryRow("SELECT value FROM web_state WHERE `key`='budget_batch_pending'").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	if raw == "" {
 		return nil
 	}
@@ -44,20 +58,31 @@ func (s *Scheduler) updatePending(target string, retry bool) error {
 	if retry && found {
 		remaining = append(remaining, target)
 	}
-	return s.savePending(remaining)
+	// Advance only this completed account's due schedule. Commit it with
+	// removal from the durable batch so restart cannot lose the next run.
+	if found && !retry {
+		if err = scheduleNextMonitorRun(tx, target, time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	encoded, err := json.Marshal(remaining)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), "budget_batch_pending", string(encoded)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Caller holds changeMu so a concurrent settings save cannot restore an older schedule.
+// Caller holds changeMu. Schedules advance per account, never for new arrivals
+// or other accounts outside this completed batch.
 func (s *Scheduler) finishBatch() error {
 	tx, err := s.app.store.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	next := time.Now().Unix() + int64(s.app.Config().DefaultInterval)
-	if _, err = tx.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", next); err != nil {
-		return err
-	}
 	for _, key := range []string{"budget_batch_pending", "budget_batch_failed"} {
 		if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), key, ""); err != nil {
 			return err

@@ -286,8 +286,8 @@ func TestSchedulerAutomaticBatchReusesOneSession(t *testing.T) {
 		t.Fatalf("batch did not reuse one session: sessions=%d closed=%v targets=%v", sessions, closed, targets)
 	}
 	list, err := monitors(a.store.DB)
-	if err != nil || len(list) != 2 || list[0].NextRun != list[1].NextRun || list[0].Interval != a.Config().DefaultInterval || list[1].Interval != a.Config().DefaultInterval {
-		t.Fatalf("batch schedule was not synchronized: %+v err=%v", list, err)
+	if err != nil || len(list) != 2 || list[0].NextRun <= time.Now().Unix() || list[1].NextRun <= time.Now().Unix() || list[0].Interval != a.Config().DefaultInterval || list[1].Interval != a.Config().DefaultInterval {
+		t.Fatalf("completed accounts were not rescheduled: %+v err=%v", list, err)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestSchedulerManualRunKeepsBatchSchedule(t *testing.T) {
 	}
 }
 
-func TestNewSynchronizesMonitorSchedules(t *testing.T) {
+func TestNewPreservesMonitorSchedules(t *testing.T) {
 	a := testApp(t)
 	_, err := a.store.DB.Exec("INSERT INTO monitors(username,enabled,next_run) VALUES('alice',1,200),('bob',1,100),('paused',0,300)")
 	if err != nil {
@@ -362,8 +362,8 @@ func TestNewSynchronizesMonitorSchedules(t *testing.T) {
 		if monitor.Interval != a.Config().DefaultInterval {
 			t.Fatalf("legacy interval was not normalized: %+v", monitor)
 		}
-		if monitor.Enabled && monitor.NextRun != 100 {
-			t.Fatalf("enabled schedule was not synchronized to earliest run: %+v", monitor)
+		if want := map[string]int64{"alice": 200, "bob": 100, "paused": 300}[monitor.Username]; monitor.NextRun != want {
+			t.Fatalf("restart changed account schedule: %+v", monitor)
 		}
 	}
 }

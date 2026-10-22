@@ -16,6 +16,7 @@ function fixture(){
  const document={body:{style:{overflow:'auto'}},querySelectorAll:()=>video.src?[video]:[],addEventListener:(k,fn)=>documentEvents[k]=fn,fullscreenEnabled:false,fullscreenElement:null,exitFullscreen(){this.fullscreenElement=null;return Promise.resolve()}};
  const ctx=vm.createContext({state,document,$:()=>({addEventListener:(k,fn)=>postEvents[k]=fn}),window:{addEventListener:(k,fn)=>events[k]=fn},escape:v=>String(v).replaceAll('&','&amp;').replaceAll('"','&quot;'),icon:()=>'',toast:m=>notices.push(m)});
  vm.runInContext(source.slice(source.indexOf('function defaultVideoMuted()'),source.indexOf('function displayPostText(')),ctx);
+ Object.assign(ctx,{requestVideoPrefetch(){},clearVideoPrefetch(){},resetVideoPrefetch(){},claimVideoPrefetch(video){delete video.dataset.prefetch},observeTimelineEnd(){},prefetchedVideo:null,videoPrefetchOwner:null});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../static/video.js'),'utf8'),ctx);
  return {ctx,state,video,button,shell,controls,play,mute,full,seek,document,plays,strong,small,events,postEvents,documentEvents,notices};
 }
@@ -122,4 +123,11 @@ test('leaving the player while finding the next video cancels the switch',async(
  f.ctx.collapseExpandedVideo();finish(next.shell);await pending;
  assert.equal(next.video.src,'');assert.equal(f.document.body.style.overflow,'auto');
  assert.equal(f.shell.classList.contains('video-expanded'),false);
+});
+
+test('a prefetched video reuses its source and becomes a normal visible player',()=>{
+ const f=fixture();f.video.src=f.button.dataset.videoSrc;f.video.dataset.prefetch='true';
+ f.ctx.startTimelineVideo(f.button);
+ assert.equal(f.video.src,f.button.dataset.videoSrc);assert.equal(f.video.dataset.prefetch,undefined);
+ assert.equal(f.video.hidden,false);assert.equal(f.button.hidden,true);assert.equal(f.plays.length,1);assert.equal(f.video.loads,0);
 });

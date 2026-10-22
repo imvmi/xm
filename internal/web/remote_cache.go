@@ -233,9 +233,10 @@ func (a *App) remoteMedia(w http.ResponseWriter, r *http.Request, id, key string
 		if validRemoteMediaCache(path, size) && serveRemoteCacheFile(w, r, path, key, ext) {
 			return
 		}
-		// A video range request must not wait for the entire remote file to be
-		// downloaded first. Existing cache entries still serve ranges normally.
-		if ext != ".mp4" || r.Header.Get("Range") == "" {
+		// Video startup and speculative metadata requests must never wait for a
+		// whole-file cache fill, even when a browser omits Range. Existing cached
+		// videos remain usable; cache misses stream from remote storage.
+		if ext != ".mp4" {
 			path, err := a.ensureRemoteMediaCached(r.Context(), id, key, size, hash, ext, cache.MaxBytes)
 			if err == nil && serveRemoteCacheFile(w, r, path, key, ext) {
 				return

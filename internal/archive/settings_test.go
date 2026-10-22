@@ -167,6 +167,7 @@ func TestCollectionSettingsUpgrade(t *testing.T) {
 				legacy = q
 			}
 		}
+		legacy = strings.ReplaceAll(legacy, ",media_preload_mode VARCHAR(16) NOT NULL DEFAULT 'standard'", "")
 		legacy = strings.ReplaceAll(legacy, ",request_interval_seconds INTEGER NOT NULL DEFAULT 5 CHECK(request_interval_seconds>=5)", "")
 		legacy = strings.ReplaceAll(legacy, ",request_jitter_seconds INTEGER NOT NULL DEFAULT 0 CHECK(request_jitter_seconds>=0)", "")
 		legacy = strings.ReplaceAll(legacy, ",scroll_jitter_seconds INTEGER NOT NULL DEFAULT 0 CHECK(scroll_jitter_seconds>=0)", "")
@@ -192,7 +193,7 @@ func TestCollectionSettingsUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			loaded, err := s.LoadSettings(Config{DataDir: t.TempDir()})
-			if err != nil || loaded.DefaultInterval != max(interval, 3600) || loaded.RequestInterval != 5 || loaded.RequestJitter != 0 || loaded.ScrollJitter != 1 || loaded.RequestBudgetMode != "balanced" || loaded.RateLimitMode != "balanced" || loaded.MaxPostsPerRun != 1000 || loaded.PageBudget != 15 || loaded.TimelineIdleSeconds != 24 || loaded.KnownBoundaryPosts != 8 || loaded.BrowserMaxAge != 6*3600 || loaded.BrowserMaxTasks != 100 || loaded.MediaRetryInitial != 5*60 || loaded.MediaRetryMax != 24*3600 || !loaded.PollingPaused {
+			if err != nil || loaded.MediaPreloadMode != "standard" || loaded.DefaultInterval != max(interval, 3600) || loaded.RequestInterval != 5 || loaded.RequestJitter != 0 || loaded.ScrollJitter != 1 || loaded.RequestBudgetMode != "balanced" || loaded.RateLimitMode != "balanced" || loaded.MaxPostsPerRun != 1000 || loaded.PageBudget != 15 || loaded.TimelineIdleSeconds != 24 || loaded.KnownBoundaryPosts != 8 || loaded.BrowserMaxAge != 6*3600 || loaded.BrowserMaxTasks != 100 || loaded.MediaRetryInitial != 5*60 || loaded.MediaRetryMax != 24*3600 || !loaded.PollingPaused {
 				t.Fatal(loaded, err)
 			}
 		}

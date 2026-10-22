@@ -67,17 +67,6 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err = upgradeRateLimitState(s.DB, cfg.DefaultInterval, cfg.RateLimitMode, time.Now().Unix()); err != nil {
 		return nil, err
 	}
-	// All enabled accounts share one batch schedule. Preserve the earliest due
-	// time so restarting the service never postpones an already planned run.
-	var earliest sql.NullInt64
-	if err = s.DB.QueryRow("SELECT MIN(next_run) FROM monitors WHERE enabled=1").Scan(&earliest); err != nil {
-		return nil, err
-	}
-	if earliest.Valid {
-		if _, err = s.DB.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", earliest.Int64); err != nil {
-			return nil, err
-		}
-	}
 	// Upgrade legacy avatar files locally; cosmetic failures must not prevent login.
 	if result, migrationErr := s.MigrateLegacyAvatars(context.Background(), cfg.DataDir); migrationErr != nil || result.Failed > 0 {
 		log.Printf("头像迁移未全部完成，可在设置中重试（失败 %d）", result.Failed)
@@ -489,7 +478,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -509,6 +498,7 @@ type settingsInput struct {
 	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
 	Paused              *bool   `json:"polling_paused"`
 	ArchiveTheme        *string `json:"archive_theme"`
+	MediaPreloadMode    *string `json:"media_preload_mode"`
 	VideoLoop           *bool   `json:"video_loop"`
 	VideoDefaultMuted   *bool   `json:"video_default_muted"`
 	ImageCacheSeconds   *int    `json:"image_cache_seconds"`
@@ -614,6 +604,13 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.TimelinePageSize = *v.TimelinePageSize
+	}
+	if v.MediaPreloadMode != nil {
+		if *v.MediaPreloadMode == "" {
+			problem(w, 400, "媒体预加载模式无效")
+			return
+		}
+		cfg.MediaPreloadMode = *v.MediaPreloadMode
 	}
 	if v.VideoLoop != nil {
 		cfg.VideoLoop = *v.VideoLoop

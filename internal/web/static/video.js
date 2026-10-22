@@ -15,7 +15,7 @@ function videoTime(seconds){
 }
 function syncVideoControls(video){
  const shell=video.closest('.video-shell');if(!shell)return;
- const loaded=!!video.getAttribute('src'),paused=video.paused||video.ended;
+ const loaded=!!video.getAttribute('src')&&!video.dataset.prefetch,paused=video.paused||video.ended;
  shell.querySelector('.video-controls').hidden=!loaded;
  const play=shell.querySelector('[data-video-action="play"]');
  play.innerHTML=videoIcon(paused?'play':'pause');play.setAttribute('aria-label',paused?'播放':'暂停');
@@ -32,7 +32,8 @@ function syncVideoControls(video){
  full.innerHTML=videoIcon(expanded?'collapse':'expand');full.setAttribute('aria-label',expanded?'返回时间线内嵌视频':'全屏显示');
  video.setAttribute('aria-label',expanded?'上滑观看下一条视频，下滑返回时间线':'点击全屏显示视频');video.setAttribute('aria-expanded',String(expanded));
 }
-function collapseExpandedVideo(restoreFocus=true){
+function collapseExpandedVideo(restoreFocus=true,keepPrefetch=null){
+ clearVideoPrefetch(keepPrefetch);videoPrefetchOwner=null;
  const shell=expandedVideoShell;if(!shell)return;
  resetVideoDrag();videoTap=null;videoSwipePending=false;
  expandedVideoShell=null;videoFullscreenRequest++;
@@ -41,6 +42,7 @@ function collapseExpandedVideo(restoreFocus=true){
  if(document.fullscreenElement===shell)document.exitFullscreen().catch(()=>{});
  const video=shell.querySelector('video');syncVideoControls(video);
  if(restoreFocus&&video.isConnected)video.focus({preventScroll:true});
+ observeTimelineEnd();
 }
 function expandTimelineVideo(video){
  const shell=video.closest('.video-shell');if(!shell||expandedVideoShell===shell)return;
@@ -49,6 +51,7 @@ function expandTimelineVideo(video){
  expandedVideoShell=shell;videoPageOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
  shell.classList.add('video-expanded');shell.setAttribute('role','dialog');shell.setAttribute('aria-modal','true');shell.setAttribute('aria-label','视频播放器');
  syncVideoControls(video);video.focus({preventScroll:true});
+ requestVideoPrefetch();
  // Keep the video in place (and keep its currentTime). iPhone/denied fullscreen
  // uses the fixed viewport layout instead of the OS player that intercepts taps.
  if(shell.requestFullscreen&&document.fullscreenEnabled){
@@ -68,6 +71,7 @@ function resetTimelineVideo(video,failed=false){
  syncVideoControls(video);
 }
 function releaseTimelineMedia(){
+ resetVideoPrefetch();
  videoTap=null;
  if(typeof closeTimelineGallery==='function')closeTimelineGallery();
  if(expandedVideoShell)collapseExpandedVideo(false);
@@ -83,10 +87,11 @@ function playTimelineVideo(video){
  syncVideoControls(video);
 }
 function startTimelineVideo(button){
- const video=button.closest('.video-shell')?.querySelector('video');if(!video||video.getAttribute('src'))return;
+ const video=button.closest('.video-shell')?.querySelector('video');if(!video||(video.getAttribute('src')&&!video.dataset.prefetch))return;
+ claimVideoPrefetch(video);video.preload='auto';
  video.dataset.playRequest=String(++videoPlayRequest);
  video.muted=defaultVideoMuted();video.loop=state.settings?.video_loop===true;
- button.hidden=true;video.hidden=false;video.src=button.dataset.videoSrc;
+ button.hidden=true;video.hidden=false;if(video.getAttribute('src')!==button.dataset.videoSrc)video.src=button.dataset.videoSrc;
  playTimelineVideo(video);expandTimelineVideo(video);
 }
 $('posts').addEventListener('click',event=>{
@@ -126,9 +131,10 @@ async function nextExpandedVideo(){
   try{await document.exitFullscreen();}catch{}
   if(!active())return;
  }
- shell.querySelector('video').pause();collapseExpandedVideo(false);
  const video=next.querySelector('video');
- if(video.getAttribute('src')){playTimelineVideo(video);expandTimelineVideo(video);}
+ if(prefetchedVideo===video)prefetchedVideo=null;
+ shell.querySelector('video').pause();collapseExpandedVideo(false,video);
+ if(video.getAttribute('src')&&!video.dataset.prefetch){playTimelineVideo(video);expandTimelineVideo(video);}
  else startTimelineVideo(next.querySelector('[data-video-src]'));
 }
 $('posts').addEventListener('pointerdown',event=>{
@@ -177,12 +183,16 @@ $('posts').addEventListener('input',event=>{
 });
 for(const name of ['play','playing','pause','ended','timeupdate','loadedmetadata','durationchange','volumechange','waiting','canplay']){
  $('posts').addEventListener(name,event=>{
-  if(!event.target.matches('video'))return;
+  if(!event.target.matches('video')||event.target.dataset.prefetch)return;
+  if(event.target.closest('.video-shell')===expandedVideoShell){
+   if(name==='waiting'||name==='pause')clearVideoPrefetch();
+   if(name==='playing'||name==='canplay')requestVideoPrefetch();
+  }
   if(name==='play')for(const other of document.querySelectorAll('#posts video[src]'))if(other!==event.target)other.pause();
   syncVideoControls(event.target);
  },true);
 }
-$('posts').addEventListener('error',event=>{if(event.target.matches('video[src]'))resetTimelineVideo(event.target,true);},true);
+$('posts').addEventListener('error',event=>{if(event.target.dataset.prefetch){clearVideoPrefetch(null,true);return;}if(event.target.matches('video[src]'))resetTimelineVideo(event.target,true);},true);
 $('posts').addEventListener('keydown',event=>{
  if(event.target.matches('video')&&(event.key==='Enter'||event.key===' ')){event.preventDefault();expandTimelineVideo(event.target);}
 });

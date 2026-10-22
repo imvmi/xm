@@ -275,6 +275,13 @@ func cancelMonitorJobs(db *database.DB, target, message string) error {
 	return err
 }
 
+// Preserve future plans, including interval changes saved during collection.
+// The caller commits this with completion/cancellation of the due batch slot.
+func scheduleNextMonitorRun(tx *database.Tx, target string, now int64) error {
+	_, err := tx.Exec("UPDATE monitors SET next_run=?+(SELECT default_interval_seconds FROM system_settings WHERE id=1) WHERE username=? AND enabled=1 AND next_run<=?", now, target, now)
+	return err
+}
+
 var (
 	errCollectionJobNotFound = errors.New("排队任务不存在")
 	errCollectionJobRunning  = errors.New("任务已经开始执行")
@@ -318,9 +325,19 @@ func cancelWaitingCollectionJob(db *database.DB, id int64) (string, error) {
 			return "", err
 		}
 		remaining := make([]string, 0, len(pending))
+		found := false
 		for _, name := range pending {
 			if name != target {
 				remaining = append(remaining, name)
+			} else {
+				found = true
+			}
+		}
+		// Cancelling a due automatic slot skips this cycle; it must not be
+		// recreated as soon as the remaining batch finishes.
+		if found {
+			if err = scheduleNextMonitorRun(tx, target, now); err != nil {
+				return "", err
 			}
 		}
 		encoded, marshalErr := json.Marshal(remaining)

@@ -41,6 +41,7 @@ type Config struct {
 	PollingPaused        bool                  `json:"polling_paused"`
 	ArchiveTheme         string                `json:"archive_theme"`
 	VideoDefaultMuted    *bool                 `json:"video_default_muted,omitempty"`
+	MediaPreloadMode     string                `json:"media_preload_mode"`
 	VideoLoop            bool                  `json:"video_loop"`
 	ImageCacheSeconds    int                   `json:"image_cache_seconds"`
 	VideoCacheSeconds    int                   `json:"video_cache_seconds"`
@@ -55,7 +56,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
+	return Config{DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -127,6 +128,9 @@ func normalizeConfig(path string, c Config) (Config, error) {
 	}
 	if c.TimelinePageSize == 0 {
 		c.TimelinePageSize = defaults.TimelinePageSize
+	}
+	if c.MediaPreloadMode == "" {
+		c.MediaPreloadMode = "standard"
 	}
 	if c.ImageCacheSeconds == 0 {
 		c.ImageCacheSeconds = 7 * 24 * 3600
@@ -222,6 +226,9 @@ func (c Config) VideoMutedByDefault() bool {
 }
 
 func ValidateMediaDisplay(c Config) error {
+	if c.MediaPreloadMode != "" && c.MediaPreloadMode != "off" && c.MediaPreloadMode != "standard" && c.MediaPreloadMode != "enhanced" {
+		return errors.New("媒体预加载模式无效")
+	}
 	if c.ImageCacheSeconds < 3600 || c.ImageCacheSeconds > 30*24*3600 || c.ImageCacheSeconds%3600 != 0 {
 		return errors.New("图片缓存时间必须为 1～720 小时的整数")
 	}

@@ -247,7 +247,9 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	var jobArgs []any
 	if autoBatch {
 		if rawPending == "" {
-			condition = "m.enabled=1 OR m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0)"
+			// A newly added or resumed account must not pull future schedules forward.
+			condition = "(m.enabled=1 AND m.next_run<=?) OR m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0)"
+			jobArgs = append(jobArgs, now)
 		} else if len(pending) > 0 {
 			condition = "m.requested=1 OR EXISTS (SELECT 1 FROM collection_jobs q WHERE q.target=m.username AND q.finished_at=0) OR (m.enabled=1 AND m.username IN (" + strings.TrimRight(strings.Repeat("?,", len(pending)), ",") + "))"
 			for _, target := range pending {

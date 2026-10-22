@@ -224,14 +224,17 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 	wait(`!v.paused && !expandedVideoShell`)
 	click("video")
 	wait(`!!expandedVideoShell && !v.paused`)
-	// Upward navigation skips text-only pages and pauses the previous video.
-	if !eval(`state.postIDs.size===10 && state.hasMore`) {
-		t.Fatal("pagination fixture loaded too early")
+	// Prefetch crosses the two text-heavy pages before the swipe. The next
+	// video is prepared silently, and its existing element is promoted.
+	wait(`state.postIDs.size===25 && document.querySelector('[data-post-id="100"] video')?.dataset.prefetch==='true'`)
+	eval(`(()=>{window.preparedVideo=document.querySelector('[data-post-id="100"] video');return true})()`)
+	if !eval(`preparedVideo.hidden && preparedVideo.paused && preparedVideo.preload==='metadata'`) {
+		t.Fatal("speculative video became visible or played")
 	}
 	swipe(false)
 	wait(`!!expandedVideoShell && expandedVideoShell!==v.closest('.video-shell') && state.postIDs.size===25`)
 	wait(`expandedVideoShell.querySelector('video').readyState>=2 && !expandedVideoShell.querySelector('video').paused`)
-	if !eval(`v.paused && expandedVideoShell.closest('[data-post-id]').dataset.postId==='100' && document.body.style.overflow==='hidden'`) {
+	if !eval(`expandedVideoShell.querySelector('video')===preparedVideo && !preparedVideo.dataset.prefetch && !preparedVideo.hidden && v.paused && expandedVideoShell.closest('[data-post-id]').dataset.postId==='100' && document.body.style.overflow==='hidden'`) {
 		t.Fatal("next video did not preserve timeline order")
 	}
 	eval(`(()=>{window.lastShell=expandedVideoShell;return true})()`)

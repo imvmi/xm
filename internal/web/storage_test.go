@@ -157,6 +157,7 @@ func TestStorageSettingsAndRemoteMedia(t *testing.T) {
 	anon := &browserClient{t: t, a: a}
 	ok(t, anon.request("GET", "/api/storage", nil, "", false), 401)
 	ok(t, anon.request("GET", "/media/10/v", nil, "", false), 401)
+	ok(t, b.request("PUT", "/api/storage/cache", map[string]any{"enabled": true, "max_bytes": int64(64 << 20)}, "http://localhost", true), 200)
 	for _, test := range []struct {
 		method, rangeValue, body string
 		code                     int
@@ -173,6 +174,9 @@ func TestStorageSettingsAndRemoteMedia(t *testing.T) {
 		if w.Header().Get("Location") != "" || w.Header().Get("Authorization") != "" {
 			t.Fatal("remote exposed")
 		}
+	}
+	if used, err := remoteMediaCacheUsage(a.Config().DataDir); err != nil || used != 0 {
+		t.Fatal("video request unexpectedly filled whole-file cache", used, err)
 	}
 	ok(t, b.request("POST", "/api/storage/profiles", p, "http://evil.example", true), 403)
 	ok(t, b.request("POST", "/api/storage/profiles/"+saved.ID+"/test", nil, "http://localhost", false), 403)

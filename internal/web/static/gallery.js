@@ -17,21 +17,26 @@ function showGalleryImage(index){
  clearTimeout(galleryTimer);galleryTimer=null;galleryBusy=false;galleryTarget=null;galleryClosing=false;
  if(!imageGallery.length)return;
  imageIndex=Math.max(0,Math.min(index,imageGallery.length-1));
+ refreshGalleryNeighbors();
+ galleryPosition();galleryVerticalPosition();
+ requestGalleryPrefetch();
+}
+function refreshGalleryNeighbors(){
  for(const [id,i] of [['gallery-before',imageIndex-1],['large-image',imageIndex],['gallery-after',imageIndex+1]]){
-  const img=$(id),src=imageGallery[i];
+  const img=$(id),src=(id==='large-image'||canPrefetchMedia())?imageGallery[i]:null;
   if(src){if(img.getAttribute('src')!==src)img.src=src;}else img.removeAttribute('src');
  }
  $('large-image').alt=`已归档图片 ${imageIndex+1} / ${imageGallery.length}`;
- const multiple=imageGallery.length>1;
- $('image-count').hidden=!multiple;
- $('image-count').textContent=`${imageIndex+1} / ${imageGallery.length}`;
- galleryPosition();galleryVerticalPosition();
+ $('image-count').hidden=imageGallery.length<2;
+ if(!galleryLoading)$('image-count').textContent=`${imageIndex+1} / ${imageGallery.length}`;
 }
+
 function openGallery(images,index=0,timeline=false){
  if(!images.length)return;
  gallerySession++;galleryTimeline=timeline;galleryLoading=false;
  imageGallery=images;galleryDrag=null;showGalleryImage(index);
  if(!$('image-dialog').open){galleryOverflow=document.body.style.overflow;document.body.style.overflow='hidden';$('image-dialog').showModal();$('image-dialog').focus({preventScroll:true});}
+ requestGalleryPrefetch();
 }
 function settleGallery(delta=0){
  if(galleryBusy||!imageGallery.length)return;
@@ -113,9 +118,9 @@ $('image-dialog').addEventListener('keydown',event=>{
 window.addEventListener('resize',()=>{galleryDrag=null;if($('image-dialog').open){if(galleryClosing)$('image-dialog').close();else showGalleryImage(galleryTarget??imageIndex);}});
 window.visualViewport?.addEventListener('resize',()=>{galleryViewport.style.touchAction=window.visualViewport.scale>1.01?'auto':'pinch-zoom';});
 $('image-dialog').addEventListener('close',()=>{
- gallerySession++;galleryTimeline=false;galleryLoading=false;
+ gallerySession++;galleryTimeline=false;galleryLoading=false;clearGalleryPrefetch();
  clearTimeout(galleryTimer);galleryTimer=null;galleryBusy=false;galleryTarget=null;galleryDrag=null;galleryClosing=false;
  imageGallery=[];imageIndex=0;galleryPosition();galleryVerticalPosition();
  for(const id of ['large-image','gallery-before','gallery-after'])$(id).removeAttribute('src');
- $('large-image').alt='已归档图片';document.body.style.overflow=galleryOverflow;
+ $('large-image').alt='已归档图片';document.body.style.overflow=galleryOverflow;observeTimelineEnd();
 });
