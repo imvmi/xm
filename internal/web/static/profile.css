@@ -492,3 +492,9 @@
     color:#fff;
   }
 }
+
+.quote-card[data-quote-post]{cursor:pointer}
+.quote-card[data-quote-post]:hover{border-color:var(--muted)}
+.quote-card[data-quote-post]:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.timeline-posts .post.post-located{box-shadow:inset 3px 0 var(--green);background:var(--surface-raised,var(--paper))}
+#post-detail-back[hidden]{display:none}

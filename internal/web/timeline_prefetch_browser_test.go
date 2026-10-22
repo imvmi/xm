@@ -73,12 +73,20 @@ func TestTimelinePrefetchBrowser(t *testing.T) {
 			view = "user"
 		}
 		wait(fmt.Sprintf(`state.view===%q && !state.postsLoading && state.postIDs.size===10`, view))
+		if !eval(`state.total===-1 && $('result-count').textContent==='已加载 10' && !$('load-status').textContent.includes('共')`) {
+			t.Fatal("first page waited for or displayed a full count", route)
+		}
 		if !eval(`(()=>{window.prefetchSamples=[];window.firstPrefetchPost=$('posts').firstElementChild;firstPrefetchPost.dataset.preserved='true';const target=$('posts').children[7];window.scrollTo({top:scrollY+target.getBoundingClientRect().top-innerHeight+100,behavior:'instant'});return $('timeline-loader').getBoundingClientRect().top-innerHeight>320})()`) {
 			t.Fatal("fixture already near bottom", route)
 		}
 		wait(`!state.postsLoading && state.postIDs.size===20`)
 		if !eval(`prefetchSamples.length===1 && prefetchSamples[0].count===10 && prefetchSamples[0].gap>320 && $('posts').firstElementChild===firstPrefetchPost && firstPrefetchPost.dataset.preserved==='true'`) {
 			t.Fatal("prefetch was late, duplicated, or replaced existing content", route)
+		}
+		eval(`(()=>{window.scrollTo({top:document.body.scrollHeight,behavior:'instant'});return true})()`)
+		wait(`!state.postsLoading && state.postIDs.size===30 && !state.hasMore`)
+		if !eval(`state.total===30 && $('result-count').textContent==='30' && $('load-status').textContent.includes('已全部加载')`) {
+			t.Fatal("last page did not resolve the loaded total", route)
 		}
 	}
 }

@@ -14,7 +14,7 @@ function fixture(ready=true){
   {username:'newbie',enabled:false,posts:-1,last_error:'failed',last_finished:200}
  ]};
  const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const ctx=vm.createContext({state,monitorListReady:ready,document:{addEventListener(){}},window:{addEventListener(){}},$:id=>controls[id],handle:u=>u.current_username||u.username,visibleInTimeline:u=>u.show_in_timeline!==false,escape,number:String,date:String,avatar:()=>'',icon:()=>'',userURL:name=>'#user/'+name,userStat:(u,k)=>u[k]||0,monitorStatus:()=>['已暂停','neutral'],baselineHTML:()=>'<p>历史基线</p>',checkpointHTML:()=>'<p>断点</p>',monitorNextStep:()=>'',collectionActions:()=>'<button data-op="run">检查新动态</button>'});
+ const ctx=vm.createContext({state,monitorListReady:ready,document:{addEventListener(){}},window:{addEventListener(){}},$:id=>controls[id],handle:u=>u.current_username||u.username,visibleInTimeline:u=>u.show_in_timeline!==false,escape,number:String,date:String,avatar:()=>'',icon:()=>'',userURL:name=>'#user/'+name,userStat:(u,k)=>u[k]||0,monitorStatus:()=>['已暂停','neutral'],baselineHTML:()=>'<p>历史基线</p>',checkpointHTML:()=>'<p>断点</p>',monitorNextStep:()=>'',collectionActions:()=>'<button data-op="run">动态更新</button>'});
  vm.runInContext(source.slice(0,source.indexOf('function accountCard(')),ctx);
  vm.runInContext(source.slice(source.indexOf('function accountCard('),source.indexOf('function renderAccounts(')),ctx);
  return {ctx,state,controls,rows:()=>ctx.accountRows(),names:()=>Array.from(ctx.filteredAccounts(ctx.accountRows()),u=>u.username)};
@@ -62,7 +62,7 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.ok(card.indexOf('data-op="timeline"')<card.indexOf('data-op="toggle"'));
  assert.match(card,/title="Very long &quot;name&quot;"/);
  assert.match(card,/需关注/);
- assert.match(card,/aria-haspopup="dialog"/);
+ assert.doesNotMatch(card,/account-menu-trigger|>管理</);
  assert.doesNotMatch(card,/<details|data-op="edit"|error &lt;img&gt;/);
  vm.runInContext("accountExpanded.add('alice:status')",f.ctx);
  const menu=f.ctx.accountManagementHTML(u);
@@ -70,7 +70,7 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.match(menu,/采集详情/);
  assert.match(menu,/error &lt;img&gt;/);
  assert.match(menu,/data-op="edit"/);
- assert.doesNotMatch(menu,/data-op="toggle"/);
+ assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|取消监控/);
 });
 test('archive-only and unresolved runtime accounts cannot toggle collection',()=>{
  const f=fixture();

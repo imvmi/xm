@@ -97,12 +97,12 @@ func TestTaskCenterBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval(`(()=>{location.hash='monitors';return true})()`)
-	wait(`!!document.querySelector('[data-monitor="bob"][data-op="menu"]') && state.monitors.some(m=>m.username==='bob'&&m.queued_job)`)
-	eval(`(()=>{document.querySelector('[data-monitor="bob"][data-op="menu"]').click();return true})()`)
+	wait(`!!document.querySelector('[data-account="bob"]') && state.monitors.some(m=>m.username==='bob'&&m.queued_job)`)
+	eval(`(()=>{document.querySelector('[data-account="bob"]').click();return true})()`)
 	wait(`!!document.querySelector('[data-monitor="bob"][data-op="cancel-queue"]')`)
 	eval(`(()=>{document.querySelector('[data-monitor="bob"][data-op="cancel-queue"]').click();return true})()`)
 	wait(`!$('account-menu-dialog').open && !accountPending.size && state.monitors.some(m=>m.username==='bob'&&!m.queued_job)`)
-	eval(`(()=>{document.querySelector('[data-monitor="bob"][data-op="menu"]').click();return true})()`)
+	eval(`(()=>{document.querySelector('[data-account="bob"]').click();return true})()`)
 	wait(`$('account-menu-dialog').open && !document.querySelector('#account-menu-content [data-op="cancel-queue"]')`)
 	if err = a.store.DB.QueryRow("SELECT enabled FROM monitors WHERE username='bob'").Scan(&enabled); err != nil || !enabled {
 		t.Fatal("monitor page cancellation paused account", enabled, err)

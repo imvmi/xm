@@ -123,7 +123,6 @@ type avatarCacheStatus struct {
 	Sources   int   `json:"sources"`
 	Cached    int   `json:"cached"`
 	UsedBytes int64 `json:"used_bytes"`
-	Legacy    int   `json:"legacy"`
 }
 
 func (a *App) avatarSettings(w http.ResponseWriter, r *http.Request) {
@@ -132,38 +131,24 @@ func (a *App) avatarSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取头像来源失败")
 		return
 	}
-	for _, dir := range []string{archive.AvatarCacheDir(a.Config().DataDir), filepath.Join(a.Config().DataDir, "avatars")} {
-		entries, err := os.ReadDir(dir)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			problem(w, 500, "读取头像目录失败")
-			return
-		}
-		for _, entry := range entries {
-			id := strings.TrimSuffix(entry.Name(), ".json")
-			if _, err := archive.AvatarFilename(id); err != nil {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil || !info.Mode().IsRegular() {
-				continue
-			}
-			if dir == archive.AvatarCacheDir(a.Config().DataDir) {
-				result.UsedBytes += info.Size()
-				if entry.Name() == id {
-					result.Cached++
-				}
-			} else if entry.Name() == id {
-				result.Legacy++
-			}
-		}
-	}
-	respond(w, 200, result)
-}
-func (a *App) migrateAvatars(w http.ResponseWriter, r *http.Request) {
-	result, err := a.store.MigrateLegacyAvatars(r.Context(), a.Config().DataDir)
-	if err != nil {
-		problem(w, 500, "读取旧头像失败，请检查数据目录权限后重试")
+	entries, err := os.ReadDir(archive.AvatarCacheDir(a.Config().DataDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		problem(w, 500, "读取头像目录失败")
 		return
+	}
+	for _, entry := range entries {
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if _, err := archive.AvatarFilename(id); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		result.UsedBytes += info.Size()
+		if entry.Name() == id {
+			result.Cached++
+		}
 	}
 	respond(w, 200, result)
 }

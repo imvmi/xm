@@ -424,6 +424,7 @@ func (a *App) externalCancelTask(w http.ResponseWriter, r *http.Request, c apiCr
 func sanitizeExternalPost(p *PostView, account string) {
 	// Reply ancestors are not part of the credential's quote authorization tree.
 	p.ReplyPreview = nil
+	p.HasReplies = false
 	p.ArchiveTarget = account
 	p.Bookmarked = false
 	p.BookmarkedAt = 0

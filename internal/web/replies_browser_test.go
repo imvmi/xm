@@ -28,6 +28,12 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 	if err := a.store.SavePosts("alice", posts); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.store.SavePosts("bob", []archive.Post{
+		{ID: "300", AuthorID: "88", Username: "bob", ReplyTo: "124", ReplyToAuthorID: "42", Text: "来自其他用户的已归档回复"},
+		{ID: "301", AuthorID: "99", Username: "carol", ReplyTo: "300", ReplyToAuthorID: "88", Text: "对 Bob 的回复"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(a.Handler())
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -81,13 +87,19 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 	}
 	screenshot("self-replies-mobile.png")
 	for _, theme := range []string{"light", "dark"} {
-		eval(`(()=>{applyArchiveTheme('` + theme + `');document.querySelector('[data-reply-context="124"]').click();return true})()`)
+		eval(`(()=>{applyArchiveTheme('` + theme + `');document.querySelector('[data-post-id="124"]').scrollIntoView({block:'start'});return true})()`)
+		screenshot("reply-thread-" + theme + "-mobile.png")
+		eval(`(()=>{document.querySelector('[data-reply-context="124"]').click();return true})()`)
 		wait(`$('reply-context-dialog').open&&!replyContextLoading&&$('reply-context-items').children.length===20`)
 		if !eval(`$('reply-context-items').firstElementChild.dataset.contextPost==='105' && $('reply-context-items').lastElementChild.dataset.contextPost==='124' && document.querySelectorAll('#reply-context-items [aria-current=true]').length===1 && !$('reply-context-more').hidden && !document.querySelector('#reply-context-items img') && !window.replyXSS`) {
 			t.Fatal("context ordering/current/escaping incorrect")
 		}
 		if !eval(`(()=>{const d=$('reply-context-dialog'),r=d.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&d.scrollWidth<=d.clientWidth+1})()`) {
 			t.Fatal("mobile context overflow")
+		}
+		wait(`!replyChildrenLoading && $('reply-children-items').children.length===1`)
+		if !eval(`$('reply-children-items').textContent.includes('@bob') && $('reply-children-items').textContent.includes('来自其他用户') && !$('reply-children-items').textContent.includes('@carol')`) {
+			t.Fatal("cross-author direct replies must not flatten grandchildren")
 		}
 		screenshot("reply-context-" + theme + "-mobile.png")
 		eval(`(()=>{$('reply-context-more').click();return true})()`)
@@ -98,16 +110,56 @@ func TestSelfReplyContextBrowser(t *testing.T) {
 		eval(`(()=>{$('reply-context-dialog').close();return true})()`)
 		wait(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`)
 	}
+	// Navigate from a reply to its own parent chain and direct replies.
+	eval(`(()=>{openReplyContext('124');return true})()`)
+	wait(`!replyChildrenLoading && !!document.querySelector('#reply-children-items [data-context-open="300"]')`)
+	eval(`(()=>{document.querySelector('#reply-children-items [data-context-open="300"]').click();return true})()`)
+	wait(`!replyContextLoading && !replyChildrenLoading && replyContextSelected==='300' && $('reply-children-items').textContent.includes('@carol')`)
+	if !eval(`$('reply-context-items').lastElementChild.dataset.contextPost==='300' && $('reply-context-items').lastElementChild.previousElementSibling.dataset.contextPost==='124' && document.querySelectorAll('#reply-context-items [aria-current=true]').length===1`) {
+		t.Fatal("cross-author context lost parent linkage")
+	}
+	eval(`(()=>{$('reply-children-jump').click();return true})()`)
+	if !eval(`$('reply-children-title').textContent.includes('@bob') && $('reply-children-items').textContent.includes('@carol') && $('reply-context-dialog').scrollTop>0`) {
+		t.Fatal("reply jump did not reveal the selected post's replies")
+	}
+	screenshot("cross-author-replies-mobile.png")
+	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
+	wait(`!$('reply-context-dialog').open && $('reply-children-items').children.length===0`)
 	eval(`(()=>{document.querySelector('[data-reply-context="200"]').click();return true})()`)
 	wait(`!replyContextLoading&&$('reply-context-status').textContent.includes('尚未归档')`)
 	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
 	wait(`$('reply-context-items').children.length===0`)
 	// A delayed response cannot repopulate a dialog closed during navigation.
-	eval(`(()=>{window.savedReplyAPI=api;api=()=>new Promise(resolve=>window.finishReplyRequest=resolve);openReplyContext('124');return true})()`)
+	eval(`(()=>{window.savedReplyAPI=api;api=path=>path.endsWith('/context')?new Promise(resolve=>window.finishReplyRequest=resolve):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
 	eval(`(()=>{closeReplyContext();return true})()`)
 	wait(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`)
 	eval(`(()=>{window.finishReplyRequest({items:[{id:'124',username:'alice',text:'stale'}],end:'beginning'});api=window.savedReplyAPI;return true})()`)
 	if !eval(`!$('reply-context-dialog').open&&$('reply-context-items').children.length===0`) {
 		t.Fatal("stale context response applied")
 	}
+	// Failed reply requests can retry without losing the already loaded context.
+	eval(`(()=>{window.savedReplyAPI=api;api=path=>path.endsWith('/replies')?Promise.reject(new Error('回复读取失败')):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
+	wait(`!replyChildrenLoading && !replyContextLoading && $('reply-children-status').textContent==='回复读取失败'`)
+	eval(`(()=>{api=window.savedReplyAPI;$('reply-children-more').click();return true})()`)
+	wait(`!replyChildrenLoading && $('reply-children-items').children.length===1`)
+	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
+	wait(`$('reply-children-items').children.length===0`)
+	// A reply response for the previous selection cannot populate the new one.
+	eval(`(()=>{api=path=>path==='/posts/124/replies'?new Promise(resolve=>window.finishChildRequest=resolve):window.savedReplyAPI(path);openReplyContext('124');return true})()`)
+	eval(`(()=>{openReplyContext('200');return true})()`)
+	wait(`!replyChildrenLoading && replyContextSelected==='200'`)
+	eval(`(()=>{window.finishChildRequest({items:[{id:'300',username:'bob',text:'stale'}],has_more:false});api=window.savedReplyAPI;return true})()`)
+	if !eval(`$('reply-children-items').children.length===0`) {
+		t.Fatal("stale reply response applied")
+	}
+	eval(`(()=>{$('reply-context-dialog').close();return true})()`)
+	wait(`!$('reply-context-dialog').open && $('reply-context-items').children.length===0`)
+	// The same connected layout is used in the account timeline.
+	eval(`(()=>{location.hash='user/alice';return true})()`)
+	wait(`state.view==='user'&&!state.postsLoading&&!!document.querySelector('[data-post-id="124"] .reply-thread-rail')`)
+	if !eval(`(()=>{const card=document.querySelector('[data-post-id="124"]');return card.firstElementChild.classList.contains('reply-preview') && card.children.length===2 && card.scrollWidth<=card.clientWidth && document.documentElement.scrollWidth<=innerWidth})()`) {
+		t.Fatal("account reply thread layout or ordering incorrect")
+	}
+	eval(`(()=>{document.querySelector('[data-post-id="124"]').scrollIntoView({block:'start'});return true})()`)
+	screenshot("account-reply-thread-dark-mobile.png")
 }

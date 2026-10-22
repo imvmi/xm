@@ -195,6 +195,7 @@ type PostView struct {
 	Protected        bool          `json:"protected"`
 	SelfReply        bool          `json:"self_reply"`
 	ReplyToAuthorID  string        `json:"reply_to_author_id,omitempty"`
+	HasReplies       bool          `json:"has_replies,omitempty"`
 	ReplyPreview     *ReplySummary `json:"reply_preview,omitempty"`
 	ReplyTo          string        `json:"reply_to"`
 	RepostID         string        `json:"repost_id"`
@@ -216,12 +217,12 @@ const replyAuthorSQL = "COALESCE(NULLIF(p.reply_to_author_id,''),(SELECT parent.
 const selfReplySQL = "(p.reply_to<>'' AND p.author_id<>'' AND p.author_id=" + replyAuthorSQL + ")"
 const ordinaryOrSelfReplySQL = "(p.reply_to='' OR " + selfReplySQL + ")"
 
-const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)` + `,` + replyAuthorSQL
+const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)` + `,` + replyAuthorSQL + `,EXISTS(SELECT 1 FROM posts child WHERE child.reply_to=p.id AND child.id<>p.id)`
 
 func scanPost(row scanner) (PostView, error) {
 	var p PostView
 	var raw string
-	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw, &p.AuthorID, &p.ArchiveTarget, &p.BookmarkedAt, &p.ReplyToAuthorID)
+	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw, &p.AuthorID, &p.ArchiveTarget, &p.BookmarkedAt, &p.ReplyToAuthorID, &p.HasReplies)
 	p.Bookmarked = p.BookmarkedAt > 0
 	p.SelfReply = p.ReplyTo != "" && p.AuthorID != "" && p.AuthorID == p.ReplyToAuthorID
 	p.Name, _ = archive.AuthorDetails([]byte(raw))

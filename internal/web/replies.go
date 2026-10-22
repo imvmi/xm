@@ -10,13 +10,16 @@ import (
 
 // Summary cards intentionally contain no nested quotes, media, or archive links.
 type ReplySummary struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Name      string `json:"name"`
-	CreatedAt string `json:"created_at"`
-	Text      string `json:"text"`
-	ReplyTo   string `json:"reply_to,omitempty"`
-	SelfReply bool   `json:"self_reply"`
+	ID         string `json:"id"`
+	AuthorID   string `json:"-"`
+	AvatarURL  string `json:"avatar_url,omitempty"`
+	HasReplies bool   `json:"has_replies,omitempty"`
+	Username   string `json:"username"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"created_at"`
+	Text       string `json:"text"`
+	ReplyTo    string `json:"reply_to,omitempty"`
+	SelfReply  bool   `json:"self_reply"`
 }
 
 func replySummary(p PostView, limit int) ReplySummary {
@@ -27,7 +30,7 @@ func replySummary(p PostView, limit int) ReplySummary {
 			text = string(runes[:limit]) + "…"
 		}
 	}
-	return ReplySummary{ID: p.ID, Username: p.Username, Name: p.Name, CreatedAt: p.CreatedAt, Text: text, ReplyTo: p.ReplyTo, SelfReply: p.SelfReply}
+	return ReplySummary{ID: p.ID, AuthorID: p.AuthorID, AvatarURL: p.AvatarURL, HasReplies: p.HasReplies, Username: p.Username, Name: p.Name, CreatedAt: p.CreatedAt, Text: text, ReplyTo: p.ReplyTo, SelfReply: p.SelfReply}
 }
 
 func attachReplyPreviews(db *database.DB, items []PostView) error {
@@ -36,7 +39,7 @@ func attachReplyPreviews(db *database.DB, items []PostView) error {
 	var visit func([]PostView)
 	visit = func(posts []PostView) {
 		for _, p := range posts {
-			if p.SelfReply && !seen[p.ReplyTo] {
+			if p.ReplyTo != "" && !seen[p.ReplyTo] {
 				ids = append(ids, p.ReplyTo)
 				seen[p.ReplyTo] = true
 			}
@@ -69,7 +72,7 @@ func attachReplyPreviews(db *database.DB, items []PostView) error {
 	}
 	var attach func(*PostView)
 	attach = func(p *PostView) {
-		if parent, ok := parents[p.ReplyTo]; p.SelfReply && ok && parent.AuthorID == p.AuthorID && parent.ID != p.ID {
+		if parent, ok := parents[p.ReplyTo]; ok && parent.ID != p.ID {
 			preview := replySummary(parent, 160)
 			p.ReplyPreview = &preview
 		}
@@ -100,7 +103,6 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 	}
 	result := ReplyContext{Items: []ReplySummary{}, End: "beginning"}
 	seen := map[string]bool{}
-	author := ""
 	for len(result.Items) < 20 {
 		if seen[id] {
 			result.End = "cycle"
@@ -121,16 +123,8 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, "读取上下文失败")
 			return
 		}
-		if author != "" && p.AuthorID != author {
-			result.End = "other_author"
-			break
-		}
-		author = p.AuthorID
 		result.Items = append(result.Items, replySummary(p, 0))
-		if !p.SelfReply {
-			if p.ReplyTo != "" {
-				result.End = "other_reply"
-			}
+		if p.ReplyTo == "" {
 			break
 		}
 		id = p.ReplyTo
@@ -142,5 +136,77 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 	for left, right := 0, len(result.Items)-1; left < right; left, right = left+1, right-1 {
 		result.Items[left], result.Items[right] = result.Items[right], result.Items[left]
 	}
+	a.attachReplyAvatars(r, result.Items)
 	respond(w, 200, result)
+}
+
+// Replies contains only immediate children; siblings are never presented as a
+// single chain. Further levels are fetched explicitly, keeping each page bounded.
+type ReplyList struct {
+	Items      []ReplySummary `json:"items"`
+	NextCursor string         `json:"next_cursor,omitempty"`
+	HasMore    bool           `json:"has_more"`
+}
+
+func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
+	id, after := r.PathValue("post"), r.URL.Query().Get("after")
+	if !validPostID(id) || (after != "" && !validPostID(after)) {
+		problem(w, 400, "推文 ID 或分页游标无效")
+		return
+	}
+	var exists int
+	err := a.store.DB.QueryRowContext(r.Context(), "SELECT 1 FROM posts WHERE id=?", id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		problem(w, 404, "推文尚未归档")
+		return
+	}
+	if err != nil {
+		problem(w, 500, "读取回复失败")
+		return
+	}
+	query := "SELECT " + postColumns + " FROM posts p WHERE p.reply_to=? AND p.id<>?"
+	args := []any{id, id}
+	if after != "" {
+		query += " AND (length(p.id)>? OR (length(p.id)=? AND p.id>?))"
+		args = append(args, len(after), len(after), after)
+	}
+	rows, err := a.store.DB.QueryContext(r.Context(), query+" ORDER BY length(p.id) ASC,p.id ASC LIMIT 21", args...)
+	if err != nil {
+		problem(w, 500, "读取回复失败")
+		return
+	}
+	result := ReplyList{Items: []ReplySummary{}}
+	for rows.Next() {
+		p, scanErr := scanPost(rows)
+		if scanErr != nil {
+			rows.Close()
+			problem(w, 500, "读取回复失败")
+			return
+		}
+		result.Items = append(result.Items, replySummary(p, 0))
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		problem(w, 500, "读取回复失败")
+		return
+	}
+	if len(result.Items) > 20 {
+		result.Items = result.Items[:20]
+		result.HasMore = true
+		result.NextCursor = result.Items[19].ID
+	}
+	a.attachReplyAvatars(r, result.Items)
+	respond(w, 200, result)
+}
+
+func (a *App) attachReplyAvatars(r *http.Request, items []ReplySummary) {
+	ids := make([]string, 0, len(items))
+	for _, p := range items {
+		ids = append(ids, p.AuthorID)
+	}
+	avatars := a.avatarURLs(r.Context(), ids)
+	for i := range items {
+		items[i].AvatarURL = avatars[items[i].AuthorID]
+	}
 }

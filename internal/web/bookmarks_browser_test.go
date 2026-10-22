@@ -80,12 +80,27 @@ func TestBookmarksBrowser(t *testing.T) {
 	}
 	click(`[data-bookmark-id="100"]`)
 	wait(`document.querySelector('[data-bookmark-id="100"]').getAttribute('aria-pressed')==='true'`)
+	if !eval(`!document.querySelector('.quote-card .bookmark-button')`) {
+		t.Fatal("embedded quote must not show a bookmark icon")
+	}
+	click(`[data-quote-post="50"]`)
+	wait(`state.focusPost==='50' && !state.postsLoading && state.postIDs.size===1 && state.postIDs.has('50')`)
+	if !eval(`location.hash==='#post/50' && $('home-feed-title').textContent==='推文详情' && document.querySelector('#timeline-panel .timeline-filters').hidden && !$('post-detail-back').hidden`) {
+		t.Fatal("quote-only post detail navigation failed")
+	}
 	click(`[data-bookmark-id="50"]`)
 	wait(`document.querySelector('[data-bookmark-id="50"]').getAttribute('aria-pressed')==='true'`)
+	click("#post-detail-back")
+	wait(`!state.focusPost && !state.postsLoading && state.postIDs.size===2 && !document.querySelector('#home-feed .timeline-tabs').hidden`)
 	click("#home-tab-bookmarks")
 	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && state.postIDs.size===2`)
 	if !eval(`$('posts').firstElementChild.dataset.postId==='50' && [...document.querySelectorAll('[data-bookmark-id="50"]')].every(b=>b.getAttribute('aria-pressed')==='true')`) {
 		t.Fatal("bookmark ordering or shared quote state wrong")
+	}
+	// If the quoted post is already loaded, locate it without replacing the feed.
+	click(`[data-quote-post="50"]`)
+	if !eval(`!state.focusPost && state.postIDs.size===2 && document.querySelector('article[data-post-id="50"]').classList.contains('post-located') && document.activeElement.dataset.postId==='50'`) {
+		t.Fatal("loaded quote was not located in place")
 	}
 	eval(`(()=>{location.hash='user/alice';return true})()`)
 	wait(`state.view==='user' && state.target==='alice' && !state.postsLoading && state.timelineTab==='posts'`)

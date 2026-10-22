@@ -118,12 +118,14 @@ test('an in-flight bookmark page is refreshed after a collection change',async()
  f.requests[1].resolve(f.page([],0));await pending;
  assert.equal(f.state.postIDs.size,0);assert.equal(f.state.total,0);
 });
-test('the author handle opens the source post without redundant reply controls',()=>{
+test('the author handle opens the source post and replies retain context access',()=>{
  const f=fixture();
  const html=f.ctx.postHTML({id:'42',username:'Vickiehavefun',name:'Vickie',created_at:1,text:'reply',reply_to:'41',media:[]});
  assert.match(html,/<a class="timeline-handle" href="https:\/\/x\.com\/i\/status\/42"[^>]*>@Vickiehavefun<\/a>/);
  assert.doesNotMatch(html,/>\s*回复\s*</);
- assert.doesNotMatch(html,/查看原推文|post-footer/);
+ assert.match(html,/data-reply-context="42"/);
+ assert.match(html,/https:\/\/x\.com\/i\/status\/41/);
+ assert.doesNotMatch(html,/post-footer/);
 });
 test('media links do not leave trailing blank lines; meaningful paragraphs remain intact',()=>{
  const f=fixture();
@@ -141,7 +143,8 @@ test('an archived quote links its handle without a separate source footer',()=>{
  const f=fixture();
  const html=f.ctx.quoteHTML({quote_id:'77',quote:{id:'77',username:'fishball173',name:'fishball',created_at:1,text:'quoted',media:[]}});
  assert.match(html,/<a class="quote-handle" href="https:\/\/x\.com\/i\/status\/77"[^>]*>@fishball173<\/a>/);
- assert.doesNotMatch(html,/已归档的引用推文|quote-source/);
+ assert.doesNotMatch(html,/已归档的引用推文|quote-source|data-bookmark-id/);
+ assert.match(html,/data-quote-post="77"/);
 });
 
 function profileHTML(user){
@@ -203,4 +206,39 @@ test('speculative failure stays quiet and foreground navigation can retry the sa
  assert.equal(f.notices.length,0);assert.equal(f.state.cursor,'5');assert.equal(f.state.postsError,true);
  p=f.ctx.loadMorePosts();assert.match(f.requests[2].query,/before=5/);f.requests[2].resolve({...f.page(['4'],10),has_more:true,next_cursor:'4'});await p;
  assert.equal(f.state.postsError,false);assert.equal(f.state.cursor,'4');
+});
+
+test('first pages skip full counts and show loaded rows until the last cursor page',async()=>{
+ for(const tab of ['', 'posts', 'replies', 'media', 'bookmarks']){
+  const f=fixture();f.state.timelineTab=tab;f.$('search').value='quoted';f.$('kind-filter').value='video';
+  let pending=f.ctx.refreshPosts();
+  const query=new URLSearchParams(f.requests[0].query.split('?')[1]);
+  assert.equal(query.get('count'),'0');assert.equal(query.get('section'),tab);
+  assert.equal(query.get('q'),'quoted');assert.equal(query.get('kind'),'video');
+  f.requests[0].resolve({...f.page(['3','2'],-1),next_cursor:'2',has_more:true});await pending;
+  assert.equal(f.state.total,-1);assert.equal(f.$('result-count').textContent,'已加载 2');
+  assert.equal(f.$('load-status').textContent,'已显示 2 条');
+  pending=f.ctx.loadMorePosts();f.requests[1].reject(new Error('offline'));await pending;
+  assert.equal(f.$('result-count').textContent,'已加载 2');
+  pending=f.ctx.loadMorePosts();
+  assert.match(f.requests[2].query,/before=2/);
+  f.requests[2].resolve({...f.page(['2','1'],-1),next_cursor:'1',has_more:false});await pending;
+  assert.equal(f.state.total,3);assert.equal(f.$('result-count').textContent,'3');
+  assert.equal(f.$('load-status').textContent,'已显示 3 条，共 3 条 · 已全部加载');
+ }
+});
+test('an uncounted empty first page displays zero and stops pagination',async()=>{
+ const f=fixture(),pending=f.ctx.refreshPosts();
+ f.requests[0].resolve({...f.page([],-1),has_more:false});await pending;
+ assert.equal(f.state.total,0);assert.equal(f.$('result-count').textContent,'0');
+ assert.equal(f.state.hasMore,false);assert.equal(f.$('post-empty').hidden,false);
+});
+test('initial navigation gets the SQLite connection before historical overview counts',async()=>{
+ const calls=[],nodes=new Map();let finishNavigation;
+ const $=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id)};
+ const ctx=vm.createContext({$,state:{},applyArchiveTheme:()=>{},api:async route=>{calls.push(route);return {}},navigate:()=>{calls.push('navigate');return new Promise(resolve=>finishNavigation=resolve)},refreshOverview:async()=>{calls.push('overview')},toast:()=>{}});
+ vm.runInContext(source.slice(source.indexOf('async function enter()'),source.indexOf("$('login-form').addEventListener")),ctx);
+ const pending=ctx.enter();await new Promise(setImmediate);
+ assert.deepEqual(calls,['/settings','navigate']);
+ finishNavigation();await pending;assert.deepEqual(calls,['/settings','navigate','overview']);
 });

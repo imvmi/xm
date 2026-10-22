@@ -76,7 +76,7 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	}
 	openMenu := func(username string) {
 		t.Helper()
-		eval(fmt.Sprintf(`(()=>{document.querySelector('[data-monitor="%s"][data-op=menu]').click();return true})()`, username))
+		eval(fmt.Sprintf(`(()=>{document.querySelector('[data-account="%s"]').click();return true})()`, username))
 		wait(fmt.Sprintf(`$('account-menu-dialog').open && accountMenuTarget===%q`, username))
 	}
 	if !eval(`!document.querySelector('#user-list details') && [...$('user-list').children].every(card=>card.querySelectorAll('[role=switch]').length===2)`) {
@@ -135,7 +135,7 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('user-search').value='';$('user-search').dispatchEvent(new Event('input'));$('monitor-sort').value='posts-desc';$('monitor-sort').dispatchEvent(new Event('change'));document.querySelector('[data-account=long_username15] .account-stats').click();return true})()`)
 	wait(`$('account-menu-dialog').open && accountMenuTarget==='long_username15'`)
-	if !eval(`$('account-menu-content').textContent.includes('编辑采集设置') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
+	if !eval(`$('account-menu-content').textContent.includes('配置编辑') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
 		t.Fatal("card click did not show operations or hid the attention indicator")
 	}
 	eval(`(()=>{document.querySelector('#account-menu-content .account-details').open=true;return true})()`)
@@ -226,11 +226,10 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	// Cancellation retains the same archived row and its hidden-home preference.
 	eval(`(()=>{document.querySelector('[data-monitor=bob][data-op=timeline]').click();return true})()`)
 	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').show_in_timeline===false`)
-	openMenu("bob")
-	eval(`(()=>{document.querySelector('#account-menu-content [data-op=delete]').click();return true})()`)
-	wait(`$('confirm-dialog').open`)
-	eval(`(()=>{$('confirm-delete').click();return true})()`)
-	wait(`!$('confirm-dialog').open && !accountPending.size && state.monitors.length===2 && document.querySelectorAll('[data-account=bob]').length===1 && document.querySelector('[data-account=bob]').textContent.includes('仅保留归档')`)
+	// Archive-only rows may still arrive after removal through the external API.
+	eval(`(()=>{api('/monitors/bob','DELETE').then(()=>refreshAccountsAfterChange());return true})()`)
+	wait(`state.monitors.length===2 && document.querySelectorAll('[data-account=bob]').length===1 && document.querySelector('[data-account=bob]').textContent.includes('仅保留归档')`)
+
 	if !eval(`document.querySelector('[data-monitor=bob][data-op=timeline]').getAttribute('aria-checked')==='false'`) {
 		t.Fatal("cancelling monitoring reset the hidden preference")
 	}
@@ -262,7 +261,7 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	if err := chromedp.Do(browser, chromedp.EmulateViewport(390, 600)); err != nil {
 		t.Fatal(err)
 	}
-	eval(`(()=>{window.scrollTo({top:150,behavior:"instant"});window.savedAccountScroll=scrollY;document.querySelector('[data-account=bob] .account-identity').click();return true})()`)
+	eval(`(()=>{window.scrollTo({top:150,behavior:"instant"});window.savedAccountScroll=scrollY;document.querySelector('[data-account=bob] .account-name').click();return true})()`)
 	wait(`state.view==='user' && !state.postsLoading && state.postIDs.size===2`)
 	eval(`(()=>{document.querySelector('#view-user .back-link').click();return true})()`)
 	wait(`state.view==='archive' && document.querySelectorAll('#user-list .account-card').length===3 && Math.abs(scrollY-window.savedAccountScroll)<2`)

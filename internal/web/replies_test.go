@@ -121,13 +121,13 @@ func TestReplyContextBoundariesAndAuthorization(t *testing.T) {
 	if got := read("300"); len(got.Items) != 2 || got.End != "cycle" {
 		t.Fatal(got)
 	}
-	if got := read("400"); len(got.Items) != 1 || got.End != "other_reply" {
+	if got := read("400"); len(got.Items) != 2 || got.Items[0].ID != "500" || got.Items[1].ID != "400" || got.End != "beginning" {
 		t.Fatal(got)
 	}
 	ok(t, b.request("GET", "/api/posts/999/context", nil, "", false), 404)
-	p := PostView{ReplyPreview: &ReplySummary{Text: "must not cross API account scope"}, Quote: &PostView{ReplyPreview: &ReplySummary{Text: "also private"}}}
+	p := PostView{HasReplies: true, ReplyPreview: &ReplySummary{Text: "must not cross API account scope"}, Quote: &PostView{ReplyPreview: &ReplySummary{Text: "also private"}}}
 	sanitizeExternalPost(&p, "alice")
-	if p.ReplyPreview != nil || p.Quote.ReplyPreview != nil {
+	if p.HasReplies || p.ReplyPreview != nil || p.Quote.ReplyPreview != nil {
 		t.Fatal("external API leaked reply preview")
 	}
 }
@@ -151,5 +151,90 @@ func TestSelfReplyDatabaseCopy(t *testing.T) {
 	result, err := listPosts(dst.DB, "", "", "", "", 0, 20)
 	if err != nil || len(result.Items) != 1 || !result.Items[0].SelfReply || result.Items[0].ReplyToAuthorID != "42" || result.Items[0].ReplyTo != "100" {
 		t.Fatal("migration lost self-reply identity", result, err)
+	}
+}
+
+func TestArchivedRepliesAcrossAuthors(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	if err := a.store.SavePosts("alice", []archive.Post{{ID: "100", AuthorID: "42", Username: "alice", Text: "root"}, {ID: "101", AuthorID: "42", Username: "alice", ReplyTo: "100", Text: "self"}}); err != nil {
+		t.Fatal(err)
+	}
+	others := []archive.Post{
+		{ID: "200", AuthorID: "88", Username: "bob", ReplyTo: "100", Text: "reply to alice"},
+		{ID: "201", AuthorID: "99", Username: "carol", ReplyTo: "200", Text: "reply to bob"},
+		{ID: "202", AuthorID: "88", Username: "bob", Text: "@alice mention only"},
+		{ID: "203", AuthorID: "88", Username: "bob", ReplyTo: "999", Text: "another parent"},
+		{ID: "204", AuthorID: "88", Username: "bob", QuoteID: "100", Text: "quote only"},
+		{ID: "900", AuthorID: "88", Username: "bob", ReplyTo: "900", Text: "corrupt self loop"},
+	}
+	for i := 1000; i < 1025; i++ {
+		others = append(others, archive.Post{ID: fmt.Sprint(i), AuthorID: "88", Username: "bob", ReplyTo: "100", Text: "sibling"})
+	}
+	if err := a.store.SavePosts("bob", others); err != nil {
+		t.Fatal(err)
+	}
+	// The same post in two archives must still appear only once in the reply list.
+	if err := a.store.SavePosts("another", others[:1]); err != nil {
+		t.Fatal(err)
+	}
+	anon := &browserClient{t: t, a: a}
+	ok(t, anon.request("GET", "/api/posts/100/replies", nil, "", false), 401)
+	for _, route := range []string{"/api/posts/999/replies"} {
+		ok(t, b.request("GET", route, nil, "", false), 404)
+	}
+	ok(t, b.request("GET", "/api/posts/100/replies?after=invalid", nil, "", false), 400)
+	read := func(after string) ReplyList {
+		t.Helper()
+		w := b.request("GET", "/api/posts/100/replies?after="+after, nil, "", false)
+		ok(t, w, 200)
+		var result ReplyList
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	first := read("")
+	if len(first.Items) != 20 || first.Items[0].ID != "101" || first.Items[1].ID != "200" || first.Items[1].Username != "bob" || !first.Items[1].HasReplies || !first.HasMore || first.NextCursor != "1017" {
+		t.Fatal(first)
+	}
+	second := read(first.NextCursor)
+	if len(second.Items) != 7 || second.Items[0].ID != "1018" || second.HasMore || second.NextCursor != "" {
+		t.Fatal(second)
+	}
+	seen := map[string]bool{}
+	for _, p := range append(first.Items, second.Items...) {
+		if seen[p.ID] || p.ReplyTo != "100" {
+			t.Fatal("duplicate or unrelated reply", p)
+		}
+		seen[p.ID] = true
+	}
+	for _, id := range []string{"201", "202", "203", "204", "900"} {
+		if seen[id] {
+			t.Fatal("included unrelated post", id)
+		}
+	}
+	var chain ReplyContext
+	w := b.request("GET", "/api/posts/201/context", nil, "", false)
+	ok(t, w, 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &chain); err != nil {
+		t.Fatal(err)
+	}
+	if len(chain.Items) != 3 || chain.Items[0].ID != "100" || chain.Items[1].ID != "200" || chain.Items[2].ID != "201" || chain.End != "beginning" {
+		t.Fatal(chain)
+	}
+	page, err := listPosts(a.store.DB, "bob", "reply to alice", "", "replies", 0, 20)
+	if err != nil || len(page.Items) != 1 || page.Items[0].SelfReply || page.Items[0].ReplyPreview == nil || page.Items[0].ReplyPreview.Username != "alice" {
+		t.Fatal(page, err)
+	}
+	page, err = listPosts(a.store.DB, "alice", "root", "", "posts", 0, 20)
+	if err != nil || len(page.Items) != 1 || !page.Items[0].HasReplies {
+		t.Fatal(page, err)
+	}
+	var empty ReplyList
+	w = b.request("GET", "/api/posts/900/replies", nil, "", false)
+	ok(t, w, 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &empty); err != nil || len(empty.Items) != 0 {
+		t.Fatal(empty, err)
 	}
 }

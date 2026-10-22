@@ -3,6 +3,9 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +54,15 @@ func TestTimelineSectionsAndPagination(t *testing.T) {
 			}
 			if tc.first != "" && got.Items[0].ID != tc.first {
 				t.Fatalf("first ID=%s, want %s", got.Items[0].ID, tc.first)
+			}
+			uncounted := b.request("GET", "/api/posts?target=alice"+tc.query+"&count=0", nil, "", false)
+			ok(t, uncounted, 200)
+			var fast PostList
+			if err := json.Unmarshal(uncounted.Body.Bytes(), &fast); err != nil {
+				t.Fatal(err)
+			}
+			if fast.Total != -1 || !reflect.DeepEqual(fast.Items, got.Items) || fast.HasMore != got.HasMore || fast.NextCursor != got.NextCursor {
+				t.Fatalf("count=0 changed page contents or pagination: %+v", fast)
 			}
 		})
 	}
@@ -113,14 +125,25 @@ func TestLargeTimelineUsesOrderedIndexes(t *testing.T) {
 	if a.store.DB.Dialect != "sqlite" {
 		t.Skip("SQLite query-plan regression")
 	}
-	// Populate an isolated 30,000-row archive without touching real data.
+	// The opt-in larger fixture also includes 2 KiB of JSON per post to model
+	// archives whose rows no longer fit in SQLite's page cache.
+	rowCount, raw := 30000, "{}"
+	if value := os.Getenv("XM_TIMELINE_PERF_ROWS"); value != "" {
+		var err error
+		rowCount, err = strconv.Atoi(value)
+		if err != nil || rowCount < 30000 || rowCount > 1000000 {
+			t.Fatal("XM_TIMELINE_PERF_ROWS must be between 30000 and 1000000")
+		}
+		raw = `{"fixture":"` + strings.Repeat("x", 2048) + `"}`
+	}
+	// Populate an isolated archive without touching real data.
 	tx, err := a.store.DB.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<30000)
- INSERT INTO posts(id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json,first_seen,last_seen) SELECT CAST(100000+x AS TEXT),'42','alice','fixture','2026-10-19T00:00:00Z','','','','','{}','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z' FROM n`)
+	_, err = tx.Exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<?)
+ INSERT INTO posts(id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json,first_seen,last_seen) SELECT CAST(100000+x AS TEXT),'42','alice','fixture','2026-10-19T00:00:00Z','','','','',?,'2026-10-19T00:00:00Z','2026-10-19T00:00:00Z' FROM n`, rowCount, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,15 +178,22 @@ func TestLargeTimelineUsesOrderedIndexes(t *testing.T) {
 	for _, target := range []string{"", "alice"} {
 		start := time.Now()
 		page, err := listPostsPage(a.store.DB, target, "", "", "", 0, 24, "", true)
-		if err != nil || len(page.Items) != 24 || page.Total != 30000 {
+		if err != nil || len(page.Items) != 24 || page.Total != rowCount {
 			t.Fatalf("large page: %v", err)
 		}
-		t.Logf("30k rows target=%q first page + count: %s", target, time.Since(start))
+		t.Logf("%d rows target=%q first page + count: %s", rowCount, target, time.Since(start))
+		counted := page
+		start = time.Now()
+		page, err = listPostsPage(a.store.DB, target, "", "", "", 0, 24, "", false)
+		if err != nil || page.Total != -1 || !reflect.DeepEqual(page.Items, counted.Items) || page.HasMore != counted.HasMore || page.NextCursor != counted.NextCursor {
+			t.Fatalf("uncounted first page differs: %+v %v", page, err)
+		}
+		t.Logf("%d rows target=%q first page without count: %s", rowCount, target, time.Since(start))
 		start = time.Now()
 		page, err = listPostsPage(a.store.DB, target, "", "", "", 0, 24, "100100", false)
 		if err != nil || len(page.Items) != 24 || page.Items[0].ID != "100099" {
 			t.Fatalf("deep cursor: %+v %v", page, err)
 		}
-		t.Logf("30k rows target=%q deep cursor: %s", target, time.Since(start))
+		t.Logf("%d rows target=%q deep cursor: %s", rowCount, target, time.Since(start))
 	}
 }

@@ -25,13 +25,18 @@ func TestAvatarCacheSettingsBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-	for _, id := range []string{"42", "43"} {
+	for _, id := range []string{"43"} {
 		if err := os.WriteFile(filepath.Join(dir, id), png, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	meta := []byte(`{"source_url":"https://pbs.twimg.com/profile_images/42/alice_normal.png"}`)
-	if err := os.WriteFile(filepath.Join(dir, "42.json"), meta, 0600); err != nil {
+	if err := a.store.SaveTargetProfile("alice", archive.Profile{ID: "42", Username: "alice", AvatarURL: "https://pbs.twimg.com/profile_images/42/alice_normal.png"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.PrivateDir(archive.AvatarCacheDir(a.Config().DataDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archive.AvatarCacheDir(a.Config().DataDir), "42"), png, 0600); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(a.Handler())
@@ -66,9 +71,9 @@ func TestAvatarCacheSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && !!$('username')`)
 	password, _ := json.Marshal(testPassword)
 	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type="submit"]').click();return true})()`)
-	wait(`state.authenticated && $('avatar-cache-status').textContent.includes('待迁移 2 张')`)
+	wait(`state.authenticated && $('avatar-cache-status').textContent.includes('已缓存 1 张')`)
 	eval(`(()=>{$('settings-tab-storage').click();return true})()`)
-	if !eval(`!$('settings-storage').hidden && !$('avatar-migrate').disabled`) {
+	if !eval(`!$('settings-storage').hidden && !$('avatar-migrate') && !$('avatar-cache-clear').disabled && !$('avatar-cache-status').textContent.includes('待迁移')`) {
 		t.Fatal("avatar controls unavailable on local storage")
 	}
 	for _, theme := range []string{"light", "dark"} {
@@ -82,8 +87,6 @@ func TestAvatarCacheSettingsBrowser(t *testing.T) {
 			}
 		}
 	}
-	eval(`(()=>{$('avatar-migrate').click();return true})()`)
-	wait(`$('avatar-cache-result').textContent.includes('迁移 1 张头像') && $('avatar-cache-status').textContent.includes('已缓存 1 张')`)
 	eval(`(()=>{$('avatar-cache-clear').click();return true})()`)
 	wait(`$('avatar-cache-result').textContent.includes('已清理 1 张') && $('avatar-cache-status').textContent.includes('已缓存 0 张')`)
 	if a.store.AvatarSource("42") == "" || !archive.AvatarExists(a.Config().DataDir, "43") {

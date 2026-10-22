@@ -83,7 +83,6 @@ func TestAvatarCacheRefillAndMaintenanceEndpoints(t *testing.T) {
 	ok(t, b.request("DELETE", "/api/settings/avatars/cache", nil, "https://elsewhere.test", true), 403)
 	a.maintenance.Store(true)
 	ok(t, b.request("DELETE", "/api/settings/avatars/cache", nil, "http://localhost", true), 503)
-	ok(t, b.request("POST", "/api/settings/avatars/migrate", nil, "http://localhost", true), 503)
 	a.maintenance.Store(false)
 	ok(t, b.request("DELETE", "/api/settings/avatars/cache", nil, "http://localhost", true), 200)
 	if a.store.AvatarSource("42") != source || archive.AvatarExists(a.Config().DataDir, "42") {
@@ -131,7 +130,7 @@ func TestAvatarCacheRefillAndMaintenanceEndpoints(t *testing.T) {
 	}
 }
 
-func TestAvatarMigrationOnStartupAndManualRetry(t *testing.T) {
+func TestAvatarMigrationOnStartup(t *testing.T) {
 	a := testApp(t)
 	const source = "https://pbs.twimg.com/profile_images/42/alice_normal.png"
 	dir := filepath.Join(a.Config().DataDir, "avatars")
@@ -159,11 +158,11 @@ func TestAvatarMigrationOnStartupAndManualRetry(t *testing.T) {
 	}
 	b := login(t, restarted)
 	ok(t, b.request("GET", "/avatars/42", nil, "", false), 200)
-	ok(t, b.request("POST", "/api/settings/avatars/migrate", nil, "http://localhost", true), 200)
+	ok(t, b.request("POST", "/api/settings/avatars/migrate", nil, "http://localhost", true), 404)
 	w := b.request("GET", "/api/settings/avatars", nil, "", false)
 	ok(t, w, 200)
 	var status avatarCacheStatus
-	if err = json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Sources != 1 || status.Cached != 1 || status.Legacy != 0 {
+	if err = json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Sources != 1 || status.Cached != 1 {
 		t.Fatal(status, err)
 	}
 }

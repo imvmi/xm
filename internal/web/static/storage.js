@@ -30,15 +30,10 @@ $('remote-cache-clear').addEventListener('click',()=>action($('remote-cache-clea
 
 async function refreshAvatarCache(){
  const info=await api('/settings/avatars');
- $('avatar-cache-status').textContent=`已保存 ${info.sources||0} 个来源 · 已缓存 ${info.cached||0} 张（${bytes(info.used_bytes||0)}）· 待迁移 ${info.legacy||0} 张`;
+ $('avatar-cache-status').textContent=`已保存 ${info.sources||0} 个来源 · 已缓存 ${info.cached||0} 张（${bytes(info.used_bytes||0)}）`;
 }
-$('avatar-migrate').addEventListener('click',()=>action($('avatar-migrate'),async()=>{
- const result=await api('/settings/avatars/migrate','POST',{});
- $('avatar-cache-result').textContent=`已导入 ${result.imported} 个来源、迁移 ${result.migrated} 张头像；保留 ${result.retained} 项，失败 ${result.failed} 项。`+(result.retained?'保留项缺少有效来源或已有更新来源，等待下次采集补齐。':'')+(result.failed?'请检查数据目录权限和旧文件后重试。':'');
- await refreshAvatarCache();
-}));
 $('avatar-cache-clear').addEventListener('click',()=>action($('avatar-cache-clear'),async()=>{
  const result=await api('/settings/avatars/cache','DELETE');
- $('avatar-cache-result').textContent=`已清理 ${result.cleared} 张头像缓存，下次查看时自动下载；来源 URL 和缺少来源的旧头像已保留。`;
+ $('avatar-cache-result').textContent=`已清理 ${result.cleared} 张头像缓存，下次查看时自动下载；原始 URL、推文和媒体已保留。`;
  await refreshAvatarCache();
 }));

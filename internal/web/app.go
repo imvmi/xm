@@ -69,7 +69,7 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	}
 	// Upgrade legacy avatar files locally; cosmetic failures must not prevent login.
 	if result, migrationErr := s.MigrateLegacyAvatars(context.Background(), cfg.DataDir); migrationErr != nil || result.Failed > 0 {
-		log.Printf("头像迁移未全部完成，可在设置中重试（失败 %d）", result.Failed)
+		log.Printf("旧头像兼容处理未全部完成，请检查数据目录权限后重启重试（失败 %d）", result.Failed)
 	}
 	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
 	a.api.windows = make(map[string]apiWindow)
@@ -224,7 +224,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings", a.updateSettings)
 	mux.HandleFunc("POST /api/settings/cleanup", a.cleanupData)
 	mux.HandleFunc("GET /api/settings/avatars", a.avatarSettings)
-	mux.HandleFunc("POST /api/settings/avatars/migrate", a.migrateAvatars)
 	mux.HandleFunc("DELETE /api/settings/avatars/cache", a.clearAvatars)
 	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
 	mux.HandleFunc("GET /api/notifications", a.notificationSettings)
@@ -276,7 +275,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
 	mux.HandleFunc("GET /api/posts", a.posts)
+	mux.HandleFunc("GET /api/posts/{post}", a.postDetail)
 	mux.HandleFunc("GET /api/posts/{post}/context", a.replyContext)
+	mux.HandleFunc("GET /api/posts/{post}/replies", a.postReplies)
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users/stats", a.userStats)
 	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
@@ -1062,6 +1063,10 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取推文失败")
 		return
 	}
+	a.attachPostAvatars(r, &v)
+	respond(w, 200, v)
+}
+func (a *App) attachPostAvatars(r *http.Request, v *PostList) {
 	ids := []string{}
 	var visit func(*PostView, func(*PostView))
 	visit = func(p *PostView, fn func(*PostView)) {
@@ -1071,13 +1076,22 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i := range v.Items {
-		visit(&v.Items[i], func(p *PostView) { ids = append(ids, p.AuthorID) })
+		visit(&v.Items[i], func(p *PostView) {
+			ids = append(ids, p.AuthorID)
+			if p.ReplyPreview != nil {
+				ids = append(ids, p.ReplyPreview.AuthorID)
+			}
+		})
 	}
 	avatars := a.avatarURLs(r.Context(), ids)
 	for i := range v.Items {
-		visit(&v.Items[i], func(p *PostView) { p.AvatarURL = avatars[p.AuthorID] })
+		visit(&v.Items[i], func(p *PostView) {
+			p.AvatarURL = avatars[p.AuthorID]
+			if p.ReplyPreview != nil {
+				p.ReplyPreview.AvatarURL = avatars[p.ReplyPreview.AuthorID]
+			}
+		})
 	}
-	respond(w, 200, v)
 }
 func (a *App) targets(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.store.DB.Query("SELECT DISTINCT target FROM target_posts ORDER BY target")

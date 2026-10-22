@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const state = {csrf:'', view:'home', settings:null, monitors:[], overview:null, offset:0, cursor:'', total:0, editing:null, deleting:null, postRequest:0, authenticated:false, users:[], target:'', timelineTab:'posts', postsLoading:false, postsError:false, hasMore:false, postIDs:new Set(), navRequest:0};
+const state = {csrf:'', view:'home', settings:null, monitors:[], overview:null, offset:0, cursor:'', total:0, editing:null, postRequest:0, authenticated:false, users:[], target:'', timelineTab:'posts', postsLoading:false, postsError:false, hasMore:false, postIDs:new Set(), navRequest:0};
 let toastTimer, searchTimer;
 function toast(message, error=false) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').classList.toggle('error',error); $('toast').hidden=false; toastTimer=setTimeout(()=>$('toast').hidden=true,error?7000:4000); }
 function date(value, short=false) { if(!value)return '尚未执行';const d=new Date(typeof value==='number'?value*1000:value);if(Number.isNaN(d.getTime()))return String(value);return d.toLocaleString('zh-CN',short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
@@ -34,8 +34,10 @@ function showLogin() {
 async function enter() {
   state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);
   state.authenticated=true;$('password').value='';$('login-error').textContent='';$('login-view').hidden=true;$('app').hidden=false;
-  // Directory/feed rendering must not wait for global historical statistics.
-  void refreshOverview().catch(err=>{if(state.authenticated)toast(err.message,true);});await navigate();
+  // SQLite uses one connection: render the initial page before starting global
+  // historical statistics, even though their HTTP request is asynchronous.
+  await navigate();
+  if(state.authenticated)void refreshOverview().catch(err=>{if(state.authenticated)toast(err.message,true);});
 }
 $('login-form').addEventListener('submit',async event=>{
   event.preventDefault();const button=event.submitter;button.disabled=true;$('login-error').textContent='';
@@ -79,11 +81,20 @@ async function navigate() {
   if(typeof clearAPISecret==='function'&&next!=='settings')clearAPISecret();
   if(['accounts','archive','monitors'].includes(next)){next='archive';if(location.hash!=='#accounts')history.replaceState(null,'','#accounts');}
   const match=/^user\/([A-Za-z0-9_]{1,15})$/.exec(next);
+  const postMatch=/^post\/(\d{1,64})$/.exec(next);state.focusPost=postMatch?postMatch[1]:'';
   state.view=match?'user':titles[next]&&next!=='user'?next:'home';
   accountRestoring=state.view==='archive';
   for(const name of Object.keys(titles))$('view-'+name).hidden=name!==state.view;
   for(const a of document.querySelectorAll('[data-view]')){const active=a.dataset.view===(state.view==='user'?'archive':state.view);a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}window.scrollTo({top:0,behavior:'instant'});
   $('breadcrumb-title').textContent=titles[state.view];document.title=`${titles[state.view]} · XM`;
+  $('post-detail-back').hidden=!state.focusPost;
+  $('home-feed-title').textContent=state.focusPost?'推文详情':'主时间线';
+  $('home-feed-title').setAttribute('aria-label',state.focusPost?'推文详情，返回顶部':'主时间线，返回顶部');
+  document.querySelector('#home-feed .timeline-tabs').hidden=!!state.focusPost;
+  document.querySelector('#view-home .profile-aside').hidden=!!state.focusPost;
+  document.querySelector('#timeline-panel .timeline-filters').hidden=!!state.focusPost;
+  if(state.focusPost){$('breadcrumb-title').textContent='推文详情';document.title='推文详情 · XM';}
+
   if(state.view==='archive'){
     void refreshMonitors().catch(()=>{});
     try{await refreshUsers();}
@@ -173,8 +184,9 @@ function syncTabs(){
  const home=state.view==='home';
  for(const name of home?homeTimelineTabs:timelineTabs){const selected=state.timelineTab===name;const tab=$(timelineTabID(name,home));tab.classList.toggle('selected',selected);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;}
  $('timeline-panel').setAttribute('role','tabpanel');$('timeline-panel').removeAttribute('aria-label');
- $('timeline-panel').setAttribute('aria-labelledby',timelineTabID(state.timelineTab,home));
- $('home-timeline-description').textContent=state.timelineTab==='bookmarks'?'全部收藏 · 按收藏时间倒序':'已开启首页显示的账号 · 按发布时间倒序';
+ $('timeline-panel').setAttribute('aria-labelledby',state.focusPost?'home-feed-title':timelineTabID(state.timelineTab,home));
+ if(state.focusPost)$('timeline-panel').setAttribute('role','region');
+ $('home-timeline-description').textContent=state.focusPost?'已归档推文 · 点击引用可继续查看':state.timelineTab==='bookmarks'?'全部收藏 · 按收藏时间倒序':'已开启首页显示的账号 · 按发布时间倒序';
  $('timeline-order').hidden=state.timelineTab!=='bookmarks';
  $('search').placeholder=state.timelineTab==='bookmarks'?'搜索收藏及引用内容':'搜索推文及引用内容';
  $('kind-filter').querySelector('option[value="text"]').disabled=state.timelineTab==='media';
@@ -223,16 +235,18 @@ async function toggleBookmark(button){
   buttons().forEach(el=>{el.classList.toggle('bookmarked',result.bookmarked);el.setAttribute('aria-pressed',String(result.bookmarked));el.setAttribute('aria-label',result.bookmarked?'取消收藏':'收藏推文');el.title=result.bookmarked?'取消收藏':'收藏推文';});
   if(state.timelineTab==='bookmarks'&&!result.bookmarked){
    const card=$('posts').querySelector(`article[data-post-id="${id}"]`);
-   if(card){card.remove();state.postIDs.delete(id);state.total=Math.max(0,state.total-1);state.offset=Math.max(0,state.offset-1);$('result-count').textContent=number(state.total);updateTimelineEmpty();updateTimelineLoader();if(!state.postIDs.size&&state.hasMore)loadMorePosts();}
+   if(card){card.remove();state.postIDs.delete(id);if(state.total>=0)state.total=Math.max(0,state.total-1);state.offset=Math.max(0,state.offset-1);updateTimelineEmpty();updateTimelineLoader();if(!state.postIDs.size&&state.hasMore)loadMorePosts();}
   }
   toast(result.bookmarked?'已收藏':'已取消收藏');
  }catch(err){if(session===bookmarkSession)toast(err.message,true);}
  finally{if(session===bookmarkSession){bookmarkPending.delete(id);buttons().forEach(el=>{el.disabled=false;});}}
 }
 function replyHTML(p){
- if(!p.self_reply)return '';
+ if(!p.reply_to)return '';
  const q=p.reply_preview,source=`https://x.com/i/status/${encodeURIComponent(p.reply_to)}`;
- return `<section class="reply-preview" aria-label="回复的推文"><div class="reply-preview-label">回复的推文</div>${q?`<div class="reply-preview-author"><strong>${escape(q.name||q.username)}</strong><span>@${escape(q.username)} · ${escape(date(q.created_at))}</span></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p>`:'<p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p>'}<div class="reply-preview-actions"><button type="button" class="text-button" data-reply-context="${escape(p.id)}">查看上下文</button><a href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
+ const username=q?.username||(p.self_reply?p.username:'?'),name=escape(q?.name||username);
+ const author=p.self_reply&&p.archive_target?`<a href="${userURL(p.archive_target)}">${name}</a>`:name;
+ return `<section class="post-body reply-preview${q?'':' reply-preview-missing'}" aria-label="回复的推文"><div class="reply-thread-rail">${avatar(username,'post-avatar',q?.avatar_url||(p.self_reply?p.avatar_url||userAvatar(p.username):''))}</div><div class="post-content"><div class="reply-preview-label">${q?'原帖摘要':'回复的推文'}</div>${q?`<div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer">@${escape(username)}</a><span class="timeline-date"> · ${escape(date(q.created_at))}</span></span></div></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p>`:'<p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p>'}<a class="reply-parent-source" href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
 }
 function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
@@ -240,12 +254,12 @@ function quoteHTML(p,depth=0){
  const q=p.quote;
  const source=`https://x.com/i/status/${encodeURIComponent(q.id)}`;
  const text=displayPostText(q);
- return `<div class="quote-card"><div class="quote-content"><div class="quote-heading"><div class="quote-author">${avatar(q.username,'tiny-quote',q.avatar_url||userAvatar(q.username))}<strong>${escape(q.name||q.username)}</strong><a class="quote-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(q.username)} 的这条引用推文">@${escape(q.username)}</a><span>· ${escape(date(q.created_at))}</span></div>${bookmarkButton(q)}</div><div class="post-text quote-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div></div>`;
+ return `<div class="quote-card" data-quote-post="${escape(q.id)}" role="link" tabindex="0" aria-label="查看 @${escape(q.username)} 的引用推文"><div class="quote-content"><div class="quote-heading"><div class="quote-author">${avatar(q.username,'tiny-quote',q.avatar_url||userAvatar(q.username))}<strong>${escape(q.name||q.username)}</strong><a class="quote-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(q.username)} 的这条引用推文">@${escape(q.username)}</a><span>· ${escape(date(q.created_at))}</span></div></div><div class="post-text quote-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(q)}${quoteHTML(q,depth+1)}</div></div>`;
 }
 function postHTML(p){
  const source=`https://x.com/i/status/${encodeURIComponent(p.id)}`,text=displayPostText(p);
  const name=escape(p.name||p.username),author=p.archive_target?`<a href="${userURL(p.archive_target)}" aria-label="查看 @${escape(p.username)} 的归档">${name}</a>`:name;
- return `<article class="post" data-post-id="${escape(p.id)}"><div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div><div class="post-main">${p.self_reply?'<div class="self-reply-label">↳ 回复自己的推文</div>':''}<div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}${replyHTML(p)}</div></div></div></article>`;
+ return `<article class="post${p.reply_to?' reply-thread':''}" data-post-id="${escape(p.id)}">${replyHTML(p)}<div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div><div class="post-main"><div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}${p.reply_to||p.has_replies?`<div class="reply-preview-actions"><button type="button" class="text-button" data-reply-context="${escape(p.id)}">${p.reply_to?'查看上下文与回复':'查看已归档回复'} <span aria-hidden="true">→</span></button></div>`:''}</div></div></div></article>`;
 }
 let timelinePrefetchTarget=null;
 const timelineObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{
@@ -265,8 +279,9 @@ function observeTimelineEnd(){
 }
 function updateTimelineLoader(){
  const count=state.postIDs.size;
+ $('result-count').textContent=state.total>=0?number(state.total):count?`已加载 ${number(count)}`:'…';
  $('posts').setAttribute('aria-busy',String(state.postsLoading));
- $('load-status').textContent=state.postsLoading?(count?'正在加载更多…':'正在加载动态…'):state.postsError?'加载失败，已显示的内容已保留。':count?`已显示 ${number(count)} 条，共 ${number(state.total)} 条${state.hasMore?'':' · 已全部加载'}`:'暂无归档内容';
+ $('load-status').textContent=state.postsLoading?(count?'正在加载更多…':'正在加载动态…'):state.postsError?'加载失败，已显示的内容已保留。':count?`已显示 ${number(count)} 条${state.total>=0?`，共 ${number(state.total)} 条`:''}${state.hasMore?'':' · 已全部加载'}`:'暂无归档内容';
  $('load-more').hidden=state.postsLoading||(!state.hasMore&&!state.postsError);
  $('load-more').textContent=state.postsError?'重试加载':'加载更多';
  observeTimelineEnd();
@@ -275,13 +290,13 @@ function updateTimelineEmpty(){
  $('post-empty').hidden=state.postIDs.size>0;
  const filtered=$('search').value||$('kind-filter').value||state.timelineTab==='media',bookmarks=state.timelineTab==='bookmarks';
  $('post-empty').querySelector('h3').textContent=filtered?'没有找到匹配的动态':bookmarks?'还没有收藏的推文':state.timelineTab==='replies'?'还没有保存的回复':'还没有保存的推文';
- $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击该账号归档中推文或引用右上角的书签，即可在这里查看。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
+ $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击推文右上角的书签即可收藏；引用推文可先点击打开详情再收藏。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
 }
 async function refreshPosts(){
  if(typeof closeReplyContext==='function')closeReplyContext();
  releaseTimelineMedia();
  clearTimeout(searchTimer);timelineObserver?.disconnect();state.postRequest++;
- state.offset=0;state.cursor='';state.total=0;state.postIDs.clear();state.postsLoading=false;state.postsError=false;state.hasMore=true;
+ state.offset=0;state.cursor='';state.total=-1;state.postIDs.clear();state.postsLoading=false;state.postsError=false;state.hasMore=true;
  $('posts').replaceChildren();$('post-empty').hidden=true;$('result-count').textContent='…';
  await loadMorePosts();
 }
@@ -301,16 +316,17 @@ async function fetchMorePosts(flight){
  if(!state.authenticated||!['user','home'].includes(state.view)||state.postsLoading||!state.hasMore)return;
  const id=state.postRequest,revision=bookmarkRevision;
  state.postsLoading=true;state.postsError=false;timelineObserver?.disconnect();updateTimelineLoader();
- const q=new URLSearchParams({q:$('search').value,target:state.target,kind:$('kind-filter').value,section:state.timelineTab,offset:String(state.offset)});
- if(state.cursor){q.set('before',state.cursor);q.set('count','0');q.delete('offset');}
+ const q=new URLSearchParams({q:$('search').value,target:state.target,kind:$('kind-filter').value,section:state.timelineTab,offset:String(state.offset),count:'0'});
+ if(state.cursor){q.set('before',state.cursor);q.delete('offset');}
  try{
-  const r=await api('/posts?'+q);if(flight.background&&!flight.consumers.some(active=>active()))return;if(id!==state.postRequest||!state.authenticated||!['user','home'].includes(state.view))return;
+  const r=await api(state.focusPost?'/posts/'+encodeURIComponent(state.focusPost):'/posts?'+q);if(flight.background&&!flight.consumers.some(active=>active()))return;if(id!==state.postRequest||!state.authenticated||!['user','home'].includes(state.view))return;
   if(state.timelineTab==='bookmarks'&&revision!==bookmarkRevision){await refreshPosts();return;}
   reconcileBookmarks(r.items,revision);
-  if(r.total>=0)state.total=r.total;$('result-count').textContent=number(state.total);
+  if(r.total>=0)state.total=r.total;
   const fresh=r.items.filter(p=>{if(state.postIDs.has(p.id))return false;state.postIDs.add(p.id);return true;});
   $('posts').insertAdjacentHTML('beforeend',fresh.map(postHTML).join(''));
   state.offset+=r.items.length;state.cursor=r.next_cursor||'';state.hasMore=r.items.length>0&&(r.has_more??state.offset<r.total);
+  if(!state.hasMore&&state.total<0)state.total=state.postIDs.size;
   updateTimelineEmpty();
  }catch(err){
   if(id!==state.postRequest||!state.authenticated||!['user','home'].includes(state.view))return;
@@ -336,6 +352,22 @@ async function nextTimelineMedia(current,selector,isCurrent){
  }
  return null;
 }
+function locateQuotedPost(id){
+ if(!/^\d{1,64}$/.test(id))return;
+ const post=[...$('posts').children].find(el=>el.dataset.postId===id);
+ if(post){post.tabIndex=-1;post.focus({preventScroll:true});post.scrollIntoView({block:'center',behavior:'instant'});post.classList.add('post-located');setTimeout(()=>post.classList.remove('post-located'),2400);return;}
+ location.hash='post/'+encodeURIComponent(id);
+}
+$('post-detail-back').addEventListener('click',()=>{if(history.length>1)history.back();else location.hash='home';});
+$('posts').addEventListener('click',event=>{
+ if(event.target.closest('a,button,input,select,video,audio,[role="slider"],.video-slot')||window.getSelection()?.isCollapsed===false)return;
+ const quote=event.target.closest('[data-quote-post]');if(quote)locateQuotedPost(quote.dataset.quotePost);
+});
+$('posts').addEventListener('keydown',event=>{
+ const quote=event.target.closest('[data-quote-post]');
+ if(!quote||event.target!==quote||!['Enter',' '].includes(event.key))return;
+ event.preventDefault();locateQuotedPost(quote.dataset.quotePost);
+});
 $('load-more').addEventListener('click',()=>loadMorePosts());
 $('posts').addEventListener('click',event=>{
   const bookmark=event.target.closest('[data-bookmark-id]');if(bookmark){event.preventDefault();toggleBookmark(bookmark);return;}
@@ -349,7 +381,7 @@ $('search').addEventListener('input',()=>{clearTimeout(searchTimer);state.postRe
 $('kind-filter').addEventListener('change',()=>refreshPosts());
 $('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),()=>Promise.all([refreshUsers('',true),refreshMonitors(),refreshOverview(true)])));
 $('refresh-user').addEventListener('click',()=>action($('refresh-user'),async()=>{const request=state.navRequest;await Promise.all([refreshUsers(state.target,true),refreshOverview(true)]);if(request===state.navRequest){renderProfile();await refreshPosts();}}));
-$('refresh-home').addEventListener('click',()=>action($('refresh-home'),async()=>{const request=state.navRequest;await refreshOverview();if(request===state.navRequest)await refreshPosts();}));
+$('refresh-home').addEventListener('click',()=>action($('refresh-home'),async()=>{const request=state.navRequest;await refreshPosts();if(request===state.navRequest)await refreshOverview();}));
 for(const header of document.querySelectorAll('[data-timeline-top]')){
  header.addEventListener('click',event=>{
   if(event.target.closest('a,button:not(.timeline-top-button)'))return;
@@ -388,8 +420,8 @@ function collectionActions(m){
   if(m.queued_job)return `<button class="text-button" data-monitor="${m.username}" data-op="cancel-queue">取消本次排队</button>`;
   if(m.requested)return '<span class="muted">正在加入队列</span>';
   if(m.baseline_status==='not_started'||m.baseline_status==='backfilling'||!m.baseline_status)return `<button class="text-button" data-monitor="${m.username}" data-op="backfill">继续补采历史</button>`;
-  const rescan=`<button class="text-button" data-monitor="${m.username}" data-op="rescan">重新扫描历史</button>`;
-  return `<button class="text-button" data-monitor="${m.username}" data-op="run">检查新动态</button>${rescan}`;
+  const rescan=`<button class="text-button" data-monitor="${m.username}" data-op="rescan">重新扫描</button>`;
+  return `<button class="text-button" data-monitor="${m.username}" data-op="run">动态更新</button>${rescan}`;
 }
 let monitorRequest=0,monitorListReady=false;
 async function refreshMonitors() {
@@ -471,21 +503,17 @@ function updateScrollSpacingHelp(){
 $('scroll-delay').addEventListener('input',updateScrollSpacingHelp);$('scroll-jitter').addEventListener('input',updateScrollSpacingHelp);
 async function openMonitor(m=null,readd=false) {
   if(!state.settings)state.settings=await api('/settings');state.editing=m&&!readd?m.username:null;state.readding=readd?m.username:null;
-  $('monitor-dialog-title').textContent=readd?'重新添加监控':m?'编辑监控账号':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
+  $('monitor-dialog-title').textContent=readd?'重新添加监控':m?'配置编辑':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
+  document.querySelector('#monitor-form button[type=submit]').textContent=m&&!readd?'保存配置':'保存账号';
   $('monitor-replies').checked=!!m?.replies;$('monitor-enabled').checked=m&&!readd?m.enabled:true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
 }
 document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>action(b,()=>openMonitor())));
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
 $('monitor-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const payload={username:state.readding||$('monitor-username').value.trim(),replies:$('monitor-replies').checked,enabled:$('monitor-enabled').checked,show_in_timeline:$('monitor-timeline').checked};
-  await api(state.editing?'/monitors/'+encodeURIComponent(state.editing):'/monitors',state.editing?'PUT':'POST',payload);$('monitor-dialog').close();toast('监控账号已保存');await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
+  await api(state.editing?'/monitors/'+encodeURIComponent(state.editing):'/monitors',state.editing?'PUT':'POST',payload);$('monitor-dialog').close();toast(state.editing?'账号配置已保存':'账号已保存');await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
 });});
 $('user-list').addEventListener('click',event=>handleAccountAction(event));
-$('confirm-delete').addEventListener('click',()=>action($('confirm-delete'),async()=>{
- const target=state.deleting;accountPending.add(target);
- try{await api('/monitors/'+encodeURIComponent(target),'DELETE');$('confirm-dialog').close();toast('监控已取消，归档和首页显示偏好保留');await refreshAccountsAfterChange();}
- finally{accountPending.delete(target);renderUsers();}
-}));
 let globalCollectionPending=false;
 function renderGlobalCollection(paused){
  if(globalCollectionPending)return;
@@ -589,12 +617,12 @@ const runLabels={running:['采集中','running'],bounded_complete:['已完成','
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};
 const sourceLabels={api:'外部 API',manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
-const modeLabels={incremental:'增量采集',backfill:'历史补采',rescan:'重新扫描'};
+const modeLabels={incremental:'动态更新',backfill:'历史补采',rescan:'重新扫描'};
 const phaseLabels={preparing:'准备任务',timeline:'读取时间线',avatar:'保存头像',media:'下载与归档媒体',finishing:'保存执行结果'};
 function durationLabel(seconds){const n=Math.max(0,Math.floor(Number(seconds)||0));return n>=3600?`${Math.floor(n/3600)} 小时 ${Math.floor(n%3600/60)} 分钟`:n>=60?`${Math.floor(n/60)} 分 ${n%60} 秒`:`${n} 秒`;}
 function jobHTML(job,current=false){
  const [label,cls]=jobLabels[job.status]||[job.status,'neutral'];
- const mode=modeLabels[job.mode]||job.mode||'增量采集';
+ const mode=modeLabels[job.mode]||job.mode||'动态更新';
  const detail=current?`${mode} · 已读取 ${number(job.posts_read)} 条 · 新增 ${number(job.new_posts)} 条 · 第 ${number(job.attempts)} 次执行`:`${mode} · ${sourceLabels[job.source]||job.source} · ${job.message||'等待前序任务完成'}`;
  const progress=current?`<p class="job-phase">${escape(phaseLabels[job.phase]||'等待进度更新')}${job.remaining_seconds!=null?' · 已运行 '+escape(durationLabel(job.elapsed_seconds))+' · '+(job.remaining_seconds>0?'时限剩余 '+escape(durationLabel(job.remaining_seconds)):'时限已到，正在收尾'):''}</p>${job.media_total!=null?`<p>此账号媒体已归档 ${number(job.media_done)} / ${number(job.media_total)} 个（含引用媒体）</p>`:''}`:'';
  const controls=current?`<button class="text-button delete" type="button" data-stop-target="${escape(job.target)}">停止并暂停监控</button>`:`<button class="text-button delete" type="button" data-cancel-job="${Number(job.id)}">取消本次排队</button>`;
@@ -603,7 +631,7 @@ function jobHTML(job,current=false){
 async function refreshRuns() {
   const payload=await api('/activity'),legacy=Array.isArray(payload),runs=legacy?payload:payload.runs;
   if(!legacy){const current=payload.current,queue=payload.queue||[];$('current-job-count').textContent=current?'1':'0';$('queue-count').textContent=number(queue.length);$('current-job').innerHTML=current?jobHTML(current,true):'<div class="activity-empty">当前没有正在执行的任务</div>';$('job-queue').innerHTML=queue.length?queue.map(j=>jobHTML(j)).join(''):'<div class="activity-empty">等待队列为空</div>';const wait=$('queue-wait');wait.hidden=!payload.wait_reason;wait.textContent=payload.wait_reason+(payload.wait_until?' · 预计 '+date(payload.wait_until,true)+' 后继续':'');}
-  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'增量采集'}`;return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${['incomplete','media_failed','failed','interrupted'].includes(r.status)?'<p><a href="#accounts">查看计划或继续采集 →</a></p>':''}</div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
+  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'动态更新'}`;return `<article class="run-row"><div class="run-main"><strong>@${escape(r.target)}</strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${['incomplete','media_failed','failed','interrupted'].includes(r.status)?'<p><a href="#accounts">查看计划或继续采集 →</a></p>':''}</div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
 $('current-job').addEventListener('click',event=>{const button=event.target.closest('[data-stop-target]');if(!button)return;action(button,async()=>{await api('/monitors/'+encodeURIComponent(button.dataset.stopTarget)+'/stop','POST');toast('已请求停止并暂停此账号；已保存内容保留');await refreshRuns();await refreshOverview();});});
