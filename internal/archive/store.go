@@ -40,7 +40,11 @@ func OpenStoreFile(dir, filename string) (*Store, error) {
 	if err = os.Chmod(path, 0600); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn, err := sqliteDSN(path, false)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +98,12 @@ CREATE TABLE IF NOT EXISTS runs (
 		db.Close()
 		return nil, err
 	}
-	return &Store{DB: d}, nil
+	s := &Store{DB: d}
+	if err = s.openSQLiteReaders(path); err != nil {
+		d.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 func now() string             { return time.Now().UTC().Format(time.RFC3339Nano) }

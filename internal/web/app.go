@@ -64,6 +64,9 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if err != nil {
 		return nil, err
 	}
+	if err = s.SetSQLiteReadConnections(cfg.SQLiteReadConnections); err != nil {
+		return nil, err
+	}
 	if err = upgradeRateLimitState(s.DB, cfg.DefaultInterval, cfg.RateLimitMode, time.Now().Unix()); err != nil {
 		return nil, err
 	}
@@ -124,6 +127,8 @@ func (a *App) saveConfig(cfg archive.Config, updates ...func(*database.Tx) error
 	// Publish only after settings and all related state have committed.
 	a.configMu.Lock()
 	a.config = cfg
+	// SaveSettings validated and committed this value before publishing it.
+	_ = a.store.SetSQLiteReadConnections(cfg.SQLiteReadConnections)
 	a.configMu.Unlock()
 	return nil
 }
@@ -480,10 +485,12 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
+	SQLiteReadConnections *int `json:"sqlite_read_connections"`
+
 	ChromeHeadless      *bool   `json:"chrome_headless"`
 	Proxy               *string `json:"proxy"`
 	DefaultInterval     *int    `json:"default_interval_seconds"`
@@ -603,6 +610,13 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.ArchiveTheme = *v.ArchiveTheme
+	}
+	if v.SQLiteReadConnections != nil {
+		if *v.SQLiteReadConnections < 1 || *v.SQLiteReadConnections > archive.MaxSQLiteReadConnections {
+			problem(w, 400, "SQLite 读取并发数必须为 1～16")
+			return
+		}
+		cfg.SQLiteReadConnections = *v.SQLiteReadConnections
 	}
 	if v.TimelinePageSize != nil {
 		if *v.TimelinePageSize < 10 || *v.TimelinePageSize > 1000 {

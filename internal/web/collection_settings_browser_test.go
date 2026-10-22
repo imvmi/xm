@@ -57,6 +57,24 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='X 登录' && $('settings-tab-display').textContent==='界面显示' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「归档存储」中的服务器缓存相互独立')`) {
 		t.Fatal("navigation and settings organization are inconsistent")
 	}
+	// Reader limits have their own form and apply without a restart.
+	if a.store.DB.Dialect == "sqlite" {
+		eval(`(()=>{$('settings-tab-storage').click();return true})()`)
+		if !eval(`!$('sqlite-performance-panel').hidden && $('sqlite-read-connections').value==='4'`) {
+			t.Fatal("SQLite concurrency control missing")
+		}
+		eval(`(()=>{$('sqlite-read-connections').value='6';$('sqlite-read-connections').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sqlite-performance-form button[type=submit]').click();return true})()`)
+		wait(`state.settings.sqlite_read_connections===6 && !settingsFormDirty('sqlite-performance-form') && $('sqlite-performance-result').textContent.includes('无需重启')`)
+		if a.store.DB.Reader.Stats().MaxOpenConnections != 6 {
+			t.Fatal("UI did not resize reader pool")
+		}
+		if !eval(`(()=>{$('sqlite-read-connections').value='17';return !$('sqlite-performance-form').checkValidity()})()`) {
+			t.Fatal("invalid pool limit accepted by form")
+		}
+		eval(`(()=>{$('sqlite-read-connections').value='6';return true})()`)
+	} else if !eval(`$('sqlite-performance-panel').hidden`) {
+		t.Fatal("SQLite control displayed for MySQL")
+	}
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();return true})()`)
 	// Chrome mode saves independently, preserves drafts, and rolls back on failure.
 	wait(`!$('chrome-mode').disabled`)

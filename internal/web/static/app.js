@@ -22,7 +22,7 @@ function showLogin() {
   releaseTimelineMedia();
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
-  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();updateSettingsDraftNotice();
+  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
   state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
@@ -485,6 +485,16 @@ $('archive-display-form').addEventListener('submit',event=>{event.preventDefault
   state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);populateArchiveDisplaySettings(state.settings);
   acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='界面显示设置已保存。';toast('界面显示设置已保存');
 });});
+function populateSQLiteSettings(s){
+ $('sqlite-performance-panel').hidden=s.database_driver!=='sqlite';
+ hydrateSettingsForm('sqlite-performance-form',()=>{$('sqlite-read-connections').value=s.sqlite_read_connections??4;});
+}
+$('sqlite-performance-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+ const submitted=settingsSnapshot('sqlite-performance-form');
+ await api('/settings','PUT',{sqlite_read_connections:Number($('sqlite-read-connections').value)});
+ state.settings=await api('/settings');acceptSettingsForm('sqlite-performance-form',submitted);populateSQLiteSettings(state.settings);
+ $('sqlite-performance-result').textContent='读取设置已保存并生效，无需重启。';toast('读取设置已保存');
+});});
 function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
 function populateCollectionSettings(s){
  renderGlobalCollection(s.polling_paused);
@@ -566,6 +576,7 @@ for(const button of document.querySelectorAll('[data-settings-tab]')){
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
+  populateSQLiteSettings(s);
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
