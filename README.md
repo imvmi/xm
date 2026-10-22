@@ -420,6 +420,14 @@ XM_BROWSER_TEST=1 go test -race ./...
 
 MySQL 集成测试可通过 `XM_TEST_MYSQL_ADDR=127.0.0.1:33079 go test ./internal/web` 启用，测试账号通过 `XM_TEST_MYSQL_USER` / `XM_TEST_MYSQL_PASSWORD` 提供（默认 root / 空密码）。**仅用于隔离的本机测试实例**：测试需要创建和删除随机 `xm_test_…` 数据库，不接受远程地址。覆盖管理、引用搜索、通知去重、调度、SQLite 迁移/回滚及数据库互斥锁。默认未设置时仍使用 SQLite。
 
+头像双向迁移回归测试使用同一隔离 MySQL 实例，经过设置页面使用的迁移接口，完整执行 SQLite3 → MySQL → SQLite3、启动配置切换和重启恢复。覆盖采集入库和旧头像 JSON 导入两种来源，逐字校验原始 URL（含查询参数、转义字符）、大整数用户 ID，以及缓存命中、清理后重新下载、图片内容和匿名访问限制。图片来源使用本机 HTTPS 合成服务，实际调用生产下载逻辑，不依赖 X 网络；设置 `XM_BROWSER_TEST=1` 还会用 Chrome 验证迁移后账号列表中的头像已解码显示。
+
+```bash
+XM_TEST_MYSQL_ADDR=127.0.0.1:33079 XM_BROWSER_TEST=1 go test ./internal/web -run '^TestAvatarMySQLRoundTrip$' -count=1 -v
+```
+
+该测试在未配置 MySQL 时明确跳过，不能把普通测试通过视作双向实测。开发机需安装 Chrome 才能运行浏览器验证；测试代码和测试服务无需随 EXE 部署。
+
 远程存储通过本地模拟服务测试，实际 WebDAV / S3 服务需在初始化向导中验证连接。MySQL 8.4 本机测试不代表已连接你的实际数据库实例；远程网络、账号权限与 TLS 证书需部署时验证。
 
 本地自动测试不等于真实 X 登录与锁推访问验收。后者必须用你自己的有效 Cookie 和真实目标执行上面的两次少量采集，核对正文、图片和视频。
