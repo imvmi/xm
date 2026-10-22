@@ -104,7 +104,7 @@ func migrateSettings(db *database.DB) error {
 	if _, err = db.Exec("UPDATE system_settings SET default_interval_seconds=3600 WHERE default_interval_seconds<3600"); err != nil {
 		return err
 	}
-	_, err = db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 19, now())
+	_, err = db.Exec(database.Upsert(db.Dialect, "INSERT INTO schema_meta(id,version,updated_at) VALUES(1,?,?)", []string{"id"}, []string{"version", "updated_at"}), 20, now())
 	return err
 }
 
@@ -211,9 +211,13 @@ func ensureRunJobColumn(db *database.DB) error {
 	return err
 }
 func ensureArchiveIndexes(db *database.DB) error {
+	if err := ensureReplyMetadata(db); err != nil {
+		return err
+	}
 	for _, idx := range []struct{ name, table, columns string }{
 		{"posts_author", "posts", "author_id"},
 		{"posts_quote", "posts", "quote_id"},
+		{"posts_reply", "posts", "reply_to"},
 		{"api_idempotency_expiry", "api_idempotency", "expires_at"},
 		{"api_idempotency_credential", "api_idempotency", "credential_id"},
 		{"api_audit_created", "api_audit", "created_at,id"},

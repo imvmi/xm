@@ -120,7 +120,7 @@ func TestLargeTimelineUsesOrderedIndexes(t *testing.T) {
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<30000)
- INSERT INTO posts SELECT CAST(100000+x AS TEXT),'42','alice','fixture','2026-10-19T00:00:00Z','','','','','{}','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z' FROM n`)
+ INSERT INTO posts(id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json,first_seen,last_seen) SELECT CAST(100000+x AS TEXT),'42','alice','fixture','2026-10-19T00:00:00Z','','','','','{}','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z' FROM n`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +131,8 @@ func TestLargeTimelineUsesOrderedIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ query, index string }{
-		{"SELECT p.id FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,1)=1) ORDER BY length(p.id) DESC,p.id DESC LIMIT 25", "posts_timeline"},
-		{"SELECT p.id FROM target_posts t JOIN posts p ON p.id=t.post_id WHERE t.target='alice' ORDER BY length(t.post_id) DESC,t.post_id DESC LIMIT 25", "target_posts_timeline"},
+		{"SELECT p.id FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,1)=1) AND " + ordinaryOrSelfReplySQL + " ORDER BY length(p.id) DESC,p.id DESC LIMIT 25", "posts_timeline"},
+		{"SELECT p.id FROM target_posts t JOIN posts p ON p.id=t.post_id WHERE t.target='alice' AND " + ordinaryOrSelfReplySQL + " ORDER BY length(t.post_id) DESC,t.post_id DESC LIMIT 25", "target_posts_timeline"},
 	} {
 		rows, err := a.store.DB.Query("EXPLAIN QUERY PLAN " + tc.query)
 		if err != nil {

@@ -69,6 +69,7 @@ function userAvatar(username){
 }
 function userURL(username) { return '#user/'+encodeURIComponent(username); }
 async function navigate() {
+  if(typeof closeReplyContext==='function')closeReplyContext();
   if(!state.authenticated)return;
   releaseTimelineMedia();
   const request=++state.navRequest;state.postRequest++;state.hasMore=false;state.postsLoading=false;clearTimeout(searchTimer);timelineObserver?.disconnect();
@@ -228,6 +229,11 @@ async function toggleBookmark(button){
  }catch(err){if(session===bookmarkSession)toast(err.message,true);}
  finally{if(session===bookmarkSession){bookmarkPending.delete(id);buttons().forEach(el=>{el.disabled=false;});}}
 }
+function replyHTML(p){
+ if(!p.self_reply)return '';
+ const q=p.reply_preview,source=`https://x.com/i/status/${encodeURIComponent(p.reply_to)}`;
+ return `<section class="reply-preview" aria-label="回复的推文"><div class="reply-preview-label">回复的推文</div>${q?`<div class="reply-preview-author"><strong>${escape(q.name||q.username)}</strong><span>@${escape(q.username)} · ${escape(date(q.created_at))}</span></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p>`:'<p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p>'}<div class="reply-preview-actions"><button type="button" class="text-button" data-reply-context="${escape(p.id)}">查看上下文</button><a href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
+}
 function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
  if(!p.quote||depth>=4)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
@@ -239,7 +245,7 @@ function quoteHTML(p,depth=0){
 function postHTML(p){
  const source=`https://x.com/i/status/${encodeURIComponent(p.id)}`,text=displayPostText(p);
  const name=escape(p.name||p.username),author=p.archive_target?`<a href="${userURL(p.archive_target)}" aria-label="查看 @${escape(p.username)} 的归档">${name}</a>`:name;
- return `<article class="post" data-post-id="${escape(p.id)}"><div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div><div class="post-main"><div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}</div></div></div></article>`;
+ return `<article class="post" data-post-id="${escape(p.id)}"><div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div><div class="post-main">${p.self_reply?'<div class="self-reply-label">↳ 回复自己的推文</div>':''}<div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}${replyHTML(p)}</div></div></div></article>`;
 }
 let timelinePrefetchTarget=null;
 const timelineObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{
@@ -272,6 +278,7 @@ function updateTimelineEmpty(){
  $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击该账号归档中推文或引用右上角的书签，即可在这里查看。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
 }
 async function refreshPosts(){
+ if(typeof closeReplyContext==='function')closeReplyContext();
  releaseTimelineMedia();
  clearTimeout(searchTimer);timelineObserver?.disconnect();state.postRequest++;
  state.offset=0;state.cursor='';state.total=0;state.postIDs.clear();state.postsLoading=false;state.postsError=false;state.hasMore=true;
@@ -498,6 +505,25 @@ $('global-auto-collection').addEventListener('click',()=>action($('global-auto-c
  }finally{globalCollectionPending=false;renderGlobalCollection(state.overview?.paused??state.settings?.polling_paused??!paused);}
 }));
 
+let chromeModePending=false,chromeDiagnosticPending=false;
+function renderChromeMode(){
+ const button=$('chrome-mode');
+ button.disabled=!state.settings||chromeModePending||chromeDiagnosticPending;
+ button.setAttribute('aria-checked',String(state.settings?.chrome_headless!==false));
+ $('chrome-mode-state').textContent=chromeModePending?'保存中…':state.settings?.chrome_headless===false?'有界面':'Headless';
+ $('test-chrome').disabled=chromeModePending||chromeDiagnosticPending;
+}
+$('chrome-mode').addEventListener('click',()=>action($('chrome-mode'),async()=>{
+ const headless=state.settings?.chrome_headless===false;
+ chromeModePending=true;renderChromeMode();
+ try{
+  await api('/settings','PUT',{chrome_headless:headless});
+  if(state.settings)state.settings.chrome_headless=headless;
+  $('chrome-result').textContent='';
+  toast(headless?'已开启 Headless，下次诊断和采集生效':'已切换为有界面模式，下次诊断和采集将显示 Chrome 窗口');
+ }finally{chromeModePending=false;renderChromeMode();}
+}));
+
 function selectSettingsTab(name,focus=false){
  for(const button of document.querySelectorAll('[data-settings-tab]')){
   const selected=button.dataset.settingsTab===name;
@@ -516,7 +542,7 @@ async function refreshSettings() {
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
   $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
-  hydrateSettingsForm('settings-form',()=>{$('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;});$('chrome-mode').textContent=s.chrome_headless?'Headless':'有界面模式';populateCollectionSettings(s);
+  hydrateSettingsForm('settings-form',()=>{$('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;});renderChromeMode();populateCollectionSettings(s);
   if(!settingsBaselines.has('cookie-form'))acceptSettingsForm('cookie-form');
   await refreshCookieSource();
   await refreshStorage();
@@ -558,7 +584,7 @@ $('cookie-form').addEventListener('submit',event=>{event.preventDefault();action
 function proxyChange() { if($('proxy-mode').value==='direct')return {proxy:''};const p=$('proxy-url').value.trim();if(p)return {proxy:p};if(!state.settings?.proxy_configured)throw new Error('请输入代理地址');return {}; }
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const submitted=settingsSnapshot('settings-form');await api('/settings','PUT',proxyChange());acceptSettingsForm('settings-form',submitted);toast('代理设置已保存，下一个采集任务生效');await refreshSettings();});});
 $('test-proxy').addEventListener('click',()=>action($('test-proxy'),async()=>{$('proxy-result').textContent='正在连接 X…';try{const r=await api('/proxy-test','POST',proxyChange());$('proxy-result').textContent=`收到 HTTP ${r.status} · ${r.latency_ms} ms。${r.message}`;}catch(err){$('proxy-result').textContent=err.message;throw err;}}));
-$('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{$('chrome-result').classList.remove('error');$('chrome-result').textContent='正在检查 Chrome、Cookie、X 网络和登录状态…';try{const r=await api('/chrome-test','POST');const mark={passed:'✓',failed:'✕',skipped:'○'};$('chrome-result').textContent=r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;$('chrome-result').classList.toggle('error',!r.ok);}catch(err){$('chrome-result').textContent=err.message;$('chrome-result').classList.add('error');throw err;}}));
+$('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{chromeDiagnosticPending=true;renderChromeMode();$('chrome-result').classList.remove('error');$('chrome-result').textContent='正在检查 Chrome、Cookie、X 网络和登录状态…';try{const r=await api('/chrome-test','POST');const mark={passed:'✓',failed:'✕',skipped:'○'};$('chrome-result').textContent=r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;$('chrome-result').classList.toggle('error',!r.ok);}catch(err){$('chrome-result').textContent=err.message;$('chrome-result').classList.add('error');throw err;}finally{chromeDiagnosticPending=false;renderChromeMode();}}));
 const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['本轮未完成','warn'],budget_wait:['历史等待','neutral'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};

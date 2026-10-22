@@ -159,7 +159,7 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		return err
 	}
 	defer tx.Rollback()
-	type storedPost struct{ authorID, username, text, createdAt, postURL, replyTo, quoteID, repostID, raw string }
+	type storedPost struct{ authorID, username, text, createdAt, postURL, replyTo, quoteID, repostID, raw, replyAuthor string }
 	existing := map[string]storedPost{}
 	ids := []string{}
 	indexed := map[string]bool{}
@@ -183,14 +183,14 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		for i, id := range ids[start:end] {
 			args[i] = id
 		}
-		rows, queryErr := tx.Query(`SELECT id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json FROM posts WHERE id IN (`+strings.TrimRight(strings.Repeat("?,", len(args)), ",")+`)`, args...)
+		rows, queryErr := tx.Query(`SELECT id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json,COALESCE(reply_to_author_id,'') FROM posts WHERE id IN (`+strings.TrimRight(strings.Repeat("?,", len(args)), ",")+`)`, args...)
 		if queryErr != nil {
 			return queryErr
 		}
 		for rows.Next() {
 			var id string
 			var old storedPost
-			if queryErr = rows.Scan(&id, &old.authorID, &old.username, &old.text, &old.createdAt, &old.postURL, &old.replyTo, &old.quoteID, &old.repostID, &old.raw); queryErr != nil {
+			if queryErr = rows.Scan(&id, &old.authorID, &old.username, &old.text, &old.createdAt, &old.postURL, &old.replyTo, &old.quoteID, &old.repostID, &old.raw, &old.replyAuthor); queryErr != nil {
 				break
 			}
 			existing[id] = old
@@ -216,13 +216,22 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		t := now()
 		raw := string(p.Raw)
 		old, exists := existing[p.ID]
-		unchanged := exists && old.authorID == p.AuthorID && old.username == p.Username && old.text == p.Text && old.createdAt == p.CreatedAt && old.postURL == p.URL && old.replyTo == p.ReplyTo && old.quoteID == p.QuoteID && old.repostID == p.RepostID && old.raw == raw
+		if p.ReplyTo != "" && p.ReplyToAuthorID == "" {
+			p.ReplyToAuthorID = ReplyAuthorID(p.Raw)
+		}
+		if p.ReplyTo != "" && p.ReplyToAuthorID == "" && old.replyTo == p.ReplyTo {
+			p.ReplyToAuthorID = old.replyAuthor
+		}
+		if p.ReplyTo == "" {
+			p.ReplyToAuthorID = ""
+		}
+		unchanged := exists && old.authorID == p.AuthorID && old.username == p.Username && old.text == p.Text && old.createdAt == p.CreatedAt && old.postURL == p.URL && old.replyTo == p.ReplyTo && old.quoteID == p.QuoteID && old.repostID == p.RepostID && old.raw == raw && old.replyAuthor == p.ReplyToAuthorID
 		if unchanged {
 			// Preserve last_seen semantics without rewriting the large raw payload or
 			// touching already indexed media rows.
 			_, err = tx.Exec("UPDATE posts SET last_seen=? WHERE id=?", t, p.ID)
 		} else {
-			_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"author_id", "username", "text", "created_at", "url", "reply_to", "quote_id", "repost_id", "raw_json", "last_seen"}), p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, raw, t, t)
+			_, err = tx.Exec(database.Upsert(s.DB.Dialect, `INSERT INTO posts(id,author_id,username,text,created_at,url,reply_to,quote_id,repost_id,raw_json,first_seen,last_seen,reply_to_author_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, []string{"id"}, []string{"author_id", "username", "text", "created_at", "url", "reply_to", "quote_id", "repost_id", "raw_json", "last_seen", "reply_to_author_id"}), p.ID, p.AuthorID, p.Username, p.Text, p.CreatedAt, p.URL, p.ReplyTo, p.QuoteID, p.RepostID, raw, t, t, p.ReplyToAuthorID)
 		}
 		if err != nil {
 			return err

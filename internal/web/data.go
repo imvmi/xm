@@ -181,24 +181,27 @@ type MediaView struct {
 	Version string `json:"version,omitempty"`
 }
 type PostView struct {
-	AuthorID         string      `json:"-"`
-	ArchiveTarget    string      `json:"archive_target,omitempty"`
-	AvatarURL        string      `json:"avatar_url,omitempty"`
-	ID               string      `json:"id"`
-	Username         string      `json:"username"`
-	Name             string      `json:"name"`
-	Text             string      `json:"text"`
-	CreatedAt        string      `json:"created_at"`
-	SavedAt          string      `json:"saved_at"`
-	Bookmarked       bool        `json:"bookmarked"`
-	BookmarkedAt     int64       `json:"bookmarked_at"`
-	Protected        bool        `json:"protected"`
-	ReplyTo          string      `json:"reply_to"`
-	RepostID         string      `json:"repost_id"`
-	QuoteID          string      `json:"quote_id"`
-	Quote            *PostView   `json:"quote,omitempty"`
-	QuoteUnavailable bool        `json:"quote_unavailable"`
-	Media            []MediaView `json:"media"`
+	AuthorID         string        `json:"-"`
+	ArchiveTarget    string        `json:"archive_target,omitempty"`
+	AvatarURL        string        `json:"avatar_url,omitempty"`
+	ID               string        `json:"id"`
+	Username         string        `json:"username"`
+	Name             string        `json:"name"`
+	Text             string        `json:"text"`
+	CreatedAt        string        `json:"created_at"`
+	SavedAt          string        `json:"saved_at"`
+	Bookmarked       bool          `json:"bookmarked"`
+	BookmarkedAt     int64         `json:"bookmarked_at"`
+	Protected        bool          `json:"protected"`
+	SelfReply        bool          `json:"self_reply"`
+	ReplyToAuthorID  string        `json:"reply_to_author_id,omitempty"`
+	ReplyPreview     *ReplySummary `json:"reply_preview,omitempty"`
+	ReplyTo          string        `json:"reply_to"`
+	RepostID         string        `json:"repost_id"`
+	QuoteID          string        `json:"quote_id"`
+	Quote            *PostView     `json:"quote,omitempty"`
+	QuoteUnavailable bool          `json:"quote_unavailable"`
+	Media            []MediaView   `json:"media"`
 }
 type PostList struct {
 	Items      []PostView `json:"items"`
@@ -209,13 +212,18 @@ type PostList struct {
 	HasMore    bool       `json:"has_more"`
 }
 
-const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)`
+const replyAuthorSQL = "COALESCE(NULLIF(p.reply_to_author_id,''),(SELECT parent.author_id FROM posts parent WHERE parent.id=p.reply_to),'')"
+const selfReplySQL = "(p.reply_to<>'' AND p.author_id<>'' AND p.author_id=" + replyAuthorSQL + ")"
+const ordinaryOrSelfReplySQL = "(p.reply_to='' OR " + selfReplySQL + ")"
+
+const postColumns = `p.id,p.username,p.text,p.created_at,p.first_seen,p.reply_to,p.repost_id,p.quote_id,COALESCE((SELECT protected FROM profiles u WHERE u.id=p.author_id),0),p.raw_json,p.author_id,COALESCE((SELECT MIN(target) FROM target_posts WHERE post_id=p.id),''),COALESCE((SELECT created_at FROM post_bookmarks WHERE post_id=p.id),0)` + `,` + replyAuthorSQL
 
 func scanPost(row scanner) (PostView, error) {
 	var p PostView
 	var raw string
-	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw, &p.AuthorID, &p.ArchiveTarget, &p.BookmarkedAt)
+	err := row.Scan(&p.ID, &p.Username, &p.Text, &p.CreatedAt, &p.SavedAt, &p.ReplyTo, &p.RepostID, &p.QuoteID, &p.Protected, &raw, &p.AuthorID, &p.ArchiveTarget, &p.BookmarkedAt, &p.ReplyToAuthorID)
 	p.Bookmarked = p.BookmarkedAt > 0
+	p.SelfReply = p.ReplyTo != "" && p.AuthorID != "" && p.AuthorID == p.ReplyToAuthorID
 	p.Name, _ = archive.AuthorDetails([]byte(raw))
 	if p.Name == "" {
 		p.Name = p.Username
@@ -245,9 +253,9 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 		where = " WHERE t.target=?"
 		args = append(args, target)
 	} else {
-		// Replies belong to account reply tabs, not the main timeline. Embedded
-		// quotes and the separate bookmarks feed keep their existing behavior.
-		where += " AND p.reply_to=''"
+		// Self-replies continue the author's own posts; other replies remain
+		// in the account replies tab. Quotes and bookmarks keep their behavior.
+		where += " AND " + ordinaryOrSelfReplySQL
 	}
 	// Only filtered requests need quote traversal. Seed it from the selected
 	// archive instead of expanding every post (including unrelated quotes).
@@ -270,7 +278,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 	media := `EXISTS (SELECT 1 FROM related r JOIN media a ON a.post_id=r.id WHERE r.root=p.id`
 	switch section {
 	case "posts":
-		where += " AND p.reply_to=''"
+		where += " AND " + ordinaryOrSelfReplySQL
 	case "replies":
 		where += " AND p.reply_to<>''"
 	case "media":

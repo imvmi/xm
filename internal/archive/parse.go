@@ -18,18 +18,19 @@ type Asset struct {
 }
 
 type Post struct {
-	ID        string          `json:"id"`
-	AuthorID  string          `json:"author_id"`
-	Username  string          `json:"username"`
-	Text      string          `json:"text"`
-	CreatedAt string          `json:"created_at"`
-	URL       string          `json:"url"`
-	ReplyTo   string          `json:"reply_to,omitempty"`
-	QuoteID   string          `json:"quote_id,omitempty"`
-	RepostID  string          `json:"repost_id,omitempty"`
-	Assets    []Asset         `json:"assets"`
-	Quote     *Post           `json:"quote,omitempty"`
-	Raw       json.RawMessage `json:"raw"`
+	ID              string          `json:"id"`
+	AuthorID        string          `json:"author_id"`
+	Username        string          `json:"username"`
+	Text            string          `json:"text"`
+	CreatedAt       string          `json:"created_at"`
+	URL             string          `json:"url"`
+	ReplyToAuthorID string          `json:"reply_to_author_id,omitempty"`
+	ReplyTo         string          `json:"reply_to,omitempty"`
+	QuoteID         string          `json:"quote_id,omitempty"`
+	RepostID        string          `json:"repost_id,omitempty"`
+	Assets          []Asset         `json:"assets"`
+	Quote           *Post           `json:"quote,omitempty"`
+	Raw             json.RawMessage `json:"raw"`
 }
 
 type Profile struct {
@@ -211,6 +212,7 @@ func parsePostDepth(v any, depth int) (Post, error) {
 	p.CreatedAt = str(at(legacy, "created_at"))
 	p.Text = html.UnescapeString(first(str(at(v, "note_tweet", "note_tweet_results", "result", "text")), str(at(legacy, "full_text"))))
 	p.ReplyTo = str(at(legacy, "in_reply_to_status_id_str"))
+	p.ReplyToAuthorID = str(at(legacy, "in_reply_to_user_id_str"))
 	p.QuoteID = str(at(legacy, "quoted_status_id_str"))
 	p.URL = "https://x.com/i/status/" + p.ID
 	mediaLegacy := legacy

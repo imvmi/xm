@@ -276,6 +276,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
 	mux.HandleFunc("GET /api/posts", a.posts)
+	mux.HandleFunc("GET /api/posts/{post}/context", a.replyContext)
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users/stats", a.userStats)
 	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
@@ -482,6 +483,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsInput struct {
+	ChromeHeadless      *bool   `json:"chrome_headless"`
 	Proxy               *string `json:"proxy"`
 	DefaultInterval     *int    `json:"default_interval_seconds"`
 	QueueInterval       *int    `json:"queue_interval_seconds"`
@@ -514,6 +516,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	cfg := a.Config()
+	if v.ChromeHeadless != nil {
+		cfg.Headless = *v.ChromeHeadless
+	}
 	if v.Proxy != nil {
 		if len(*v.Proxy) > 2048 {
 			problem(w, 400, "代理地址过长")

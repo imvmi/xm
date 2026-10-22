@@ -3,10 +3,13 @@ package archive
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
+	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -93,11 +96,57 @@ func CheckChrome(parent context.Context, cfg Config, cookies *Cookies) (ChromeIn
 	})); err != nil {
 		return info, chromeCheckError("cookie", "Chrome 无法导入 Cookie；请重新导入 Cookie 后再试")
 	}
-	if err = chromedp.Do(ctx, chromedp.Navigate("https://x.com/home")); err != nil {
-		return info, chromeCheckError("network", "Chrome 无法打开 X："+err.Error()+"。请检查网络、代理配置、DNS 和 TLS 环境")
+	if err = navigateChromeDocument(ctx, "https://x.com/home"); err != nil {
+		reason := err.Error()
+		if errors.Is(err, context.DeadlineExceeded) {
+			reason = "等待主页面超时"
+		}
+		return info, chromeCheckError("network", "Chrome 未能载入 X 主页面："+reason+"。HTTP 连通性测试仅访问 robots.txt；请检查代理对 x.com 及页面资源的连接情况")
 	}
 	if err = confirmSession(ctx); err != nil {
 		return info, chromeCheckError("session", err.Error())
 	}
 	return info, nil
+}
+
+// A diagnostic needs the main document and login UI, not the window load event.
+// Slow images must not turn a usable logged-in page into a network failure.
+func navigateChromeDocument(ctx context.Context, targetURL string) error {
+	expected, err := url.Parse(targetURL)
+	if err != nil {
+		return err
+	}
+	if err = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
+		result, err := cdp.Call(c, target, page.Navigate, page.NavigateParams{URL: targetURL})
+		if err != nil {
+			return err
+		}
+		if result.ErrorText != "" {
+			return errors.New(result.ErrorText)
+		}
+		return nil
+	})); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		state, evalErr := chromedp.Run(ctx, chromedp.Evaluate[struct {
+			URL   string `json:"url"`
+			Ready string `json:"ready"`
+		}](`({url:location.href,ready:document.readyState})`))
+		if evalErr == nil {
+			actual, parseErr := url.Parse(state.URL)
+			if parseErr == nil && actual.Scheme == expected.Scheme && actual.Host == expected.Host && (state.Ready == "interactive" || state.Ready == "complete") {
+				return nil
+			}
+		}
+		// Redirects can temporarily destroy the execution context; retry until the
+		// destination document is usable. Never accept about:blank or an error page.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }

@@ -92,7 +92,7 @@ func attachPosts(db *database.DB, items []PostView) error {
 	for i := range items {
 		items[i] = attach(items[i].ID, 0, map[string]bool{})
 	}
-	return nil
+	return attachReplyPreviews(db, items)
 }
 
 func postBatchArgs(ids []string) ([]any, string) {

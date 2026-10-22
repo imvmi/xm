@@ -54,10 +54,26 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.settings!==null && !document.getElementById('view-settings').hidden && document.getElementById('scroll-delay').value==='3'`)
-	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='X 登录' && $('settings-tab-display').textContent==='界面显示' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===3 && $('settings-display').textContent.includes('与「归档存储」中的服务器缓存相互独立')`) {
+	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='X 登录' && $('settings-tab-display').textContent==='界面显示' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「归档存储」中的服务器缓存相互独立')`) {
 		t.Fatal("navigation and settings organization are inconsistent")
 	}
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();return true})()`)
+	// Chrome mode saves independently, preserves drafts, and rolls back on failure.
+	wait(`!$('chrome-mode').disabled`)
+	if !eval(`$('chrome-mode').getAttribute('role')==='switch' && $('chrome-mode').getAttribute('aria-checked')==='true'`) {
+		t.Fatal("Chrome must default to headless")
+	}
+	eval(`(()=>{$('proxy-url').value='http://127.0.0.1:1234';$('proxy-url').dispatchEvent(new Event('input',{bubbles:true}));$('chrome-mode').click();return true})()`)
+	wait(`!chromeModePending && $('chrome-mode').getAttribute('aria-checked')==='false'`)
+	if a.Config().Headless || a.Config().Proxy != "" || !eval(`$('proxy-url').value==='http://127.0.0.1:1234' && settingsFormDirty('settings-form')`) {
+		t.Fatal("Chrome toggle lost or submitted proxy draft")
+	}
+	eval(`(()=>{window.chromeSavedAPI=api;api=async(path,method,...args)=>{if(path==='/settings'&&method==='PUT')throw new Error('模式保存失败');return window.chromeSavedAPI(path,method,...args)};$('chrome-mode').click();return true})()`)
+	wait(`!chromeModePending && !$('chrome-mode').disabled && $('toast').textContent==='模式保存失败'`)
+	if !eval(`$('chrome-mode').getAttribute('aria-checked')==='false' && !$('test-chrome').disabled`) {
+		t.Fatal("failed save changed Chrome mode or blocked diagnostics")
+	}
+	eval(`(()=>{api=window.chromeSavedAPI;$('proxy-url').value='';$('proxy-url').dispatchEvent(new Event('input',{bubbles:true}));return true})()`)
 	// The global switch saves immediately without submitting collection drafts.
 	wait(`!$('global-auto-collection').disabled && state.overview!==null`)
 	if !eval(`$('settings-collection').contains($('global-auto-collection')) && !$('collection-settings-form').contains($('global-auto-collection')) && $('global-auto-collection').getAttribute('role')==='switch' && $('global-auto-collection').getAttribute('aria-checked')===String(!state.settings.polling_paused)`) {
@@ -99,6 +115,9 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(`typeof state!=='undefined' && state.authenticated && !document.getElementById('request-interval') && !document.getElementById('max-posts-per-run') && document.getElementById('scroll-delay').value==='6' && document.getElementById('scroll-jitter').value==='2' && document.getElementById('scroll-spacing-help').textContent.includes('4～8 秒') && document.getElementById('default-interval').value==='2' && document.getElementById('queue-interval').value==='45' && document.getElementById('timeline-idle-seconds').value==='40' && !document.getElementById('collection-timeout') && document.getElementById('browser-max-age').value==='12' && !document.getElementById('request-budget-mode') && document.getElementById('browser-max-tasks').value==='250' && document.getElementById('media-retry-max').value==='48'`)
+	if !eval(`$('chrome-mode').getAttribute('aria-checked')==='false' && $('chrome-mode-state').textContent==='有界面'`) {
+		t.Fatal("Chrome mode did not survive page reload")
+	}
 	// A draft survives leaving settings and saving another form.
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();document.getElementById('browser-max-age').value='8';document.getElementById('browser-max-age').dispatchEvent(new Event('input',{bubbles:true}));location.hash='monitors';return true})()`)
 	wait(`state.view==='archive' && location.hash==='#accounts'`)
@@ -141,6 +160,17 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 				name = "settings-mobile.png"
 			}
 			if err = os.WriteFile(filepath.Join(dir, name), image, 0600); err != nil {
+				t.Fatal(err)
+			}
+			eval(`(()=>{$('chrome-mode').scrollIntoView({behavior:'instant',block:'center'});return true})()`)
+			if !eval(`(()=>{const r=$('chrome-mode').getBoundingClientRect();return r.width>0 && r.left>=0 && r.right<=innerWidth})()`) {
+				t.Fatal("Chrome mode switch outside viewport", width)
+			}
+			image, err = chromedp.Run(browser, chromedp.CaptureScreenshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(dir, "chrome-"+name), image, 0600); err != nil {
 				t.Fatal(err)
 			}
 		}

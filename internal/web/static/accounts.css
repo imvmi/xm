@@ -83,3 +83,5 @@ html[data-theme=dark] :is(.account-error,.account-action-list button.delete) { c
  .global-collection-control { flex-wrap:wrap;gap:6px; }
  .account-list-summary>span:last-child { display:none; }
 }
+
+#chrome-mode { flex-shrink:0;margin-left:auto;white-space:nowrap; }
