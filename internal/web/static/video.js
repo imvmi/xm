@@ -55,7 +55,7 @@ function syncVideoControls(video){
  loading.hidden=!navigating&&(!loaded||paused||video.readyState>=3);
  const expanded=shell===expandedVideoShell,full=shell.querySelector('[data-video-action="fullscreen"]');
  full.innerHTML=videoIcon(expanded?'collapse':'expand');full.setAttribute('aria-label',expanded?'返回时间线内嵌视频':'全屏显示');
- video.setAttribute('aria-label',expanded?'上滑观看下一条视频，下滑返回时间线':'点击全屏显示视频');video.setAttribute('aria-expanded',String(expanded));
+ video.setAttribute('aria-label',expanded?`${paused?'点击继续播放':'点击暂停'}；上滑观看下一条，右滑或下滑返回时间线`:'点击全屏显示视频');video.setAttribute('aria-expanded',String(expanded));
 }
 function collapseExpandedVideo(restoreFocus=true,keepPrefetch=null){
  clearVideoPrefetch(keepPrefetch);videoPrefetchOwner=null;
@@ -119,6 +119,15 @@ function playTimelineVideo(video,automatic=false){
  });
  syncVideoControls(video);
 }
+function toggleTimelinePlayback(video){
+ if(video.paused||video.ended){timelineVideoBlocked.delete(video);if(video.ended)video.currentTime=0;playTimelineVideo(video);}
+ else{timelineVideoBlocked.add(video);video.pause();}
+ syncVideoControls(video);
+}
+function activateTimelineVideo(video){
+ if(video.closest('.video-shell')===expandedVideoShell)toggleTimelinePlayback(video);
+ else expandTimelineVideo(video);
+}
 function startTimelineVideo(button,automatic=false){
  const video=button.closest('.video-shell')?.querySelector('video');if(!video||(video.getAttribute('src')&&!video.dataset.prefetch))return;
  claimVideoPrefetch(video);video.preload='auto';
@@ -135,13 +144,13 @@ $('posts').addEventListener('click',event=>{
  if(button){
   event.preventDefault();
   switch(button.dataset.videoAction){
-   case 'play':if(video.paused||video.ended){timelineVideoBlocked.delete(video);if(video.ended)video.currentTime=0;playTimelineVideo(video);}else{timelineVideoBlocked.add(video);video.pause();}break;
+   case 'play':toggleTimelinePlayback(video);break;
    case 'mute':video.muted=!(video.muted||video.volume===0);if(!video.muted&&video.volume===0)video.volume=1;break;
    case 'fullscreen':toggleVideoFullscreen(video);break;
   }
   syncVideoControls(video);return;
  }
- if(event.target===video&&!videoSuppressClick)expandTimelineVideo(video);
+ if(event.target===video&&!videoSuppressClick)activateTimelineVideo(video);
 });
 function resetVideoDrag(){
  const drag=videoDrag;videoDrag=null;
@@ -179,30 +188,31 @@ $('posts').addEventListener('pointerdown',event=>{
  const tapTarget=event.target.closest('video,[data-video-action],[data-video-src]');
  if(shell&&tapTarget&&event.pointerType==='touch')videoTap={target:tapTarget,x:event.clientX,y:event.clientY};
  if(!shell||shell!==expandedVideoShell||event.button!==0||event.target.closest('.video-controls')||(window.visualViewport?.scale||1)>1.01)return;
- videoDrag={shell,id:event.pointerId,x:event.clientX,y:event.clientY,dy:0,axis:null,start:performance.now()};
- shell.setPointerCapture(event.pointerId);
+ // Capture only after movement so a stationary mouse click still targets the video.
+ videoDrag={shell,id:event.pointerId,x:event.clientX,y:event.clientY,dx:0,dy:0,axis:null,start:performance.now()};
 });
 $('posts').addEventListener('pointermove',event=>{
  if(videoTap&&Math.max(Math.abs(event.clientX-videoTap.x),Math.abs(event.clientY-videoTap.y))>8)videoTap=null;
  const drag=videoDrag;if(!drag||drag.id!==event.pointerId)return;
  const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
- if(!drag.axis){if(Math.max(Math.abs(dx),Math.abs(dy))<8)return;drag.axis=Math.abs(dy)>Math.abs(dx)?'vertical':'horizontal';}
- drag.dy=dy;videoSuppressClick=true;
- if(drag.axis==='vertical')drag.shell.querySelector('video').style.transform=`translate3d(0,${dy}px,0)`;
+ if(!drag.axis){if(Math.max(Math.abs(dx),Math.abs(dy))<8)return;drag.axis=Math.abs(dy)>Math.abs(dx)?'vertical':'horizontal';drag.shell.setPointerCapture(event.pointerId);}
+ drag.dx=dx;drag.dy=dy;videoSuppressClick=true;
+ drag.shell.querySelector('video').style.transform=drag.axis==='vertical'?`translate3d(0,${dy}px,0)`:`translate3d(${Math.max(0,dx)}px,0,0)`;
 });
 $('posts').addEventListener('pointerup',event=>{
  const drag=videoDrag;if(!drag||drag.id!==event.pointerId)return;
  resetVideoDrag();
- if(drag.axis!=='vertical')return;
- const distance=Math.abs(drag.dy),threshold=Math.min(160,Math.max(80,drag.shell.clientHeight*.18));
+ const right=drag.axis==='horizontal'&&drag.dx>0;
+ if(drag.axis!=='vertical'&&!right)return;
+ const distance=right?drag.dx:Math.abs(drag.dy),size=right?drag.shell.clientWidth:drag.shell.clientHeight,threshold=Math.min(160,Math.max(80,size*.18));
  if(distance>threshold||(distance>48&&performance.now()-drag.start<220)){
   // Complete touchend before changing the touched element's fullscreen layout.
   const request=videoFullscreenRequest;
-  setTimeout(()=>{if(expandedVideoShell===drag.shell&&videoFullscreenRequest===request){if(drag.dy>0)collapseExpandedVideo();else void nextExpandedVideo();}},0);
+  setTimeout(()=>{if(expandedVideoShell===drag.shell&&videoFullscreenRequest===request){if(right||drag.dy>0)collapseExpandedVideo();else void nextExpandedVideo();}},0);
  }
 });
 $('posts').addEventListener('pointercancel',()=>{videoTap=null;resetVideoDrag();});
-$('posts').addEventListener('lostpointercapture',()=>{if(videoDrag)resetVideoDrag();});
+$('posts').addEventListener('lostpointercapture',event=>{if(videoDrag?.shell===event.target)resetVideoDrag();});
 // Handle stationary touches explicitly: browsers can suppress their synthetic
 // click after a swipe. Prevent that click so play/mute buttons only fire once.
 $('posts').addEventListener('touchend',event=>{
@@ -231,7 +241,7 @@ for(const name of ['play','playing','pause','ended','timeupdate','loadedmetadata
 }
 $('posts').addEventListener('error',event=>{if(event.target.dataset.prefetch){clearVideoPrefetch(null,true);return;}if(event.target.matches('video[src]'))resetTimelineVideo(event.target,true);},true);
 $('posts').addEventListener('keydown',event=>{
- if(event.target.matches('video')&&(event.key==='Enter'||event.key===' ')){event.preventDefault();expandTimelineVideo(event.target);}
+ if(event.target.matches('video')&&(event.key==='Enter'||event.key===' ')){event.preventDefault();if(!event.repeat)activateTimelineVideo(event.target);}
 });
 document.addEventListener('fullscreenchange',()=>{
  if(!expandedVideoShell)return;

@@ -101,9 +101,12 @@ test('native fullscreen exit restores inline without resetting the video',()=>{
  assert.equal(f.video.src,f.button.dataset.videoSrc);assert.equal(f.video.paused,false);
 });
 
-test('single click keeps an expanded video open',()=>{
+test('fullscreen clicks pause and resume without leaving the player',()=>{
  const f=fixture();f.ctx.startTimelineVideo(f.button);
  f.postEvents.click({target:f.video});
+ assert.equal(f.video.paused,true);
+ f.postEvents.click({target:f.video});
+ assert.equal(f.video.paused,false);
  assert.equal(f.shell.classList.contains('video-expanded'),true);
  assert.equal(f.document.body.style.overflow,'hidden');
 });

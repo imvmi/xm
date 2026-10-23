@@ -50,23 +50,31 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 		}
 	}
 	touchClicks := false
-	swipe := func(down bool) {
+	swipe := func(direction string) {
 		t.Helper()
-		y := 220.0
-		if !down {
+		x, y := 0.0, 220.0
+		switch direction {
+		case "up":
 			y = -220
+		case "right":
+			x, y = 180, 0
+		case "left":
+			x, y = -140, 0
+		case "short":
+			x, y = 24, 0
 		}
 		if touchClicks {
 			for _, kind := range []input.DispatchTouchEventType{input.DispatchTouchEventTypeTouchStart, input.DispatchTouchEventTypeTouchMove, input.DispatchTouchEventTypeTouchEnd} {
 				if err := chromedp.Do(browser, chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
 					points := []*input.TouchPoint{}
 					if kind != input.DispatchTouchEventTypeTouchEnd {
-						posY := 400.0
+						posX, posY := 180.0, 400.0
 						if kind == input.DispatchTouchEventTypeTouchMove {
+							posX += x
 							posY += y
 						}
 						touchID, radius, force := 0.0, 1.0, 1.0
-						points = append(points, &input.TouchPoint{X: 180, Y: posY, ID: &touchID, RadiusX: &radius, RadiusY: &radius, Force: &force})
+						points = append(points, &input.TouchPoint{X: posX, Y: posY, ID: &touchID, RadiusX: &radius, RadiusY: &radius, Force: &force})
 					}
 					_, err := cdp.Call(ctx, target, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: kind, TouchPoints: points})
 					return err
@@ -76,7 +84,7 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 			}
 			return
 		}
-		if err := chromedp.Do(browser, chromedp.MouseEvent(chromedp.MousePressed, 180, 400, chromedp.ButtonLeft), chromedp.MouseEvent(chromedp.MouseMoved, 180, 400+y, chromedp.ButtonLeft), chromedp.MouseEvent(chromedp.MouseReleased, 180, 400+y, chromedp.ButtonLeft)); err != nil {
+		if err := chromedp.Do(browser, chromedp.MouseEvent(chromedp.MousePressed, 180, 400, chromedp.ButtonLeft), chromedp.MouseEvent(chromedp.MouseMoved, 180+x, 400+y, chromedp.ButtonLeft), chromedp.MouseEvent(chromedp.MouseReleased, 180+x, 400+y, chromedp.ButtonLeft)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -157,10 +165,11 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 	wait(`!v.seeking && Math.abs(v.currentTime/v.duration-.3)<.03`)
 	eval(`(()=>{window.savedTime=v.currentTime;return true})()`)
 	click("video")
-	if !eval(`!!expandedVideoShell && !!document.fullscreenElement`) {
-		t.Fatal("single click dismissed video")
-	}
-	swipe(true)
+	wait(`!v.paused && !!expandedVideoShell && !!document.fullscreenElement`)
+	click("video")
+	wait(`v.paused && !!expandedVideoShell && !!document.fullscreenElement`)
+	eval(`(()=>{window.savedTime=v.currentTime;return true})()`)
+	swipe("right")
 	wait(`!document.fullscreenElement && !expandedVideoShell`)
 	if !eval(`v===document.querySelector('video') && v.src===window.originalSource && v.paused && Math.abs(v.currentTime-window.savedTime)<.03 && document.body.style.overflow===''`) {
 		t.Fatal("fullscreen exit reset the video or left scrolling locked")
@@ -210,10 +219,21 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 				click(`[data-video-action="mute"]`)
 			}
 			click("video")
-			if !eval(`!!expandedVideoShell`) {
-				t.Fatal("fallback single click dismissed video")
+			wait(`!v.paused && !!expandedVideoShell`)
+			click("video")
+			wait(`v.paused && !!expandedVideoShell`)
+			eval(`(()=>{window.savedTime=v.currentTime;return true})()`)
+			// Left swipes and short drags do not exit or trigger a stray tap.
+			swipe("left")
+			swipe("short")
+			if !eval(`v.paused && !!expandedVideoShell && v.style.transform===''`) {
+				t.Fatal("non-exit gesture toggled playback or closed fullscreen")
 			}
-			swipe(true)
+			if theme == "dark" {
+				swipe("right")
+			} else {
+				swipe("down")
+			}
 			wait(`!expandedVideoShell`)
 			if !eval(`(()=>{const r=v.getBoundingClientRect();return Math.abs(r.width/r.height-16/9)<.05 && v.paused && v.currentTime===window.savedTime})()`) {
 				t.Fatal("inline video did not return to the reserved slot")
@@ -231,17 +251,17 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 	if !eval(`preparedVideo.hidden && preparedVideo.paused && preparedVideo.preload==='metadata'`) {
 		t.Fatal("speculative video became visible or played")
 	}
-	swipe(false)
+	swipe("up")
 	wait(`!!expandedVideoShell && expandedVideoShell!==v.closest('.video-shell') && state.postIDs.size===25`)
 	wait(`expandedVideoShell.querySelector('video').readyState>=2 && !expandedVideoShell.querySelector('video').paused`)
 	if !eval(`expandedVideoShell.querySelector('video')===preparedVideo && !preparedVideo.dataset.prefetch && !preparedVideo.hidden && v.paused && expandedVideoShell.closest('[data-post-id]').dataset.postId==='100' && document.body.style.overflow==='hidden'`) {
 		t.Fatal("next video did not preserve timeline order")
 	}
 	eval(`(()=>{window.lastShell=expandedVideoShell;return true})()`)
-	swipe(false)
+	swipe("up")
 	wait(`!videoSwipePending && !!expandedVideoShell && expandedVideoShell!==lastShell && expandedVideoShell.closest('[data-post-id]').dataset.postId==='90'`)
 	eval(`(()=>{window.lastShell=expandedVideoShell;return true})()`)
-	swipe(false)
+	swipe("up")
 	wait(`!videoSwipePending && expandedVideoShell===lastShell`)
 	eval(`(()=>{location.hash='archive';return true})()`)
 	wait(`state.view==='archive' && !expandedVideoShell && v.paused && !v.getAttribute('src') && document.body.style.overflow===''`)
