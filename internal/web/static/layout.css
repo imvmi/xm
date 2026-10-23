@@ -1132,3 +1132,9 @@ dialog form {
   .sidebar .logout { flex-direction:row; text-align:left; }
   .sidebar .private-note { display:flex; }
 }
+
+.task-profile-link:hover,
+.task-profile-link:focus-visible {
+  text-decoration:underline;
+  text-underline-offset:3px;
+}
