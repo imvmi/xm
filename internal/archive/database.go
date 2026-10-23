@@ -176,14 +176,15 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	connector, err := mysql.NewConnector(mc)
+	// Building indexes over a large existing archive can exceed a normal
+	// query's socket timeout. Use a separate bootstrap pool, then discard it
+	// so serving connections retain the configured read/write timeouts.
+	bootstrap := mc.Clone()
+	bootstrap.ReadTimeout = 0
+	raw, err := openMySQLPool(bootstrap)
 	if err != nil {
-		return nil, errors.New("MySQL / MariaDB 连接配置无效")
+		return nil, err
 	}
-	raw := sql.OpenDB(connector)
-	raw.SetMaxOpenConns(8)
-	raw.SetMaxIdleConns(4)
-	raw.SetConnMaxLifetime(3 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err = raw.PingContext(ctx); err != nil {
@@ -215,8 +216,28 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 		raw.Close()
 		return nil, mysqlError("初始化索引", err)
 	}
+	runtime, err := openMySQLPool(mc)
+	if err != nil {
+		raw.Close()
+		return nil, err
+	}
+	raw.Close()
+	d.DB = runtime
 	return &Store{DB: d}, nil
 }
+
+func openMySQLPool(cfg *mysql.Config) (*sql.DB, error) {
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.New("MySQL / MariaDB 连接配置无效")
+	}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(3 * time.Minute)
+	return db, nil
+}
+
 func mysqlError(action string, err error) error {
 	var me *mysql.MySQLError
 	if errors.As(err, &me) {

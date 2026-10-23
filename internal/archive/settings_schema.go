@@ -243,11 +243,24 @@ func ensureArchiveIndexes(db *database.DB) error {
 		{"media_status_bytes", "media", "status,bytes"},
 		{"media_post_status", "media", "post_id,status"},
 	} {
-		// MariaDB does not support MySQL's functional-index syntax. These two
-		// indexes only optimize ordering: queries still sort by length and ID.
-		// Keep the shared business columns unchanged for bidirectional copying.
 		if db.MariaDB && (idx.name == "posts_timeline" || idx.name == "target_posts_timeline") {
-			continue
+			column := "id"
+			idx.columns = "xm_id_length,id"
+			if idx.table == "target_posts" {
+				column = "post_id"
+				idx.columns = "target,xm_id_length,post_id"
+			}
+			// Invisible generated columns are omitted from SELECT * and implicit
+			// INSERTs, preserving the business schema used by bidirectional copies.
+			var exists int
+			if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name='xm_id_length'", idx.table).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				if _, err := db.Exec("ALTER TABLE " + idx.table + " ADD COLUMN xm_id_length SMALLINT UNSIGNED GENERATED ALWAYS AS (OCTET_LENGTH(" + column + ")) VIRTUAL INVISIBLE"); err != nil {
+					return err
+				}
+			}
 		}
 		var n int
 		var err error

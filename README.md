@@ -232,7 +232,7 @@ chmod 600 cookies.json
 
 ## 数据库：SQLite / MySQL / MariaDB
 
-默认使用 SQLite。MySQL 模式把正文、引用关系、媒体索引、监控计划、运行记录和通知队列保存到远程数据库；图片与视频仍使用配置的本地、WebDAV 或 S3 存储。支持标准 MySQL 协议，已使用 MySQL Community 8.4 和 MariaDB 10.11 验证。MariaDB 使用独立的 `database.driver: mariadb` 配置，连接参数、密码环境变量及 TLS 设置与 MySQL 一致。MariaDB 保留相同的排序规则，但不创建 MySQL 专用的两个时间线表达式索引，大归档的排序可能更慢。
+默认使用 SQLite。MySQL 模式把正文、引用关系、媒体索引、监控计划、运行记录和通知队列保存到远程数据库；图片与视频仍使用配置的本地、WebDAV 或 S3 存储。支持标准 MySQL 协议，已使用 MySQL Community 8.4 和 MariaDB 10.11 验证。MariaDB 使用独立的 `database.driver: mariadb` 配置，连接参数、密码环境变量及 TLS 设置与 MySQL 一致。MariaDB 使用不可见的 ID 长度计算列和组合索引，首页、账号时间线与游标翻页按索引顺序读取，保留不同长度和超大整数 ID 的正确顺序。已有数据库首次启动自动补齐索引；大库建索引需要时间和额外磁盘空间，完成后继续启动。计算列不参与业务数据复制，SQLite 双向迁移保持兼容。
 
 ### 配置 MySQL
 
@@ -437,6 +437,8 @@ SQLite 读写分离回归可运行 `go test -race ./internal/archive ./internal/
 SQLite 首屏性能回归默认使用隔离的 3 万条归档，核对排序索引以及跳过统计前后的内容与游标一致性。可用 `XM_TIMELINE_PERF_ROWS=300000 go test ./internal/web -run '^TestLargeTimelineUsesOrderedIndexes$' -count=1 -v` 测量 30 万条、每条附带 2 KiB JSON 的合成归档；只使用临时数据库，输出含统计/不含统计的首屏查询耗时，不访问现有归档。合成测试不代表实际机器上的完整页面加载时间。
 
 默认测试覆盖首次设置的来源校验、数据库和媒体连接测试、失败重试、重复提交、用户名登录与初始化后配置锁定，以及管理登录、CSRF、配置持久化、监控增删改、用户列表、引用解析/去重/循环保护、包含引用的搜索与媒体筛选、搜索分页、私有媒体与 Range、路径穿越防护、调度串行/退避/恢复/凭据替换，WebDAV/S3 模拟服务的读写与测试清理、凭据不回显、同版本 SQLite → MySQL 数据导入、初始化后拒绝存储目的地修改、凭据验证轮换与失败回滚、缓存容量与异常退出清理、调度状态读取故障恢复、远程视频 Range、上传失败重试，以及 Cookie 格式/数据库明文存储、长文本/转推/媒体解析、SQLite 去重与事务回滚、下载安全边界、带认证 HTTP 代理隧道与 SOCKS5 远端域名转发。浏览器集成测试启动真实 Chrome，在网络请求发出前拦截并返回**合成响应**，验证获准访问、拒绝访问、Cookie 失效和限流；不向 X 发送测试凭据。
+
+MariaDB 排序性能回归默认使用 3 万条隔离数据，通过 `ANALYZE FORMAT=JSON` 验证首屏、深游标及 ID 长度跨界不产生额外排序，并检查排序索引实际读取量。可运行 `XM_TEST_MYSQL_ADDR=127.0.0.1:33079 XM_TIMELINE_PERF_ROWS=300000 go test ./internal/web -run '^TestMariaDBLargeTimelineUsesOrderedIndexes$' -count=1 -v` 验证 30 万条、每条 2 KiB JSON 的归档；同时覆盖有数据的旧库升级、中断后补建索引、重复启动及超大 ID 分页。时间线默认使用游标并跳过精确总数；显式计数、深 OFFSET、稀疏筛选和全文子串搜索仍可能扫描较多记录，索引优化不保证这些操作具有固定耗时。
 
 MySQL / MariaDB 集成测试可通过 `XM_TEST_MYSQL_ADDR=127.0.0.1:33079 go test ./internal/web` 启用，测试账号通过 `XM_TEST_MYSQL_USER` / `XM_TEST_MYSQL_PASSWORD` 提供（默认 root / 空密码）。**仅用于隔离的本机测试实例**：测试需要创建和删除随机 `xm_test_…` 数据库，不接受远程地址。覆盖管理、引用搜索、通知去重、调度、SQLite 迁移/回滚及数据库互斥锁。MariaDB 专项可运行 `XM_TEST_MYSQL_ADDR=127.0.0.1:33079 go test ./internal/web -run 'TestSetupMariaDB|TestMigrationSQLiteToMariaDBCutover|TestMariaDBConstraintUpgrade' -count=1`，使用隔离 MariaDB 实例验证首次设置、迁移回滚、配置切换、重启登录和返回 SQLite。默认未设置时仍使用 SQLite。
 

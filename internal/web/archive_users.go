@@ -31,7 +31,7 @@ func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
  FROM users u LEFT JOIN target_identities i ON i.target=u.username
  LEFT JOIN monitors m ON m.username=u.username
  LEFT JOIN account_preferences a ON a.target=u.username
- LEFT JOIN posts p ON p.id=(SELECT t.post_id FROM target_posts t WHERE t.target=u.username ORDER BY length(t.post_id) DESC,t.post_id DESC LIMIT 1)
+ LEFT JOIN posts p ON p.id=(SELECT t.post_id FROM target_posts t WHERE t.target=u.username ORDER BY `+timelineIDLength(db, "t.post_id")+` DESC,t.post_id DESC LIMIT 1)
  LEFT JOIN profiles f ON f.id=p.author_id ORDER BY u.username`, args...)
 	if err != nil {
 		return nil, err

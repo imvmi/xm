@@ -252,31 +252,19 @@ func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, se
 		return listBookmarkedPosts(ctx, db, target, query, kind, offset, limit, before, count)
 	}
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit}
-	from := " FROM posts p"
-	orderID := "p.id"
-	// Visibility applies to archive roots on the home feed, not to an account's
-	// own archive or embedded quotes. A root shared by visible/hidden archives
-	// remains visible once. Archives without a monitor remain visible by default.
-	where := " WHERE EXISTS (SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target LEFT JOIN account_preferences ap ON ap.target=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,ap.show_in_timeline,1)=1)"
-	args := []any{}
-	if target != "" {
-		from = " FROM target_posts t JOIN posts p ON p.id=t.post_id"
-		orderID = "t.post_id"
-		where = " WHERE t.target=?"
-		args = append(args, target)
-	} else {
-		// Replies belong to their parent thread and never become independent
-		// entries on the home timeline.
-		where += " AND " + rootPostSQL
-	}
+	from, where, orderID, args := timelineSource(db, target, false)
+	_, pageWhere, _, _ := timelineSource(db, target, true)
+	sectionWhere := ""
+
 	switch section {
 	case "posts":
-		where += " AND " + rootPostSQL
+		sectionWhere = " AND " + rootPostSQL
 	case "replies":
-		where += " AND p.reply_to<>''"
+		sectionWhere = " AND p.reply_to<>''"
 	}
 	filter, filterArgs := postFilterForDB(db, query, kind, section == "media")
-	where += filter
+	where += sectionWhere + filter
+	pageWhere += sectionWhere + filter
 	args = append(args, filterArgs...)
 	result.Total = -1
 	if count {
@@ -286,14 +274,14 @@ func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, se
 	}
 	// Seek both parts of the compound index. An OR over different ID lengths
 	// can scan every same-length ID before the cursor on SQLite/MySQL.
-	ranges := timelineRanges(orderID, before)
+	ranges := timelineRanges(db, orderID, before)
 	if before != "" {
 		offset = 0
 	}
 	for _, span := range ranges {
 		pageArgs := append(append([]any{}, args...), span.args...)
 		pageArgs = append(pageArgs, limit+1-len(result.Items), offset)
-		rows, err := db.QueryContext(ctx, "SELECT "+postColumns+from+where+span.clause+" ORDER BY "+span.order+" LIMIT ? OFFSET ?", pageArgs...)
+		rows, err := db.QueryContext(ctx, "SELECT "+postColumns+timelinePageSource(db, target)+pageWhere+span.clause+" ORDER BY "+span.order+" LIMIT ? OFFSET ?", pageArgs...)
 		if err != nil {
 			return result, err
 		}
