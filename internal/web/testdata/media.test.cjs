@@ -162,3 +162,23 @@ test('auto-next takes precedence over fullscreen looping and inline restores loo
  f.ctx.collapseExpandedVideo();assert.equal(f.video.loop,true);
  f.ctx.expandTimelineVideo(f.video);assert.equal(f.video.loop,false);
 });
+
+test('denied audible autoplay retries muted once without changing the saved preference',async()=>{
+ const f=fixture();Object.assign(f.state,{authenticated:true,view:'home'});Object.assign(f.state.settings,{video_timeline_autoplay:true,video_default_muted:false});
+ f.ctx.observeTimelineVideos();f.observers[0].callback([{target:f.slot,isIntersecting:true,intersectionRatio:1}]);
+ assert.equal(f.plays[0].muted,false);f.video.paused=true;
+ const denied=new Error('gesture required');denied.name='NotAllowedError';f.plays[0].reject(denied);await tick();
+ assert.equal(f.plays.length,2);assert.equal(f.plays[1].muted,true);assert.equal(f.state.settings.video_default_muted,false);assert.equal(f.notices.length,0);
+ f.video.paused=true;f.plays[1].reject(denied);await tick();
+ f.ctx.syncTimelineAutoplay();assert.equal(f.plays.length,2);assert.equal(f.controls.hidden,false);
+});
+test('late audible autoplay rejection cannot restart an offscreen or manually paused video',async()=>{
+ for(const leave of ['scroll','pause','manual-play']){
+  const f=fixture();Object.assign(f.state,{authenticated:true,view:'home'});Object.assign(f.state.settings,{video_timeline_autoplay:true,video_default_muted:false});
+  f.ctx.observeTimelineVideos();f.observers[0].callback([{target:f.slot,isIntersecting:true,intersectionRatio:1}]);
+  if(leave==='scroll')f.observers[0].callback([{target:f.slot,isIntersecting:false,intersectionRatio:0}]);
+  else {f.ctx.toggleTimelinePlayback(f.video);if(leave==='manual-play')f.ctx.toggleTimelinePlayback(f.video);}
+  const denied=new Error('gesture required');denied.name='NotAllowedError';f.plays[0].reject(denied);await tick();
+  assert.equal(f.plays.length,leave==='manual-play'?2:1);assert.equal(f.video.muted,false);assert.equal(f.video.paused,leave!=='manual-play');
+ }
+});

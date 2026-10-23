@@ -111,10 +111,16 @@ function releaseTimelineMedia(){
  timelineVideoObserver?.disconnect();timelineVideoSlots.clear();timelineVideoBlocked=new WeakSet();timelineAutoVideo=null;
 }
 function playTimelineVideo(video,automatic=false){
- const request=video.dataset.playRequest;
+ const request=video.dataset.playRequest=String(++videoPlayRequest);
  video.play().catch(err=>{
   if(!video.isConnected||video.dataset.playRequest!==request||!video.getAttribute('src')||err.name==='AbortError')return;
-  if(err.name==='NotAllowedError'){timelineVideoBlocked.add(video);syncVideoControls(video);if(!automatic)toast('请点击下方播放按钮继续播放');return;}
+  // A delayed autoplay rejection must not restart a video after scrolling away,
+  // opening a viewer, or explicitly pausing/playing it.
+  if(automatic&&(timelineAutoVideo!==video||timelineVideoBlocked.has(video)||document.hidden||expandedVideoShell||$('image-dialog').open))return;
+  if(err.name==='NotAllowedError'){
+   if(automatic&&!video.muted){video.muted=true;playTimelineVideo(video,true);return;}
+   timelineVideoBlocked.add(video);syncVideoControls(video);if(!automatic)toast('请点击下方播放按钮继续播放');return;
+  }
   resetTimelineVideo(video,true);
  });
  syncVideoControls(video);
@@ -131,7 +137,6 @@ function activateTimelineVideo(video){
 function startTimelineVideo(button,automatic=false){
  const video=button.closest('.video-shell')?.querySelector('video');if(!video||(video.getAttribute('src')&&!video.dataset.prefetch))return;
  claimVideoPrefetch(video);video.preload='auto';
- video.dataset.playRequest=String(++videoPlayRequest);
  video.muted=defaultVideoMuted();video.loop=state.settings?.video_loop===true;
  button.hidden=true;video.hidden=false;if(video.getAttribute('src')!==button.dataset.videoSrc)video.src=button.dataset.videoSrc;
  if(!automatic){timelineVideoBlocked.delete(video);expandTimelineVideo(video);}
