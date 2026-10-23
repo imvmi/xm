@@ -23,3 +23,30 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: node --test internal/web/testdata/*.test.cjs
+
+  mariadb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: xm-ci-password
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify MariaDB setup, migration, restart and schema upgrades
+        env:
+          XM_TEST_MYSQL_ADDR: 127.0.0.1:${{ job.services.mariadb.ports[3306] }}
+          XM_TEST_MYSQL_PASSWORD: xm-ci-password
+        run: go test ./internal/web -count=1

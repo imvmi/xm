@@ -80,3 +80,57 @@ test('cleanup needs its own confirmation and sends a cleanup job without storage
  assert.equal(submitted.kind,'cleanup');assert.equal(submitted.confirm,'清理本地副本');
  assert.equal(submitted.storage,undefined);assert.equal(submitted.database,undefined);
 });
+
+test('SQLite to MariaDB selection invalidates preview and preserves the backend on submission',async()=>{
+ let submitted,preview;
+ const f=fixture(async(route,method,body)=>{
+  if(route==='/migrations/preview'){preview=body;return {items:1,bytes:1,required_bytes:1,free_bytes:4096,destination:'MariaDB',warning:''};}
+  if(method==='POST'){submitted=body;return {};}
+  return status();
+ });
+ await f.refresh();
+ await f.node('migration-database-preview').listeners.click();
+ assert.equal(preview.target,'mysql');
+ f.node('migration-database-engine').value='mariadb';
+ f.node('migration-database-engine').listeners.change();
+ assert.equal(f.node('migration-confirm-panel').hidden,true);
+ assert.equal(f.node('migration-start').disabled,true);
+ assert.equal(f.node('migration-database-target').textContent,'MariaDB');
+ await f.node('migration-database-preview').listeners.click();
+ assert.equal(preview.target,'mariadb');assert.equal(preview.database.driver,'mariadb');
+ f.node('migration-confirm').value='开始迁移';
+ await f.node('migration-start').listeners.click();
+ assert.equal(submitted.target,'mariadb');assert.equal(submitted.database.driver,'mariadb');
+});
+test('MariaDB retry restores the journal target and requires connection details again',async()=>{
+ let preview;
+ const data=status('db-job','failed');
+ data.job={...data.job,kind:'database',source:'sqlite',target:'mariadb'};
+ const f=fixture(async(route,method,body)=>{
+  if(route==='/migrations/preview'){preview=body;return {};}
+  return data;
+ });
+ await f.refresh();
+ await f.node('migration-retry').listeners.click();
+ assert.equal(f.node('migration-database-engine').value,'mariadb');
+ assert.match(f.node('migration-error').textContent,/MariaDB/);
+ assert.equal(preview,undefined);
+ f.node('migration-mysql-host').value='localhost';
+ f.node('migration-database-engine').value='mysql';
+ await f.node('migration-retry').listeners.click();
+ assert.equal(preview.target,'mariadb');assert.equal(preview.database.driver,'mariadb');
+});
+test('an active MariaDB database displays its name and migrates back to SQLite',async()=>{
+ let preview;
+ const f=fixture(async(route,method,body)=>{
+  if(route==='/migrations/preview'){preview=body;return {};}
+  return {...status(),database_driver:'mariadb'};
+ });
+ await f.refresh();
+ assert.equal(f.node('migration-database-source').textContent,'MariaDB');
+ assert.equal(f.node('migration-database-choice').hidden,true);
+ assert.equal(f.node('migration-mysql-fields').hidden,true);
+ await f.node('migration-database-preview').listeners.click();
+ assert.equal(preview.source,'mariadb');assert.equal(preview.target,'sqlite');
+ assert.equal(preview.database,undefined);
+});

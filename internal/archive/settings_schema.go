@@ -149,10 +149,7 @@ func upgradeRequestBudgetModeConstraint(db *database.DB) error {
 }
 
 func upgradeMySQLRequestBudgetModeConstraint(db *database.DB) error {
-	rows, err := db.Query(`SELECT tc.CONSTRAINT_NAME,cc.CHECK_CLAUSE
-FROM information_schema.TABLE_CONSTRAINTS tc
-JOIN information_schema.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME
-WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='system_settings' AND tc.CONSTRAINT_TYPE='CHECK'`)
+	rows, err := db.CheckConstraints("system_settings")
 	if err != nil {
 		return err
 	}
@@ -180,8 +177,15 @@ WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='system_settings' AND tc.CONS
 	}
 	alter := make([]string, 0, len(old)+1)
 	for _, name := range old {
-		quoted := strings.ReplaceAll(name, "`", "``")
-		alter = append(alter, "DROP CHECK `"+quoted+"`")
+		drop := db.DropCheckConstraint(name)
+		// MariaDB's inline column checks must be removed by redefining the
+		// column; separately named table checks use DROP CONSTRAINT.
+		if db.MariaDB && name == "request_budget_mode" {
+			drop = "MODIFY COLUMN request_budget_mode VARCHAR(16) NOT NULL DEFAULT 'balanced'"
+		} else if db.MariaDB && name == "timeline_page_size" {
+			drop = "MODIFY COLUMN timeline_page_size INTEGER NOT NULL DEFAULT 24"
+		}
+		alter = append(alter, drop)
 	}
 	if needBudget {
 		alter = append(alter, "ADD CONSTRAINT system_settings_request_budget_mode CHECK(request_budget_mode IN ('conservative','balanced','fast','turbo'))")
@@ -239,6 +243,12 @@ func ensureArchiveIndexes(db *database.DB) error {
 		{"media_status_bytes", "media", "status,bytes"},
 		{"media_post_status", "media", "post_id,status"},
 	} {
+		// MariaDB does not support MySQL's functional-index syntax. These two
+		// indexes only optimize ordering: queries still sort by length and ID.
+		// Keep the shared business columns unchanged for bidirectional copying.
+		if db.MariaDB && (idx.name == "posts_timeline" || idx.name == "target_posts_timeline") {
+			continue
+		}
 		var n int
 		var err error
 		if db.Dialect == "mysql" {

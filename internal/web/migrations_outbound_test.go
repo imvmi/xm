@@ -210,12 +210,21 @@ func TestMigrationLocalToRemote(t *testing.T) {
 }
 
 func TestMigrationSQLiteToMySQLCutover(t *testing.T) {
+	testMigrationSQLiteToRemoteCutover(t, "mysql")
+}
+
+func TestMigrationSQLiteToMariaDBCutover(t *testing.T) {
+	testMigrationSQLiteToRemoteCutover(t, "mariadb")
+}
+
+func testMigrationSQLiteToRemoteCutover(t *testing.T, driver string) {
 	if os.Getenv("XM_TEST_MYSQL_ADDR") == "" {
 		t.Skip("isolated loopback MySQL required")
 	}
 	destCfg := archive.DefaultConfig()
 	destCfg.DataDir = t.TempDir()
 	configureMySQLTest(t, &destCfg)
+	destCfg.Database.Driver = driver
 	// Always start with SQLite even when the test suite's default is MySQL.
 	cfg := archive.DefaultConfig()
 	cfg.DataDir = t.TempDir()
@@ -243,7 +252,7 @@ func TestMigrationSQLiteToMySQLCutover(t *testing.T) {
 	if err = source.SaveCookies(archive.Cookies{AuthToken: "outbound-auth", CSRF: "outbound-csrf"}); err != nil {
 		t.Fatal(err)
 	}
-	input := migrationInput{Kind: "database", Source: "sqlite", Target: "mysql", Database: destCfg.Database, Confirm: "开始迁移"}
+	input := migrationInput{Kind: "database", Source: "sqlite", Target: driver, Database: destCfg.Database, Confirm: "开始迁移"}
 	putTestBookmark(t, a, "184467440737095516151", 123)
 	ok(t, b.request("POST", "/api/migrations/preview", input, "http://localhost", true), 200)
 	probe, err := archive.OpenMigrationMySQL(context.Background(), destCfg.Database)
@@ -286,14 +295,14 @@ func TestMigrationSQLiteToMySQLCutover(t *testing.T) {
 	}
 	ok(t, b.request("POST", "/api/migrations", input, "http://localhost", true), 202)
 	j := waitMigration(t, a)
-	if j.Status != "switching" || !a.maintenance.Load() || j.Target != "mysql" || j.Done != j.Total {
+	if j.Status != "switching" || !a.maintenance.Load() || j.Target != driver || j.Done != j.Total {
 		t.Fatalf("cutover failed: %+v", j)
 	}
 	nextCfg, err := archive.LoadConfig(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nextCfg.Database.DriverName() != "mysql" || nextCfg.Database.Name != destCfg.Database.Name {
+	if nextCfg.Database.DriverName() != driver || nextCfg.Database.Name != destCfg.Database.Name {
 		t.Fatal("bootstrap not switched")
 	}
 	dst, err := archive.OpenConfiguredStore(nextCfg)
@@ -310,7 +319,7 @@ func TestMigrationSQLiteToMySQLCutover(t *testing.T) {
 	if next.migrations.snapshot().Status != "completed" {
 		t.Fatal("restart did not reconcile")
 	}
-	login(t, next)
+	nextBrowser := login(t, next)
 	var bookmarkAt int64
 	if err = dst.DB.QueryRow("SELECT created_at FROM post_bookmarks WHERE post_id='184467440737095516151'").Scan(&bookmarkAt); err != nil || bookmarkAt != 123 {
 		t.Fatal("MySQL cutover lost bookmark", err)
@@ -329,6 +338,16 @@ func TestMigrationSQLiteToMySQLCutover(t *testing.T) {
 	if err = probe.CheckMigrationEmpty(context.Background()); err == nil {
 		t.Fatal("nonempty target accepted")
 	}
+	if driver == "mariadb" {
+		// The configured backend must remain usable after restart, including the
+		// existing return-to-SQLite path and its source label.
+		back := migrationInput{Kind: "database", Source: driver, Target: "sqlite", Confirm: "开始迁移"}
+		ok(t, nextBrowser.request("POST", "/api/migrations/preview", back, "http://localhost", true), 200)
+		ok(t, nextBrowser.request("POST", "/api/migrations", back, "http://localhost", true), 202)
+		if returned := waitMigration(t, next); returned.Status != "switching" || returned.Source != driver {
+			t.Fatalf("MariaDB return migration failed: %+v", returned)
+		}
+	}
 }
 
 func TestMigrationDirectionsRejectInvalidRequests(t *testing.T) {
@@ -342,5 +361,37 @@ func TestMigrationDirectionsRejectInvalidRequests(t *testing.T) {
 		{Kind: "media", Source: "local", Target: "missing"},
 	} {
 		ok(t, b.request("POST", "/api/migrations/preview", input, "http://localhost", true), 400)
+	}
+}
+
+func TestMariaDBMigrationDirections(t *testing.T) {
+	for _, tc := range []struct {
+		source, target, claimedSource string
+		valid                         bool
+	}{
+		{"sqlite", "mariadb", "sqlite", true},
+		{"sqlite", "mysql", "sqlite", true},
+		{"mariadb", "sqlite", "mariadb", true},
+		{"mariadb", "", "", true},
+		{"mariadb", "mariadb", "", false},
+		{"mariadb", "mysql", "", false},
+		{"mysql", "mariadb", "", false},
+		{"sqlite", "mariadb", "mysql", false},
+		{"sqlite", "unknown", "", false},
+	} {
+		t.Run(tc.source+"_to_"+tc.target+"_from_"+tc.claimedSource, func(t *testing.T) {
+			a := &App{configPath: filepath.Join(t.TempDir(), "config.yaml"), config: archive.Config{Database: archive.DatabaseConfig{Driver: tc.source}}}
+			input := migrationInput{Kind: "database", Source: tc.claimedSource, Target: tc.target, Database: archive.DatabaseConfig{Driver: "mysql", Host: "localhost", Name: "archive", User: "xm", SQLiteFile: "old.db", CAFile: "ca.pem"}}
+			err := a.prepareMigration(&input)
+			if (err == nil) != tc.valid {
+				t.Fatalf("unexpected validation: %v", err)
+			}
+			if tc.valid && input.Target == "mariadb" && (input.Database.Driver != "mariadb" || input.Database.SQLiteFile != "" || !filepath.IsAbs(input.Database.CAFile)) {
+				t.Fatalf("MariaDB destination not normalized: %+v", input.Database)
+			}
+			if tc.valid && tc.source == "mariadb" && input.Target != "sqlite" {
+				t.Fatal("MariaDB must default to SQLite")
+			}
+		})
 	}
 }

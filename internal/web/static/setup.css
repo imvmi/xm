@@ -50,7 +50,7 @@
 .setup-pair>div { min-width:0; }
 .host-pair { grid-template-columns:minmax(0,1fr) 100px; }
 .setup-fields { border:0; padding:0; margin:0; min-width:0; }
-.setup-options { border:0; padding:0; margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.setup-options { border:0; padding:0; margin:0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .setup-options legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .setup-card .setup-options>label:not(.check-label) { display:flex; align-items:flex-start; gap:12px; border:1px solid var(--line); border-radius:9px; padding:18px 16px; margin:0; cursor:pointer; background:#fff; }
 .setup-card .setup-options>label:hover { border-color:#a6b79f; }
@@ -90,6 +90,7 @@
 #setup-ready { font-size:12px; color:var(--setup-muted); margin:24px 0; }
 .setup-shell:has(#setup-success:not([hidden])) .setup-intro { display:none; }
 @media(max-width:600px) {
+  .setup-options { grid-template-columns:1fr; }
   .setup-top { padding:22px 24px; }
   .setup-shell { width:calc(100% - 32px); margin:20px auto 24px; }
   .setup-intro { padding:0 4px 24px; }

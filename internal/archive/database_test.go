@@ -8,7 +8,13 @@ import (
 )
 
 func TestDatabaseConfigAndTLS(t *testing.T) {
-	c := DatabaseConfig{Driver: "mysql", Host: "db.example.com", Name: "xm", User: "xm_app", PasswordEnv: "XM_TEST_PASSWORD"}
+	for _, driver := range []string{"mysql", "mariadb"} {
+		t.Run(driver, func(t *testing.T) { testDatabaseConfigAndTLS(t, driver) })
+	}
+}
+
+func testDatabaseConfigAndTLS(t *testing.T, driver string) {
+	c := DatabaseConfig{Driver: driver, Host: "db.example.com", Name: "xm", User: "xm_app", PasswordEnv: "XM_TEST_PASSWORD"}
 	t.Setenv("XM_TEST_PASSWORD", "secret:p@ss/word")
 	mc, e := mysqlConfig(c)
 	if e != nil {

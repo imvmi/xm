@@ -75,6 +75,18 @@ func TestSetupBrowserNewAndExisting(t *testing.T) {
 				t.Fatal(err)
 			}
 			wait(`typeof loaded!=='undefined' && loaded && !busy`)
+			for _, width := range []int64{1280, 390} {
+				if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 900)); err != nil {
+					t.Fatal(err)
+				}
+				eval(`(()=>{document.querySelector('input[name="db-kind"][value="mariadb"]').click();return true})()`)
+				if !eval(`!el('mysql-fields').hidden && !el('mysql-fields').disabled && el('sqlite-note').hidden && database().driver==='mariadb' && document.documentElement.scrollWidth<=innerWidth`) {
+					t.Fatal("MariaDB setup fields missing or overflowing")
+				}
+			}
+			if !existing {
+				eval(`(()=>{document.querySelector('input[name="db-kind"][value="sqlite"]').click();return true})()`)
+			}
 			if existing {
 				eval(`(()=>{document.querySelector('input[name="db-kind"][value="mysql"]').click();return true})()`)
 				d := input.Database

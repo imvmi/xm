@@ -2,7 +2,7 @@
 let migrationState=null, migrationChecked=null, migrationRetry=false, migrationRefreshing=false, migrationPreviewVersion=0, migrationConfigKey='',migrationRequest=0;
 const migrationLabels={running:'执行中',switching:'正在重启',paused:'已暂停',failed:'需重试',completed:'已完成'};
 const migrationConfirmation=kind=>kind==='cleanup'?'清理本地副本':'开始迁移';
-const migrationDatabaseName=value=>value==='mysql'?'MySQL':'SQLite3';
+const migrationDatabaseName=value=>value==='mysql'?'MySQL':value==='mariadb'?'MariaDB':'SQLite3';
 const migrationStorageName=id=>id==='local'?'本地磁盘':id==='new'?'新的远端存储':migrationState?.sources?.find(p=>p.id===id)?.name||id;
 function resetMigrationPreview(){
  migrationPreviewVersion++;migrationChecked=null;migrationRetry=false;
@@ -16,12 +16,14 @@ function migrationStorageTargets(){
  migrationAvailability();
 }
 function migrationAvailability(){
- const busy=['running','switching'].includes(migrationState?.job?.status),mysql=migrationState?.database_driver==='mysql';
+ const busy=['running','switching'].includes(migrationState?.job?.status),remote=['mysql','mariadb'].includes(migrationState?.database_driver),target=$('migration-database-engine').value||'mysql',targetName=migrationDatabaseName(target);
  $('migration-database-current').textContent='当前 '+migrationDatabaseName(migrationState?.database_driver);
  $('migration-database-source').textContent=migrationDatabaseName(migrationState?.database_driver);
- $('migration-database-target').textContent=mysql?'SQLite3 · 服务器本地':'MySQL';
- $('migration-mysql-fields').hidden=mysql;
- $('migration-database-help').textContent=mysql?'校验完成后切换到本地 SQLite3，并自动重启应用。':'填写独立的空 MySQL 数据库，校验完成后切换并自动重启应用。';
+ $('migration-database-target').textContent=remote?'SQLite3 · 服务器本地':targetName;
+ $('migration-database-choice').hidden=remote;
+ $('migration-mysql-fields').hidden=remote;
+ $('migration-mysql-host-label').textContent=targetName+' 主机';
+ $('migration-database-help').textContent=remote?'校验完成后切换到本地 SQLite3，并自动重启应用。':'填写独立的空 '+targetName+' 数据库，校验完成后切换并自动重启应用。';
  $('migration-storage-current').textContent='默认 '+migrationStorageName(migrationState?.active_storage);
  $('migration-storage-help').textContent=$('migration-source').value==='local'?'将本地媒体上传到远端，回读校验后启用远端引用。':'将所选远端媒体下载到服务器本地，逐文件校验后切换引用。';
  $('migration-remote-fields').hidden=$('migration-storage-target').value!=='new';
@@ -70,9 +72,9 @@ async function refreshMigrations(){
 function migrationInput(kind){
  if(kind==='cleanup')return {kind};
  if(kind==='database'){
-  const target=migrationState.database_driver==='mysql'?'sqlite':'mysql';
+  const target=migrationState.database_driver==='sqlite'?($('migration-database-engine').value||'mysql'):'sqlite';
   const input={kind,source:migrationState.database_driver,target};
-  if(target==='mysql')input.database={driver:'mysql',host:$('migration-mysql-host').value.trim(),port:Number($('migration-mysql-port').value),name:$('migration-mysql-name').value.trim(),user:$('migration-mysql-user').value.trim(),password:$('migration-mysql-password').value,password_env:$('migration-mysql-password-env').value.trim(),tls_mode:$('migration-mysql-tls').value,ca_file:$('migration-mysql-ca').value.trim(),server_name:$('migration-mysql-server-name').value.trim()};
+  if(target!=='sqlite')input.database={driver:target,host:$('migration-mysql-host').value.trim(),port:Number($('migration-mysql-port').value),name:$('migration-mysql-name').value.trim(),user:$('migration-mysql-user').value.trim(),password:$('migration-mysql-password').value,password_env:$('migration-mysql-password-env').value.trim(),tls_mode:$('migration-mysql-tls').value,ca_file:$('migration-mysql-ca').value.trim(),server_name:$('migration-mysql-server-name').value.trim()};
   return input;
  }
  const input={kind,source:$('migration-source').value,target:$('migration-storage-target').value};
@@ -99,6 +101,7 @@ async function checkMigration(kind,retry=false){
  }catch(e){if(version===migrationPreviewVersion)$('migration-error').textContent=e.message;}
 }
 document.querySelectorAll('.migration-sections input,.migration-sections select').forEach(el=>el.addEventListener('input',resetMigrationPreview));
+$('migration-database-engine').addEventListener('change',()=>{resetMigrationPreview();migrationAvailability();});
 $('migration-source').addEventListener('change',()=>{resetMigrationPreview();migrationStorageTargets();});
 $('migration-storage-target').addEventListener('change',()=>{resetMigrationPreview();migrationAvailability();});
 $('migration-remote-kind').addEventListener('change',()=>{resetMigrationPreview();migrationAvailability();});
@@ -113,7 +116,10 @@ $('migration-retry').addEventListener('click',()=>action($('migration-retry'),as
   if(j.source===migrationState.active_storage){$('migration-storage-target').value=known?j.target:'new';migrationAvailability();}
   if(!known){resetMigrationPreview();$('migration-error').textContent='该任务尚未保存目标连接，请填写远端配置后重新检查。';$('migration-remote-name').focus();return;}
  }
- if(j.kind==='database'&&j.target==='mysql'&&!$('migration-mysql-host').value){resetMigrationPreview();$('migration-error').textContent='请重新填写空 MySQL 目标连接后检查。密码不会保存在迁移记录中。';$('migration-mysql-host').focus();return;}
+ if(j.kind==='database'&&['mysql','mariadb'].includes(j.target)){
+  $('migration-database-engine').value=j.target;migrationAvailability();
+  if(!$('migration-mysql-host').value){resetMigrationPreview();$('migration-error').textContent='请重新填写空 '+migrationDatabaseName(j.target)+' 目标连接后检查。密码不会保存在迁移记录中。';$('migration-mysql-host').focus();return;}
+ }
  await checkMigration(j.kind,true);
 }));
 $('migration-start').addEventListener('click',()=>action($('migration-start'),async()=>{

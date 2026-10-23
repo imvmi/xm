@@ -1,5 +1,6 @@
 'use strict';
 const el=id=>document.getElementById(id);
+const setupDatabaseName=driver=>driver==='mariadb'?'MariaDB':driver==='mysql'?'MySQL':'SQLite';
 const sections=['step-database','step-storage','step-account','step-existing'];
 let step=0,busy=false,loaded=false,existing=false,testedDatabase=null;
 const activeSections=()=>existing?[sections[0],sections[3]]:sections.slice(0,3);
@@ -11,10 +12,10 @@ function showStep(next){
  el('step-database').querySelector('.eyebrow').textContent=`STEP 01 / 0${active.length}`;
  el('setup-next').textContent=(existing?['测试数据库并继续 →','验证并接入 →']:['测试数据库并继续 →','测试存储并继续 →','完成设置 →'])[step];
  el('setup-error').textContent='';el('setup-status').textContent='';
- if(step===2){const db=document.querySelector('input[name="db-kind"]:checked').value;el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db==='sqlite'?'SQLite':'MySQL / '+el('db-name').value} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}
+ if(step===2){const db=document.querySelector('input[name="db-kind"]:checked').value;el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db==='sqlite'?'SQLite':setupDatabaseName(db)+' / '+el('db-name').value} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}
  el(active[step]).querySelector('h2').focus({preventScroll:true});
 }
-function databaseChanged(){const mysql=document.querySelector('input[name="db-kind"]:checked').value==='mysql';el('mysql-fields').hidden=!mysql;el('mysql-fields').disabled=!mysql;el('sqlite-note').hidden=mysql;}
+function databaseChanged(){const remote=document.querySelector('input[name="db-kind"]:checked').value!=='sqlite';el('mysql-fields').hidden=!remote;el('mysql-fields').disabled=!remote;el('sqlite-note').hidden=remote;}
 function storageChanged(){
  const kind=el('media-kind').value,remote=['webdav','s3','smb'].includes(kind),s3=kind==='s3',smb=kind==='smb';
  el('remote-fields').hidden=!remote;el('remote-fields').disabled=!remote;el('local-note').hidden=kind!=='local';
@@ -36,7 +37,7 @@ async function request(route,body){
  const data=await r.json().catch(()=>({error:'服务返回了无法识别的响应'}));if(!r.ok)throw new Error(data.error||'设置失败');return data;
 }
 function populate(c){
- const d=c.database||{};document.querySelector(`input[name="db-kind"][value="${d.driver==='mysql'?'mysql':'sqlite'}"]`).checked=true;
+ const d=c.database||{};document.querySelector(`input[name="db-kind"][value="${['mysql','mariadb'].includes(d.driver)?d.driver:'sqlite'}"]`).checked=true;
  const mapping={host:'host',port:'port',name:'name',user:'user',password_env:'password-env',tls_mode:'tls',ca_file:'ca',server_name:'server-name'};
  for(const [key,id] of Object.entries(mapping))if(d[key])el('db-'+id).value=d[key];
  if(c.password_configured){el('db-password').placeholder='留空保留已配置的密码';el('db-password-help').textContent='已有密码不会回显。同一数据库连接留空保留，修改目标后请重新填写。';}
@@ -86,5 +87,5 @@ async function loadDefaults(){
  catch(err){el('setup-error').textContent=err.message+' 点击继续以重试读取。';el('setup-status').textContent='';}
  finally{if(busy)setBusy(false);}
 }
-el('setup-username').addEventListener('input',()=>{if(step===2){const db=database();el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db.driver==='sqlite'?'SQLite':'MySQL / '+db.name} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}});
+el('setup-username').addEventListener('input',()=>{if(step===2){const db=database();el('setup-summary').textContent=`管理员：${el('setup-username').value||'待填写'} · 数据库：${db.driver==='sqlite'?'SQLite':setupDatabaseName(db.driver)+' / '+db.name} · 存储：${el('media-kind').selectedOptions[0].textContent}`;}});
 loadDefaults();

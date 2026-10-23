@@ -146,6 +146,12 @@ func TestMigrationBrowser(t *testing.T) {
 	if a.Config().Database.DriverName() == "sqlite" && !eval(`!$('migration-mysql-fields').hidden && $('migration-database-target').textContent==='MySQL'`) {
 		t.Fatal("SQLite to MySQL form missing")
 	}
+	if a.Config().Database.DriverName() == "sqlite" {
+		eval(`(()=>{$('migration-database-engine').value='mariadb';$('migration-database-engine').dispatchEvent(new Event('change'));return true})()`)
+		if !eval(`!$('migration-mysql-fields').hidden && $('migration-database-target').textContent==='MariaDB' && migrationInput('database').database.driver==='mariadb' && $('migration-database-help').textContent.includes('MariaDB')`) {
+			t.Fatal("SQLite to MariaDB form missing")
+		}
+	}
 	if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
 		if err := chromedp.Do(browser, chromedp.EmulateViewport(1280, 1000)); err != nil {
 			t.Fatal(err)

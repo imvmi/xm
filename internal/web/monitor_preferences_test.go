@@ -90,11 +90,15 @@ func TestUnifiedAccountLifecycleAndPreferences(t *testing.T) {
 func TestCancelMonitoringRollsBackPreferenceAndQueue(t *testing.T) {
 	a := testApp(t)
 	b := login(t, a)
+	trigger := "CREATE TRIGGER fixture_refuse_delete BEFORE DELETE ON monitors BEGIN SELECT RAISE(ABORT,'fixture failure'); END"
+	if a.store.DB.Dialect == "mysql" {
+		trigger = "CREATE TRIGGER fixture_refuse_delete BEFORE DELETE ON monitors FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture failure'"
+	}
 	for _, q := range []string{
 		"INSERT INTO monitors(username,enabled,next_run,show_in_timeline) VALUES('alice',0,123,0)",
 		"INSERT INTO collection_progress(target,state) VALUES('alice','{}')",
 		"INSERT INTO collection_jobs(target,source,status,queued_at,queue_order) VALUES('alice','manual','queued',1,1)",
-		"CREATE TRIGGER fixture_refuse_delete BEFORE DELETE ON monitors BEGIN SELECT RAISE(ABORT,'fixture failure'); END",
+		trigger,
 	} {
 		if _, err := a.store.DB.Exec(q); err != nil {
 			t.Fatal(err)

@@ -265,10 +265,11 @@
               <div class="panel-heading"><div><h2>数据库迁移</h2><p>迁移归档、账号、设置和任务记录。</p></div><span id="migration-database-current" class="badge neutral">加载中</span></div>
               <div class="panel-body">
                 <div class="migration-route"><span id="migration-database-source">—</span><span aria-hidden="true">→</span><strong id="migration-database-target">—</strong></div>
+                <div id="migration-database-choice"><label for="migration-database-engine">目标数据库类型</label><select id="migration-database-engine"><option value="mysql">MySQL</option><option value="mariadb">MariaDB</option></select></div>
                 <p id="migration-database-help" class="field-help"></p>
                 <div id="migration-mysql-fields" hidden>
                   <div class="migration-fields">
-                    <div><label for="migration-mysql-host">MySQL 主机</label><input id="migration-mysql-host" autocomplete="off" placeholder="127.0.0.1"></div>
+                    <div><label id="migration-mysql-host-label" for="migration-mysql-host">MySQL 主机</label><input id="migration-mysql-host" autocomplete="off" placeholder="127.0.0.1"></div>
                     <div><label for="migration-mysql-port">端口</label><input id="migration-mysql-port" type="number" min="1" max="65535" value="3306"></div>
                     <div><label for="migration-mysql-name">目标数据库（空库）</label><input id="migration-mysql-name" autocomplete="off" placeholder="xm"></div>
                     <div><label for="migration-mysql-user">用户名</label><input id="migration-mysql-user" autocomplete="off"></div>

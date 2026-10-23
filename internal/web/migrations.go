@@ -79,7 +79,7 @@ func newMigrationManager(a *App) (*migrationManager, error) {
 	if j.Status == "running" || j.Status == "switching" {
 		cfg := a.Config()
 		installed := j.Target == "sqlite" && cfg.Database.DriverName() == "sqlite" && cfg.Database.SQLiteFile == j.TargetFile
-		installed = installed || (j.Target == "mysql" && cfg.Database.DriverName() == "mysql" && j.TargetIdentity == migrationDatabaseIdentity(cfg.Database))
+		installed = installed || (migrationRemoteDatabase(j.Target) && cfg.Database.DriverName() == j.Target && j.TargetIdentity == migrationDatabaseIdentity(cfg.Database))
 		if j.Kind == "database" && installed {
 			// A rename that succeeded but whose directory sync failed must not
 			// permit new archive writes until bootstrap is durably installed.
@@ -170,6 +170,10 @@ type migrationInput struct {
 	Retry    bool                    `json:"retry"`
 }
 
+func migrationRemoteDatabase(driver string) bool {
+	return driver == "mysql" || driver == "mariadb"
+}
+
 func migrationDatabaseIdentity(c archive.DatabaseConfig) string {
 	port := c.Port
 	if port == 0 {
@@ -192,17 +196,17 @@ func (a *App) prepareMigration(input *migrationInput) error {
 		}
 		input.Source = cfg.Database.DriverName()
 		if input.Target == "" {
-			if input.Source == "mysql" {
+			if migrationRemoteDatabase(input.Source) {
 				input.Target = "sqlite"
 			} else {
 				input.Target = "mysql"
 			}
 		}
-		if input.Source == input.Target || (input.Target != "mysql" && input.Target != "sqlite") {
+		if !((input.Source == "sqlite" && migrationRemoteDatabase(input.Target)) || (migrationRemoteDatabase(input.Source) && input.Target == "sqlite")) {
 			return errors.New("请选择另一种数据库作为迁移目标")
 		}
-		if input.Target == "mysql" {
-			input.Database.Driver = "mysql"
+		if migrationRemoteDatabase(input.Target) {
+			input.Database.Driver = input.Target
 			input.Database.SQLiteFile = ""
 			if input.Database.CAFile != "" && !filepath.IsAbs(input.Database.CAFile) {
 				input.Database.CAFile = filepath.Join(filepath.Dir(a.configPath), input.Database.CAFile)
@@ -282,7 +286,7 @@ func (a *App) previewMigration(ctx context.Context, input migrationInput) (migra
 			return p, errors.New("无法读取推文数量")
 		}
 		// The engine estimate can lag; retain a conservative floor and headroom.
-		if input.Target == "mysql" {
+		if migrationRemoteDatabase(input.Target) {
 			var pages, size int64
 			if err := a.store.DB.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pages); err != nil {
 				return p, errors.New("无法估算 SQLite 大小")
@@ -299,16 +303,16 @@ func (a *App) previewMigration(ctx context.Context, input migrationInput) (migra
 			if err = dst.CheckMigrationEmpty(ctx); err != nil {
 				return p, err
 			}
-			p.Destination = "MySQL · " + input.Database.Host + " / " + input.Database.Name
+			p.Destination = input.Database.DisplayName() + " · " + input.Database.Host + " / " + input.Database.Name
 			p.RequiredBytes = 1 << 20
-			p.Warning = "维护期间暂停采集、通知和设置写入；复制全部数据并逐表校验后自动重启，需要重新登录。目标必须为空的 MySQL 数据库，请确保远端有足够的数据和事务日志空间。源 SQLite 和原启动配置保留。"
+			p.Warning = "维护期间暂停采集、通知和设置写入；复制全部数据并逐表校验后自动重启，需要重新登录。目标必须为空的 " + input.Database.DisplayName() + " 数据库，请确保远端有足够的数据和事务日志空间。源 SQLite 和原启动配置保留。"
 			break
 		}
 		if err := a.store.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables WHERE table_schema=DATABASE()").Scan(&p.Bytes); err != nil {
 			return p, errors.New("无法估算数据库大小")
 		}
 		p.RequiredBytes = max(p.Bytes*3, 256<<20)
-		p.Warning = "维护期间暂停采集、通知和设置写入；等待当前任务结束后复制并逐表校验，随后重启应用，需要重新登录。原 MySQL 和原启动配置保留，不覆盖已有 SQLite 文件。空间为估算值。"
+		p.Warning = "维护期间暂停采集、通知和设置写入；等待当前任务结束后复制并逐表校验，随后重启应用，需要重新登录。原 " + cfg.Database.DisplayName() + " 和原启动配置保留，不覆盖已有 SQLite 文件。空间为估算值。"
 	case "media":
 		if err := a.store.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM media WHERE storage_id=? AND status='done'", input.Source).Scan(&p.Items, &p.Bytes); err != nil {
 			return p, errors.New("无法读取媒体统计")
@@ -419,7 +423,7 @@ func (a *App) startMigration(w http.ResponseWriter, r *http.Request) {
 		j.Target = "migration_" + j.ID
 		j.Storage.ID = j.Target
 	}
-	if j.Kind == "database" && j.Target == "mysql" {
+	if j.Kind == "database" && migrationRemoteDatabase(j.Target) {
 		j.TargetIdentity = migrationDatabaseIdentity(j.Database)
 	}
 	if j.Kind == "database" && j.Target == "sqlite" {
@@ -628,7 +632,7 @@ func (m *migrationManager) copyDatabase(ctx context.Context, j migrationJob) err
 		return err
 	}
 	var dst *archive.Store
-	if j.Target == "mysql" {
+	if migrationRemoteDatabase(j.Target) {
 		connection, e := archive.OpenMigrationMySQL(ctx, j.Database)
 		if e != nil {
 			return e
@@ -665,7 +669,7 @@ func (m *migrationManager) copyDatabase(ctx context.Context, j migrationJob) err
 		return err
 	}
 	targetCfg := cfg
-	if j.Target == "mysql" {
+	if migrationRemoteDatabase(j.Target) {
 		targetCfg.Database = j.Database
 	} else {
 		targetCfg.Database = archive.DatabaseConfig{Driver: "sqlite", SQLiteFile: j.TargetFile}

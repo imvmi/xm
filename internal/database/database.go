@@ -15,6 +15,7 @@ type DB struct {
 	*sql.DB
 	Reader  *sql.DB
 	Dialect string
+	MariaDB bool // Server capability; SQL statements otherwise share the mysql dialect.
 }
 type Tx struct {
 	*sql.Tx
@@ -92,4 +93,25 @@ func (d *DB) InsertIgnore(query, key string, args ...any) (sql.Result, error) {
 }
 func (t *Tx) InsertIgnore(query, key string, args ...any) (sql.Result, error) {
 	return t.Exec(Ignore(t.Dialect, query, key), args...)
+}
+
+// CheckConstraints handles MariaDB's per-table constraint names. MySQL uses
+// schema-wide names and does not expose CHECK_CONSTRAINTS.TABLE_NAME.
+func (d *DB) CheckConstraints(table string) (*sql.Rows, error) {
+	joinTable := ""
+	if d.MariaDB {
+		joinTable = " AND cc.TABLE_NAME=tc.TABLE_NAME"
+	}
+	return d.Query(`SELECT tc.CONSTRAINT_NAME,cc.CHECK_CLAUSE
+FROM information_schema.TABLE_CONSTRAINTS tc
+JOIN information_schema.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME`+joinTable+`
+WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME=? AND tc.CONSTRAINT_TYPE='CHECK'`, table)
+}
+
+func (d *DB) DropCheckConstraint(name string) string {
+	drop := "DROP CHECK "
+	if d.MariaDB {
+		drop = "DROP CONSTRAINT "
+	}
+	return drop + "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }

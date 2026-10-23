@@ -143,8 +143,8 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	if command == "migrate-mysql" {
-		if cfg.Database.DriverName() != "mysql" || *source == "" {
-			return errors.New("迁移需要 mysql 配置及 -source SQLite 文件")
+		if !cfg.Database.IsMySQL() || *source == "" {
+			return errors.New("迁移需要 mysql 或 mariadb 配置及 -source SQLite 文件")
 		}
 		sourceDir, e := filepath.Abs(filepath.Dir(*source))
 		if e != nil {

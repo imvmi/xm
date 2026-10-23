@@ -650,7 +650,7 @@ async function refreshSettings() {
   const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
   populateSQLiteSettings(s);populateBrowserSettings(s);
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
-  $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
+  $('database-label').textContent=s.database_driver==='sqlite'?'SQLite · 本地数据库':(s.database_driver==='mariadb'?'MariaDB':'MySQL')+' · '+s.database_name;
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
   $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
   hydrateSettingsForm('settings-form',()=>{$('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;});renderChromeMode();populateCollectionSettings(s);

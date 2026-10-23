@@ -11,10 +11,7 @@ import (
 
 func upgradeStorageKinds(db *database.DB) error {
 	if db.Dialect == "mysql" {
-		rows, err := db.Query(`SELECT tc.CONSTRAINT_NAME,cc.CHECK_CLAUSE
-FROM information_schema.TABLE_CONSTRAINTS tc
-JOIN information_schema.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME
-WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='storage_profiles' AND tc.CONSTRAINT_TYPE='CHECK'`)
+		rows, err := db.CheckConstraints("storage_profiles")
 		if err != nil {
 			return err
 		}
@@ -36,7 +33,11 @@ WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='storage_profiles' AND tc.CON
 		}
 		var changes []string
 		for _, name := range old {
-			changes = append(changes, "DROP CHECK `"+strings.ReplaceAll(name, "`", "``")+"`")
+			drop := db.DropCheckConstraint(name)
+			if db.MariaDB && name == "kind" {
+				drop = "MODIFY COLUMN kind VARCHAR(16) NOT NULL"
+			}
+			changes = append(changes, drop)
 		}
 		changes = append(changes, "ADD CONSTRAINT storage_profiles_kind CHECK(kind IN ('local','webdav','s3','smb'))")
 		_, err = db.Exec("ALTER TABLE storage_profiles " + strings.Join(changes, ","))

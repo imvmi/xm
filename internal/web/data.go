@@ -275,7 +275,7 @@ func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, se
 	case "replies":
 		where += " AND p.reply_to<>''"
 	}
-	filter, filterArgs := postFilter(query, kind, section == "media")
+	filter, filterArgs := postFilterForDB(db, query, kind, section == "media")
 	where += filter
 	args = append(args, filterArgs...)
 	result.Total = -1

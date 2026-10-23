@@ -254,6 +254,14 @@ func TestSetupRemoteStorageAndConcurrentCompletion(t *testing.T) {
 	}
 }
 func TestSetupMySQL(t *testing.T) {
+	testSetupRemoteDatabase(t, "mysql")
+}
+
+func TestSetupMariaDB(t *testing.T) {
+	testSetupRemoteDatabase(t, "mariadb")
+}
+
+func testSetupRemoteDatabase(t *testing.T, driver string) {
 	if os.Getenv("XM_TEST_MYSQL_ADDR") == "" {
 		t.Skip("requires isolated MySQL")
 	}
@@ -261,18 +269,27 @@ func TestSetupMySQL(t *testing.T) {
 	cfg := s.cfg
 	configureMySQLTest(t, &cfg)
 	v := setupValid()
+	v.Username, v.Password = "admin", testPassword
 	v.Database = cfg.Database
+	v.Database.Driver = driver
 	ok(t, setupRequest(t, s, "database-test", v, "http://localhost"), 200)
 	ok(t, setupRequest(t, s, "complete", v, "http://localhost"), 200)
 	saved, err := archive.LoadConfig(s.path)
-	if err != nil || saved.Database.Driver != "mysql" {
+	if err != nil || saved.Database.Driver != driver {
 		t.Fatal(err)
 	}
 	store, err := archive.OpenConfiguredStore(saved)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.Close()
+	defer store.Close()
+	a, err := New(s.path, saved, store, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.migrations.stop()
+	defer a.scheduler.closeSession()
+	login(t, a)
 }
 
 func TestSetupPreservesExplicitSQLiteFilename(t *testing.T) {

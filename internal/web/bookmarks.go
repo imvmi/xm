@@ -91,14 +91,22 @@ func listBookmarkedPosts(ctx context.Context, db *database.DB, target, query, ki
 	from := " FROM post_bookmarks b JOIN posts p ON p.id=b.post_id"
 	where := " WHERE 1=1"
 	if target != "" {
-		// Walk indexed reverse quote links only for each candidate bookmark.
+		// MariaDB cannot correlate the recursive anchor, so start from the
+		// account's posts. Other engines walk backwards from each bookmark.
 		// UNION terminates cycles and includes quote-only archived posts.
-		where += ` AND EXISTS (WITH RECURSIVE owners(id) AS (
+		if db.MariaDB {
+			where += ` AND EXISTS (WITH RECURSIVE owners(id) AS (
+ SELECT post_id FROM target_posts WHERE target=?
+ UNION SELECT q.quote_id FROM owners o JOIN posts q ON q.id=o.id WHERE q.quote_id<>'')
+ SELECT 1 FROM owners o WHERE o.id=p.id)`
+		} else {
+			where += ` AND EXISTS (WITH RECURSIVE owners(id) AS (
  SELECT p.id UNION SELECT parent.id FROM owners o JOIN posts parent ON parent.quote_id=o.id)
  SELECT 1 FROM owners o JOIN target_posts t ON t.post_id=o.id WHERE t.target=?)`
+		}
 		args = append(args, target)
 	}
-	filter, filterArgs := postFilter(query, kind, false)
+	filter, filterArgs := postFilterForDB(db, query, kind, false)
 	where += filter
 	args = append(args, filterArgs...)
 	if count {

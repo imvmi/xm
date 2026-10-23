@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../static/setup.js'),'utf8');
 
-async function fixture(initialized){
+async function fixture(initialized,driver='mysql'){
  const nodes=new Map(),requests=[];
  const node=id=>{
   if(!nodes.has(id))nodes.set(id,{id,value:'',textContent:'',hidden:false,disabled:false,checked:false,dataset:{},attrs:{},listeners:{},willValidate:true,selectedOptions:[{textContent:'本地文件系统'}],
@@ -20,11 +20,11 @@ async function fixture(initialized){
   'step-existing':['existing-username','existing-password']
  };
  const fields=['db-host','db-port','db-name','db-user','db-password','db-password-env','db-tls','db-ca','db-server-name','media-kind','media-name','media-endpoint','media-prefix','media-user','media-password','media-bucket','media-region','media-access','media-secret','media-session','media-path-style','media-timeout','setup-username','setup-password','setup-confirm','existing-username','existing-password'].map(node);
- const radios=[node('sqlite-radio'),node('mysql-radio')];radios[0].value='sqlite';radios[1].value='mysql';radios[1].checked=true;
+ const radios=['sqlite','mysql','mariadb'].map(driver=>{const r=node(driver+'-radio');r.value=driver;return r;});radios.find(r=>r.value===driver).checked=true;
  const steps=[0,1,2].map(i=>node('progress-'+i));
  const state={initialized,connected:false,connectError:false};
  const document={getElementById:node,
-  querySelector(selector){if(selector.endsWith(':checked'))return radios.find(r=>r.checked);return radios[selector.includes('value="mysql"')?1:0]},
+  querySelector(selector){if(selector.endsWith(':checked'))return radios.find(r=>r.checked);return radios.find(r=>selector.includes('value="'+r.value+'"'))},
   querySelectorAll(selector){if(selector==='[data-step]')return steps;if(selector==='input[name="db-kind"]')return radios;if(selector==='input[type="password"]')return fields.filter(n=>/password|confirm|secret|token/.test(n.id));return fields}
  };
  const fetch=async(url,options)=>{
@@ -33,7 +33,7 @@ async function fixture(initialized){
   requests.push({route,payload});
   let status=200,data={};
   if(route==='status')data={needed:!state.connected};
-  if(route==='defaults')data={database:{driver:'mysql',host:'db.example.test',port:3306,name:'archive',user:'xm',tls_mode:'verify_identity'}};
+  if(route==='defaults')data={database:{driver,host:'db.example.test',port:3306,name:'archive',user:'xm',tls_mode:'verify_identity'}};
   if(route==='database-test')data={initialized:state.initialized};
   if(route==='connect'&&state.connectError){status=401;data={error:'原管理员用户名或密码不正确'}}
   else if(route==='connect'||route==='complete'){state.connected=true;data={ok:true}}
@@ -87,4 +87,24 @@ test('returning to database and selecting a new database restores the three-step
  assert.equal(f.requests.some(r=>r.route==='connect'),false);
  assert.equal(f.requests.filter(r=>r.route==='storage-test').length,1);
  assert.equal(f.requests.find(r=>r.route==='complete').payload.username,'new-admin');
+});
+
+for(const initialized of [false,true])test(`MariaDB defaults and ${initialized?'existing connection':'new setup'} preserve the backend`,async()=>{
+ const f=await fixture(initialized,'mariadb');
+ assert.equal(f.node('mariadb-radio').checked,true);
+ assert.equal(f.node('mysql-fields').hidden,false);
+ assert.equal(f.node('mysql-fields').disabled,false);
+ assert.equal(f.node('sqlite-note').hidden,true);
+ await f.submit();
+ if(!initialized){
+  await f.submit();
+  assert.match(f.node('setup-summary').textContent,/MariaDB \/ archive/);
+  f.node('setup-username').listeners.input();
+  assert.match(f.node('setup-summary').textContent,/MariaDB \/ archive/);
+ }
+ await f.submit();
+ const writes=f.requests.filter(r=>['database-test','storage-test','complete','connect'].includes(r.route));
+ assert.ok(writes.length>=2);
+ for(const r of writes)assert.equal(r.payload.database.driver,'mariadb');
+ assert.equal(f.state.connected,true);
 });

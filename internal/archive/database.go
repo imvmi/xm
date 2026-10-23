@@ -62,6 +62,24 @@ func (c DatabaseConfig) DriverName() string {
 	}
 	return c.Driver
 }
+
+// IsMySQL reports whether the configured backend uses the MySQL wire protocol
+// and SQL dialect. Keep DriverName unchanged so MariaDB survives config reloads.
+func (c DatabaseConfig) IsMySQL() bool {
+	return c.DriverName() == "mysql" || c.DriverName() == "mariadb"
+}
+
+func (c DatabaseConfig) DisplayName() string {
+	switch c.DriverName() {
+	case "mysql":
+		return "MySQL"
+	case "mariadb":
+		return "MariaDB"
+	default:
+		return "SQLite3"
+	}
+}
+
 func (c DatabaseConfig) Validate() error {
 	if c.DriverName() == "sqlite" {
 		if c.SQLiteFile != "" && (filepath.Base(c.SQLiteFile) != c.SQLiteFile || strings.ContainsAny(c.SQLiteFile, "\\\x00\r\n") || (!strings.HasSuffix(c.SQLiteFile, ".sqlite") && !strings.HasSuffix(c.SQLiteFile, ".db"))) {
@@ -69,14 +87,14 @@ func (c DatabaseConfig) Validate() error {
 		}
 		return nil
 	}
-	if c.Driver != "mysql" {
-		return errors.New("database.driver 仅支持 sqlite 或 mysql")
+	if !c.IsMySQL() {
+		return errors.New("database.driver 仅支持 sqlite、mysql 或 mariadb")
 	}
 	if c.Host == "" || strings.ContainsAny(c.Host, "/\\\x00\r\n") || c.Name == "" || len(c.Name) > 64 || c.User == "" || c.Port < 0 || c.Port > 65535 {
-		return errors.New("请填写有效的 MySQL host、port、name 和 user")
+		return errors.New("请填写有效的 MySQL / MariaDB host、port、name 和 user")
 	}
 	if c.TLSMode != "" && c.TLSMode != "verify_identity" && c.TLSMode != "disabled" {
-		return errors.New("MySQL TLS 模式仅支持 verify_identity（默认）或 disabled（不加密）")
+		return errors.New("MySQL / MariaDB TLS 模式仅支持 verify_identity（默认）或 disabled（不加密）")
 	}
 	return nil
 }
@@ -107,7 +125,7 @@ func mysqlConfig(c DatabaseConfig) (*mysql.Config, error) {
 	if c.PasswordEnv != "" {
 		value, ok := os.LookupEnv(c.PasswordEnv)
 		if !ok || value == "" {
-			return nil, errors.New("MySQL 密码环境变量未设置或为空")
+			return nil, errors.New("MySQL / MariaDB 密码环境变量未设置或为空")
 		}
 		mc.Passwd = value
 	}
@@ -115,7 +133,7 @@ func mysqlConfig(c DatabaseConfig) (*mysql.Config, error) {
 	mc.ReadTimeout = 60 * time.Second
 	mc.WriteTimeout = 60 * time.Second
 	if err := mc.Apply(mysql.Charset("utf8mb4", "utf8mb4_bin")); err != nil {
-		return nil, errors.New("MySQL 字符集配置失败")
+		return nil, errors.New("MySQL / MariaDB 字符集配置失败")
 	}
 	mc.Params = map[string]string{"sql_mode": "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,ONLY_FULL_GROUP_BY'"}
 	mc.Logger = log.New(io.Discard, "", 0) // Driver diagnostics may include endpoint/user details.
@@ -128,14 +146,14 @@ func mysqlConfig(c DatabaseConfig) (*mysql.Config, error) {
 		if c.CAFile != "" {
 			pem, err := os.ReadFile(c.CAFile)
 			if err != nil {
-				return nil, errors.New("无法读取 MySQL CA 证书文件")
+				return nil, errors.New("无法读取 MySQL / MariaDB CA 证书文件")
 			}
 			roots, err := x509.SystemCertPool()
 			if err != nil {
 				roots = x509.NewCertPool()
 			}
 			if !roots.AppendCertsFromPEM(pem) {
-				return nil, errors.New("MySQL CA 证书文件不包含有效 PEM 证书")
+				return nil, errors.New("MySQL / MariaDB CA 证书文件不包含有效 PEM 证书")
 			}
 			tc.RootCAs = roots
 		}
@@ -160,7 +178,7 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 	}
 	connector, err := mysql.NewConnector(mc)
 	if err != nil {
-		return nil, errors.New("MySQL 连接配置无效")
+		return nil, errors.New("MySQL / MariaDB 连接配置无效")
 	}
 	raw := sql.OpenDB(connector)
 	raw.SetMaxOpenConns(8)
@@ -173,6 +191,12 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 		return nil, mysqlError("连接", err)
 	}
 	d := &database.DB{DB: raw, Dialect: "mysql"}
+	var version string
+	if err = raw.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+		raw.Close()
+		return nil, mysqlError("读取服务器版本", err)
+	}
+	d.MariaDB = strings.Contains(strings.ToLower(version), "mariadb")
 	for _, query := range mysqlArchiveSchema {
 		if _, err = d.ExecContext(ctx, query); err != nil {
 			raw.Close()
@@ -196,9 +220,9 @@ func OpenConfiguredStore(cfg Config) (*Store, error) {
 func mysqlError(action string, err error) error {
 	var me *mysql.MySQLError
 	if errors.As(err, &me) {
-		return fmt.Errorf("MySQL %s失败（错误码 %d），请检查数据库名称、权限和配置", action, me.Number)
+		return fmt.Errorf("MySQL / MariaDB %s失败（错误码 %d），请检查数据库名称、权限和配置", action, me.Number)
 	}
-	return fmt.Errorf("MySQL %s失败，请检查网络、TLS 证书和连接配置", action)
+	return fmt.Errorf("MySQL / MariaDB %s失败，请检查网络、TLS 证书和连接配置", action)
 }
 
 // InnoDB, binary UTF-8 comparison and bounded indexed identifiers preserve the

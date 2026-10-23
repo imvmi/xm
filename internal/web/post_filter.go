@@ -1,5 +1,7 @@
 package web
 
+import "xm/internal/database"
+
 // Each EXISTS expands only the current candidate's quote chain. The outer
 // timeline can seek its ordered index and stop after LIMIT matches instead of
 // materializing the entire archive before every page. UNION terminates cycles.
@@ -31,6 +33,42 @@ func postFilter(query, kind string, mediaOnly bool) (string, []any) {
 		where += " AND " + media + "))"
 	case "text":
 		where += " AND NOT " + media + "))"
+	}
+	return where, args
+}
+
+// MariaDB cannot reference an outer row from a recursive CTE's anchor.
+// Start at matching posts/assets and follow reverse quote links instead; the
+// final membership check can still correlate to the current timeline row.
+func postFilterForDB(db *database.DB, query, kind string, mediaOnly bool) (string, []any) {
+	if !db.MariaDB {
+		return postFilter(query, kind, mediaOnly)
+	}
+	matches := func(seed string) string {
+		return `EXISTS (WITH RECURSIVE matching(id) AS (` + seed + `
+ UNION SELECT parent.id FROM matching r JOIN posts parent ON parent.quote_id=r.id)
+ SELECT 1 FROM matching r WHERE r.id=p.id)`
+	}
+	where := ""
+	args := []any{}
+	if query != "" {
+		where += " AND " + matches("SELECT id FROM posts WHERE instr(lower(text),lower(?))>0 OR instr(lower(username),lower(?))>0")
+		args = append(args, query, query)
+	}
+	seed := "SELECT post_id FROM media"
+	if mediaOnly && kind != "photo" && kind != "video" && kind != "animated_gif" && kind != "media" {
+		where += " AND " + matches(seed)
+	}
+	switch kind {
+	case "photo", "animated_gif":
+		where += " AND " + matches(seed+" WHERE kind=?")
+		args = append(args, kind)
+	case "video":
+		where += " AND " + matches(seed+" WHERE kind IN ('video','animated_gif')")
+	case "media":
+		where += " AND " + matches(seed)
+	case "text":
+		where += " AND NOT " + matches(seed)
 	}
 	return where, args
 }
