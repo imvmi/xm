@@ -75,6 +75,8 @@ func externalErrorCode(status int) string {
 		return "conflict"
 	case 429:
 		return "rate_limited"
+	case 504:
+		return "query_timeout"
 	case 503:
 		return "unavailable"
 	default:
@@ -84,7 +86,11 @@ func externalErrorCode(status int) string {
 func (a *App) externalHandler() http.Handler {
 	mux := http.NewServeMux()
 	for _, route := range externalRoutes {
-		mux.HandleFunc(route.Pattern, func(w http.ResponseWriter, r *http.Request) { a.serveExternalRoute(w, r, route) })
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.serveExternalRoute(w, r, route) })
+		if route.Scope == "timeline:read" {
+			handler = readTimeout(postReadTimeout, handler)
+		}
+		mux.HandleFunc(route.Pattern, handler)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Request-ID", rand.Text())
@@ -154,10 +160,10 @@ func (a *App) serveExternalRoute(w http.ResponseWriter, r *http.Request, route a
 	now := time.Now().Unix()
 	if c.LastUsedAt < now-60 {
 		if mutation {
-			_, _ = a.store.DB.Exec("UPDATE api_credentials SET last_used_at=? WHERE id=? AND last_used_at<?", now, c.ID, now-60)
+			_, _ = a.store.DB.ExecContext(r.Context(), "UPDATE api_credentials SET last_used_at=? WHERE id=? AND last_used_at<?", now, c.ID, now-60)
 		} else if a.writeGate.TryRLock() {
 			if !a.maintenance.Load() {
-				_, _ = a.store.DB.Exec("UPDATE api_credentials SET last_used_at=? WHERE id=? AND last_used_at<?", now, c.ID, now-60)
+				_, _ = a.store.DB.ExecContext(r.Context(), "UPDATE api_credentials SET last_used_at=? WHERE id=? AND last_used_at<?", now, c.ID, now-60)
 			}
 			a.writeGate.RUnlock()
 		}

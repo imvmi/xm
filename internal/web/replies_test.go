@@ -43,7 +43,7 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 		{"", "", "", "video", []string{}},
 		{"", "", "", "photo", []string{"100"}}, // Context media must not change root filtering.
 	} {
-		got, err := listPosts(a.store.DB, tc.target, tc.query, tc.kind, tc.section, 0, 20)
+		got, err := listPosts(context.Background(), a.store.DB, tc.target, tc.query, tc.kind, tc.section, 0, 20)
 		if err != nil || !reflect.DeepEqual(replyIDs(got.Items), tc.want) || got.Total != len(tc.want) {
 			t.Fatalf("%+v got %v total %d: %v", tc, replyIDs(got.Items), got.Total, err)
 		}
@@ -58,7 +58,7 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 			}
 		}
 	}
-	first, err := listPostsPage(a.store.DB, "", "", "", "", 0, 1, "", true)
+	first, err := listPostsPage(context.Background(), a.store.DB, "", "", "", "", 0, 1, "", true)
 	if err != nil || first.NextCursor != "100" || first.HasMore {
 		t.Fatal(first, err)
 	}
@@ -66,7 +66,7 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 	if err = a.store.SavePosts("alice", []archive.Post{{ID: "997", AuthorID: "42", Username: "oldname"}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := listPosts(a.store.DB, "alice", "关系未知", "", "replies", 0, 20)
+	got, err := listPosts(context.Background(), a.store.DB, "alice", "关系未知", "", "replies", 0, 20)
 	if err != nil || len(got.Items) != 1 || !got.Items[0].SelfReply {
 		t.Fatal(got, err)
 	}
@@ -74,7 +74,7 @@ func TestSelfRepliesTimelineFiltersAndPreviews(t *testing.T) {
 	if _, err = a.store.DB.Exec("INSERT INTO account_preferences(target,show_in_timeline) VALUES('alice',0)"); err != nil {
 		t.Fatal(err)
 	}
-	got, err = listPosts(a.store.DB, "", "", "", "", 0, 20)
+	got, err = listPosts(context.Background(), a.store.DB, "", "", "", "", 0, 20)
 	if err != nil || got.Total != 0 {
 		t.Fatal(got, err)
 	}
@@ -144,7 +144,7 @@ func TestSelfReplyDatabaseCopy(t *testing.T) {
 	if err = a.store.CopyDatabase(context.Background(), dst, nil); err != nil {
 		t.Fatal(err)
 	}
-	result, err := listPosts(dst.DB, "alice", "", "", "replies", 0, 20)
+	result, err := listPosts(context.Background(), dst.DB, "alice", "", "", "replies", 0, 20)
 	if err != nil || len(result.Items) != 1 || !result.Items[0].SelfReply || result.Items[0].ReplyToAuthorID != "42" || result.Items[0].ReplyTo != "100" {
 		t.Fatal("migration lost self-reply identity", result, err)
 	}
@@ -219,11 +219,11 @@ func TestArchivedRepliesAcrossAuthors(t *testing.T) {
 	if len(chain.Items) != 3 || chain.Items[0].ID != "100" || chain.Items[1].ID != "200" || chain.Items[2].ID != "201" || chain.End != "beginning" {
 		t.Fatal(chain)
 	}
-	page, err := listPosts(a.store.DB, "bob", "reply to alice", "", "replies", 0, 20)
+	page, err := listPosts(context.Background(), a.store.DB, "bob", "reply to alice", "", "replies", 0, 20)
 	if err != nil || len(page.Items) != 1 || page.Items[0].SelfReply || page.Items[0].ReplyPreview == nil || page.Items[0].ReplyPreview.Username != "alice" {
 		t.Fatal(page, err)
 	}
-	page, err = listPosts(a.store.DB, "alice", "root", "", "posts", 0, 20)
+	page, err = listPosts(context.Background(), a.store.DB, "alice", "root", "", "posts", 0, 20)
 	if err != nil || len(page.Items) != 1 || !page.Items[0].HasReplies {
 		t.Fatal(page, err)
 	}

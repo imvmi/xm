@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +41,7 @@ type Scheduler struct {
 	lastFinish time.Time
 	browser    schedulerBrowser
 	progress   taskProgress
+	recovery   *interruptedAttempt
 }
 
 type taskProgress struct {
@@ -198,16 +198,31 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	cfg := a.Config()
 	s.mu.Lock()
 	active := s.active
+	recovery := s.recovery
 	s.mu.Unlock()
 	if active || time.Now().Before(s.browser.retryAt) {
 		a.changeMu.Unlock()
 		return false, nil
 	}
-	if state(a.store.DB, "cookie_blocked") != "" {
+	if recovery != nil {
+		if err := s.recoverAttempt(*recovery); err != nil {
+			a.changeMu.Unlock()
+			return false, err
+		}
+		s.mu.Lock()
+		s.recovery = nil
+		s.mu.Unlock()
+	}
+	gates, err := loadSchedulerState(a.store.DB)
+	if err != nil {
+		a.changeMu.Unlock()
+		return false, err
+	}
+	if gates.CookieBlocked != "" {
 		a.changeMu.Unlock()
 		return false, nil
 	}
-	until, _ := strconv.ParseInt(state(a.store.DB, "cooldown_until"), 10, 64)
+	until := gates.CooldownUntil
 	if time.Now().Unix() < until {
 		a.changeMu.Unlock()
 		return false, nil
@@ -219,10 +234,10 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	}
 	// Settings/import operations and claiming a job are serialized. A replacement
 	// cookie or proxy always takes effect for the next job, never halfway through one.
-	cookieGeneration := state(a.store.DB, "cookie_imported")
+	cookieGeneration := gates.CookieGeneration
 	now := time.Now().Unix()
 	var pending []string
-	rawPending := state(a.store.DB, "budget_batch_pending")
+	rawPending := gates.Pending
 	if rawPending != "" {
 		if err = json.Unmarshal([]byte(rawPending), &pending); err != nil {
 			a.changeMu.Unlock()
@@ -353,7 +368,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	globalStop := false
 	rateStopped := false
 	batchSuccessful := true
-	batchHadFailure := autoBatch && state(a.store.DB, "budget_batch_failed") == "1"
+	batchHadFailure := autoBatch && gates.BatchFailed
 	interrupted := false
 	lastFinished := s.lastTaskFinish()
 	needInterval := !lastFinished.IsZero()
@@ -425,8 +440,13 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		if latestCookies != cookies {
 			cookies = latestCookies
 		}
-		cookieGeneration = state(a.store.DB, "cookie_imported")
-		if state(a.store.DB, "cookie_blocked") != "" {
+		gates, err = loadSchedulerState(a.store.DB)
+		if err != nil {
+			a.changeMu.Unlock()
+			return true, err
+		}
+		cookieGeneration = gates.CookieGeneration
+		if gates.CookieBlocked != "" || time.Now().Unix() < gates.CooldownUntil {
 			a.changeMu.Unlock()
 			interrupted = true
 			break
@@ -468,6 +488,10 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		s.mu.Lock()
 		s.current = ""
 		s.cancel = nil
+		if runErr != nil {
+			s.recovery = &interruptedAttempt{target: m.Username, jobID: queueJob.ID, runID: runID}
+			errors.As(runErr, &s.recovery.stateError)
+		}
 		s.mu.Unlock()
 		processed = append(processed, m.Username)
 		if kind != "" && kind != "refresh_head" || targetCancelled {
@@ -546,7 +570,11 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		}
 	}
 	if autoBatch {
-		if state(a.store.DB, "budget_batch_pending") == "[]" && !interrupted {
+		gates, err = loadSchedulerState(a.store.DB)
+		if err != nil {
+			return true, err
+		}
+		if gates.Pending == "[]" && !interrupted {
 			a.changeMu.Lock()
 			err = s.finishBatch()
 			a.changeMu.Unlock()
@@ -554,7 +582,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 				return true, err
 			}
 		} else if rateStopped {
-			until, _ := strconv.ParseInt(state(a.store.DB, "cooldown_until"), 10, 64)
+			until := gates.CooldownUntil
 			if _, err = a.store.DB.Exec("UPDATE monitors SET next_run=CASE WHEN next_run<? THEN ? ELSE next_run END WHERE enabled=1", until, until); err != nil {
 				return true, err
 			}
@@ -779,12 +807,16 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			status, message = "incomplete", "采集范围已变更，下轮重新建立历史基线；已归档内容保留"
 		}
 	}
-	if collectErr == nil && jobCtx.Err() == nil && state(a.store.DB, "cookie_imported") == cookieGeneration {
+	gates, err := loadSchedulerState(a.store.DB)
+	if err != nil {
+		return "", id, &completionStateError{err: err, collectionErr: collectErr, cookieGeneration: cookieGeneration, message: message}
+	}
+	if collectErr == nil && jobCtx.Err() == nil && gates.CookieGeneration == cookieGeneration {
 		if err = setState(a.store.DB, "cookie_api_attempted", ""); err != nil {
 			return "", id, err
 		}
 	}
-	if archive.FailureKind(collectErr) == "auth" && state(a.store.DB, "cookie_imported") == cookieGeneration {
+	if archive.FailureKind(collectErr) == "auth" && gates.CookieGeneration == cookieGeneration {
 		if err = setState(a.store.DB, "cookie_blocked", message); err != nil {
 			return "", id, err
 		}
@@ -796,7 +828,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	rateUntil, rateFailures := int64(0), 0
 	if archive.FailureKind(collectErr) == "rate" {
-		previous, _ := strconv.Atoi(state(a.store.DB, "rate_limit_failures"))
+		previous := gates.RateFailures
 		latest := a.Config()
 		rateUntil, rateFailures = rateLimitDeadline(ended, latest.DefaultInterval, previous, collectErr, latest.RateLimitMode)
 	}
@@ -873,7 +905,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	} else if mediaErr != nil {
 		kind = "media"
 	}
-	if kind == "auth" && state(a.store.DB, "cookie_imported") != cookieGeneration {
+	if kind == "auth" && gates.CookieGeneration != cookieGeneration {
 		kind = ""
 		batchKind = "auth_replaced"
 	}
@@ -921,7 +953,11 @@ func (s *Scheduler) queueAPI(target, requestedMode, credentialID string) (int64,
 	if _, err := a.store.LoadCookies(); err != nil {
 		return 0, fmt.Errorf("请先导入有效格式的 Cookie")
 	}
-	if state(a.store.DB, "cookie_blocked") != "" {
+	gates, err := loadSchedulerState(a.store.DB)
+	if err != nil {
+		return 0, err
+	}
+	if gates.CookieBlocked != "" {
 		return 0, errors.New("登录状态受限，请先重新导入 Cookie")
 	}
 	tx, err := a.store.DB.Begin()

@@ -44,6 +44,7 @@ type App struct {
 	cacheLockMu        sync.Mutex
 	cacheLocks         map[string]*cacheEntryLock
 	cachePruneMu       sync.Mutex
+	cacheDiskAvailable func(string) (uint64, error)
 	writeGate          sync.RWMutex
 	maintenance        atomic.Bool
 	migrations         *migrationManager
@@ -74,7 +75,10 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if result, migrationErr := s.MigrateLegacyAvatars(context.Background(), cfg.DataDir); migrationErr != nil || result.Failed > 0 {
 		log.Printf("旧头像兼容处理未全部完成，请检查数据目录权限后重启重试（失败 %d）", result.Failed)
 	}
-	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome}
+	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome, cacheDiskAvailable: availableDiskBytes}
+	if err = a.recoverRemoteMediaCache(); err != nil {
+		return nil, err
+	}
 	a.api.windows = make(map[string]apiWindow)
 	a.scheduler = newScheduler(a)
 	a.notifier = newNotifier(a)
@@ -237,6 +241,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/channels/{id}/test", a.testNotificationChannel)
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
+	mux.HandleFunc("PUT /api/storage/profiles/{id}/credentials", a.rotateStorageCredentials)
 	mux.HandleFunc("GET /api/migrations", a.migrationStatus)
 	mux.HandleFunc("GET /api/migrations/preview", a.migrationPreview)
 	mux.HandleFunc("POST /api/migrations/preview", a.migrationPreview)
@@ -279,10 +284,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/monitors/{username}/run", a.runMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
-	mux.HandleFunc("GET /api/posts", a.posts)
-	mux.HandleFunc("GET /api/posts/{post}", a.postDetail)
-	mux.HandleFunc("GET /api/posts/{post}/context", a.replyContext)
-	mux.HandleFunc("GET /api/posts/{post}/replies", a.postReplies)
+	mux.HandleFunc("GET /api/posts", readTimeout(postReadTimeout, a.posts))
+	mux.HandleFunc("GET /api/posts/{post}", readTimeout(postReadTimeout, a.postDetail))
+	mux.HandleFunc("GET /api/posts/{post}/context", readTimeout(postReadTimeout, a.replyContext))
+	mux.HandleFunc("GET /api/posts/{post}/replies", readTimeout(postReadTimeout, a.postReplies))
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users/stats", a.userStats)
 	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
@@ -360,7 +365,8 @@ func (a *App) Handler() http.Handler {
 				problem(w, 403, "会话校验失败，请刷新页面")
 				return
 			}
-			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") && r.URL.Path != "/api/storage/cache" {
+			_, storagePattern := mux.Handler(r)
+			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") && r.URL.Path != "/api/storage/cache" && storagePattern != "PUT /api/storage/profiles/{id}/credentials" {
 				problem(w, 403, "初始化已完成，数据库与存储配置已锁定，无法修改")
 				return
 			}
@@ -485,10 +491,11 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
+	browserSettingsInput
 	SQLiteReadConnections *int `json:"sqlite_read_connections"`
 
 	ChromeHeadless      *bool   `json:"chrome_headless"`
@@ -524,6 +531,10 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	cfg := a.Config()
+	if err := v.browserSettingsInput.apply(&cfg); err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
 	if v.ChromeHeadless != nil {
 		cfg.Headless = *v.ChromeHeadless
 	}
@@ -718,6 +729,19 @@ func (a *App) testProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		browserSettingsInput
+		ConnectionOnly bool `json:"connection_only"`
+	}
+	// Empty requests retain the original saved-config diagnostic API.
+	if r.Body != nil && r.ContentLength != 0 && !decode(w, r, &input) {
+		return
+	}
+	cfg := a.Config()
+	if err := input.browserSettingsInput.apply(&cfg); err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
 	type step struct {
 		Name    string `json:"name"`
 		Status  string `json:"status"`
@@ -726,24 +750,35 @@ func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 	start := time.Now()
-	cookies, cookieErr := a.store.LoadCookies()
+	var cookieErr error
 	var cookieInput *archive.Cookies
-	if cookieErr == nil {
-		cookieInput = &cookies
+	if !input.ConnectionOnly {
+		var cookies archive.Cookies
+		cookies, cookieErr = a.store.LoadCookies()
+		if cookieErr == nil {
+			cookieInput = &cookies
+		}
 	}
-	info, checkErr := a.checkChrome(ctx, a.Config(), cookieInput)
+	info, checkErr := a.checkChrome(ctx, cfg, cookieInput)
 	mode := "有界面"
 	if info.Headless {
 		mode = "Headless"
 	}
+	if cfg.BrowserMode == "cdp" {
+		mode = "CDP 远程连接"
+	}
 	steps := make([]step, 0, 4)
 	stage := archive.ChromeCheckStage(checkErr)
 	if info.Product != "" {
-		steps = append(steps, step{Name: "Chrome 环境", Status: "passed", Message: info.Product + " · " + mode + " 模式启动成功"})
+		steps = append(steps, step{Name: "Chrome 环境", Status: "passed", Message: info.Product + " · " + mode + " 就绪"})
 	} else if stage == "chrome" {
 		steps = append(steps, step{Name: "Chrome 环境", Status: "failed", Message: checkErr.Error()})
 	} else {
 		steps = append(steps, step{Name: "Chrome 环境", Status: "skipped", Message: "代理初始化失败，尚未启动 Chrome"})
+	}
+	if input.ConnectionOnly {
+		respond(w, 200, map[string]any{"ok": checkErr == nil, "latency_ms": time.Since(start).Milliseconds(), "steps": steps})
+		return
 	}
 	if cookieErr != nil {
 		steps = append(steps, step{Name: "Cookie", Status: "failed", Message: "未找到可用的 auth_token 和 ct0，请先在 X 账号设置中导入 Cookie"})
@@ -1072,7 +1107,7 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "无效的分页游标")
 		return
 	}
-	v, err := listPostsPage(a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, a.Config().TimelinePageSize, before, q.Get("count") != "0")
+	v, err := listPostsPage(r.Context(), a.store.DB, q.Get("target"), q.Get("q"), q.Get("kind"), q.Get("section"), offset, a.Config().TimelinePageSize, before, q.Get("count") != "0")
 	if err != nil {
 		problem(w, 500, "读取推文失败")
 		return

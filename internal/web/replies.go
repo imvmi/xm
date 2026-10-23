@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -33,7 +34,7 @@ func replySummary(p PostView, limit int) ReplySummary {
 	return ReplySummary{ID: p.ID, AuthorID: p.AuthorID, AvatarURL: p.AvatarURL, HasReplies: p.HasReplies, Username: p.Username, Name: p.Name, CreatedAt: p.CreatedAt, Text: text, ReplyTo: p.ReplyTo, SelfReply: p.SelfReply}
 }
 
-func attachReplyPreviews(db *database.DB, items []PostView) error {
+func attachReplyPreviews(ctx context.Context, db *database.DB, items []PostView) error {
 	ids := []string{}
 	seen := map[string]bool{}
 	var visit func([]PostView)
@@ -52,7 +53,7 @@ func attachReplyPreviews(db *database.DB, items []PostView) error {
 	parents := map[string]PostView{}
 	for start := 0; start < len(ids); start += 500 {
 		args, marks := postBatchArgs(ids[start:min(start+500, len(ids))])
-		rows, err := db.Query("SELECT "+postColumns+" FROM posts p WHERE p.id IN ("+marks+")", args...)
+		rows, err := db.QueryContext(ctx, "SELECT "+postColumns+" FROM posts p WHERE p.id IN ("+marks+")", args...)
 		if err != nil {
 			return err
 		}
@@ -136,7 +137,7 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 	for left, right := 0, len(result.Items)-1; left < right; left, right = left+1, right-1 {
 		result.Items[left], result.Items[right] = result.Items[right], result.Items[left]
 	}
-	if err := attachPosts(a.store.DB, result.Items); err != nil {
+	if err := attachPosts(r.Context(), a.store.DB, result.Items); err != nil {
 		problem(w, 500, "读取上下文失败")
 		return
 	}
@@ -202,7 +203,7 @@ func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
 		result.HasMore = true
 		result.NextCursor = result.Items[19].ID
 	}
-	if err := attachPosts(a.store.DB, result.Items); err != nil {
+	if err := attachPosts(r.Context(), a.store.DB, result.Items); err != nil {
 		problem(w, 500, "读取回复失败")
 		return
 	}

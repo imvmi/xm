@@ -22,6 +22,8 @@ type schedulerBrowser struct {
 
 type browserSessionKey struct {
 	proxy, chrome                      string
+	browserMode, cdpHost               string
+	cdpPort                            int
 	headless                           bool
 	cookies                            archive.Cookies
 	timeout, scrollDelay, scrollJitter int
@@ -29,7 +31,7 @@ type browserSessionKey struct {
 }
 
 func sessionKey(cfg archive.Config, cookies archive.Cookies) browserSessionKey {
-	return browserSessionKey{cfg.Proxy, cfg.ChromePath, cfg.Headless, cookies, cfg.BrowserMaxAge, cfg.ScrollDelay, cfg.ScrollJitter, cfg.TimelineIdleSeconds, cfg.KnownBoundaryPosts}
+	return browserSessionKey{proxy: cfg.Proxy, chrome: cfg.ChromePath, headless: cfg.Headless, cookies: cookies, timeout: cfg.BrowserMaxAge, scrollDelay: cfg.ScrollDelay, scrollJitter: cfg.ScrollJitter, idle: cfg.TimelineIdleSeconds, knownBoundary: cfg.KnownBoundaryPosts, browserMode: cfg.BrowserMode, cdpHost: cfg.CDPHost, cdpPort: cfg.CDPPort}
 }
 
 func (s *Scheduler) closeSession() {

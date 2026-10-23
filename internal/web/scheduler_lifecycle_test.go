@@ -165,8 +165,10 @@ func TestSchedulerReadsChangedSettingsAtTaskBoundary(t *testing.T) {
 	sessions := []*managedTestSession{}
 	var cookiesSeen []archive.Cookies
 	var proxies []string
+	var browserConfigs []archive.Config
 	a.scheduler.newSession = func(_ context.Context, cfg archive.Config, cookies archive.Cookies) (collectionSession, error) {
 		proxies = append(proxies, cfg.Proxy)
+		browserConfigs = append(browserConfigs, cfg)
 		cookiesSeen = append(cookiesSeen, cookies)
 		session := &managedTestSession{}
 		sessions = append(sessions, session)
@@ -174,6 +176,9 @@ func TestSchedulerReadsChangedSettingsAtTaskBoundary(t *testing.T) {
 			if target == "alice" {
 				cfg := a.Config()
 				cfg.Proxy = "http://127.0.0.1:12345"
+				cfg.BrowserMode = "cdp"
+				cfg.CDPHost = "192.0.2.10"
+				cfg.CDPPort = 5818
 				if err := a.saveConfig(cfg); err != nil {
 					t.Fatal(err)
 				}
@@ -186,7 +191,7 @@ func TestSchedulerReadsChangedSettingsAtTaskBoundary(t *testing.T) {
 		return session, nil
 	}
 	schedulerStep(t, a)
-	if len(sessions) != 2 || sessions[0].closed != 1 || proxies[1] != "http://127.0.0.1:12345" || cookiesSeen[1].AuthToken != "new-fixture" {
+	if len(sessions) != 2 || sessions[0].closed != 1 || proxies[1] != "http://127.0.0.1:12345" || cookiesSeen[1].AuthToken != "new-fixture" || browserConfigs[1].BrowserMode != "cdp" || browserConfigs[1].CDPHost != "192.0.2.10" || browserConfigs[1].CDPPort != 5818 {
 		t.Fatal("stale session settings", len(sessions))
 	}
 }

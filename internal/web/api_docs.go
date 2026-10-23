@@ -85,7 +85,7 @@ func externalOpenAPI() map[string]any {
 			addQuery("count", map[string]any{"type": "string", "enum": []string{"0", "1"}, "default": "0"})
 		}
 		responses := map[string]any{}
-		for _, code := range []string{"400", "401", "403", "404", "409", "429", "500", "503"} {
+		for _, code := range []string{"400", "401", "403", "404", "409", "429", "500", "503", "504"} {
 			responses[code] = apiJSONResponse("请求失败；error.code 为机器可读错误码，error.request_id 用于排查。", apiRef("Error"))
 		}
 		responseSchema := any(map[string]string{"type": "object"})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -21,9 +20,11 @@ type ChromeInfo struct {
 type ChromeCheckError struct {
 	Stage   string
 	Message string
+	Cause   error
 }
 
 func (e *ChromeCheckError) Error() string { return e.Message }
+func (e *ChromeCheckError) Unwrap() error { return e.Cause }
 
 func ChromeCheckStage(err error) string {
 	if err == nil {
@@ -40,46 +41,36 @@ func chromeCheckError(stage, message string) error {
 	return &ChromeCheckError{Stage: stage, Message: message}
 }
 
-// CheckChrome starts Chrome with the same local runtime options used by the
+func chromeCheckCause(stage, message string, cause error) error {
+	return &ChromeCheckError{Stage: stage, Message: message, Cause: cause}
+}
+
+// CheckChrome starts or connects to Chrome with the same options used by the
 // collector. When cookies is non-nil it also opens X and verifies the session,
 // but never reads or stores timeline data.
 func CheckChrome(parent context.Context, cfg Config, cookies *Cookies) (ChromeInfo, error) {
 	var info ChromeInfo
-	profile, err := os.MkdirTemp("", "xm-chrome-check-*")
+	ctx, closeBrowser, err := newBrowserContext(parent, cfg, cookies != nil)
 	if err != nil {
-		return info, chromeCheckError("chrome", "无法创建 Chrome 临时目录："+err.Error())
+		return info, err
 	}
-	defer os.RemoveAll(profile)
-
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts,
-		chromedp.UserDataDir(profile),
-		chromedp.Flag("headless", cfg.Headless),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("disable-quic", true),
-	)
-	var bridge *BrowserProxy
-	if cookies != nil && cfg.Proxy != "" {
-		bridge, err = StartBrowserProxy(cfg.Proxy)
-		if err != nil {
-			return info, chromeCheckError("network", "无法初始化采集代理："+err.Error())
-		}
-		defer bridge.Close()
-		opts = append(opts, chromedp.ProxyServer(bridge.URL()))
-	} else {
-		opts = append(opts, chromedp.Flag("no-proxy-server", true))
-	}
-	if cfg.ChromePath != "" {
-		opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
-	}
-	alloc, closeAlloc := chromedp.NewExecAllocator(parent, opts...)
-	defer closeAlloc()
-	ctx, closeBrowser := chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
 	defer closeBrowser()
 
 	info.Product, err = chromedp.Run(ctx, chromedp.Evaluate[string](`navigator.userAgent.match(/(?:HeadlessChrome|Chrome|Chromium)\/[0-9.]+/)?.[0]||navigator.userAgent`))
 	if err != nil {
-		return ChromeInfo{}, chromeCheckError("chrome", "无法启动 Chrome："+err.Error()+"。请确认已安装 Chrome/Chromium，并检查 chrome_path、运行权限和沙箱环境")
+		// chromedp also uses context.Canceled when the remote browser drops
+		// its connection. Only a canceled caller means the test was canceled.
+		if parent.Err() != nil {
+			return ChromeInfo{}, chromeCheckCause("chrome", browserConnectionReason(parent.Err()), parent.Err())
+		}
+		if cfg.BrowserMode == "cdp" {
+			reason := browserConnectionReason(err)
+			if errors.Is(err, context.Canceled) {
+				reason = "远端浏览器已断开连接，请检查 Chrome 是否退出或调试连接是否被关闭"
+			}
+			return ChromeInfo{}, chromeCheckCause("chrome", "CDP 浏览器连接失败："+reason, err)
+		}
+		return ChromeInfo{}, chromeCheckCause("chrome", browserStartError(cfg), err)
 	}
 	info.Headless = cfg.Headless
 	if cookies == nil {

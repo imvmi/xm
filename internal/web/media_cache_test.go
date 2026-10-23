@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -98,7 +99,7 @@ func TestMediaPrivateCacheValidatorsAndRanges(t *testing.T) {
 			t.Fatal("unversioned URL received long caching", legacy.Header())
 		}
 	}
-	page, err := listPosts(a.store.DB, "alice", "", "", "", 0, 24)
+	page, err := listPosts(context.Background(), a.store.DB, "alice", "", "", "", 0, 24)
 	if err != nil || len(page.Items) != 2 || page.Items[0].Media[0].Version == "" {
 		t.Fatal("media version missing from timeline", page, err)
 	}

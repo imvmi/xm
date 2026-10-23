@@ -19,6 +19,9 @@ type Config struct {
 	StorageProfiles      []StorageProfile      `json:"storage_profiles,omitempty"`
 	DataDir              string                `json:"data_dir"`
 	Proxy                string                `json:"proxy"`
+	BrowserMode          string                `json:"browser_mode"`
+	CDPHost              string                `json:"cdp_host"`
+	CDPPort              int                   `json:"cdp_port"`
 	ChromePath           string                `json:"chrome_path"`
 	Headless             bool                  `json:"headless"`
 	RequestTimeout       int                   `json:"request_timeout_seconds"`
@@ -58,7 +61,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
+	return Config{BrowserMode: "local", CDPHost: "127.0.0.1", CDPPort: 9222, SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -95,6 +98,18 @@ func LoadConfig(path string) (Config, error) {
 func normalizeConfig(path string, c Config) (Config, error) {
 	var err error
 	defaults := DefaultConfig()
+	if c.BrowserMode == "" {
+		c.BrowserMode = defaults.BrowserMode
+	}
+	if c.CDPHost == "" && c.BrowserMode == "local" {
+		c.CDPHost = defaults.CDPHost
+	}
+	if c.CDPPort == 0 && c.BrowserMode == "local" {
+		c.CDPPort = defaults.CDPPort
+	}
+	if err := ValidateBrowser(c); err != nil {
+		return c, err
+	}
 	if c.SQLiteReadConnections == 0 {
 		c.SQLiteReadConnections = defaults.SQLiteReadConnections
 	}

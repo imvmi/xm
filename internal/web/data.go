@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -163,9 +164,17 @@ func validateMonitor(m *Monitor) error {
 	return nil
 }
 func state(db *database.DB, key string) string {
-	var v string
-	_ = db.QueryRow("SELECT value FROM web_state WHERE `key`=?", key).Scan(&v)
+	// Best-effort display only. Control flow must use readState/loadSchedulerState.
+	v, _ := readState(db, key)
 	return v
+}
+func readState(db *database.DB, key string) (string, error) {
+	var v string
+	err := db.QueryRow("SELECT value FROM web_state WHERE `key`=?", key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
 }
 func setState(db *database.DB, key, value string) error {
 	_, err := db.Exec(database.Upsert(db.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), key, value)
@@ -234,13 +243,13 @@ func scanPost(row scanner) (PostView, error) {
 	p.Media = []MediaView{}
 	return p, err
 }
-func listPosts(db *database.DB, target, query, kind, section string, offset, limit int) (PostList, error) {
-	return listPostsPage(db, target, query, kind, section, offset, limit, "", true)
+func listPosts(ctx context.Context, db *database.DB, target, query, kind, section string, offset, limit int) (PostList, error) {
+	return listPostsPage(ctx, db, target, query, kind, section, offset, limit, "", true)
 }
 
-func listPostsPage(db *database.DB, target, query, kind, section string, offset, limit int, before string, count bool) (PostList, error) {
+func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, section string, offset, limit int, before string, count bool) (PostList, error) {
 	if section == "bookmarks" {
-		return listBookmarkedPosts(db, target, query, kind, offset, limit, before, count)
+		return listBookmarkedPosts(ctx, db, target, query, kind, offset, limit, before, count)
 	}
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit}
 	from := " FROM posts p"
@@ -260,70 +269,31 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 		// entries on the home timeline.
 		where += " AND " + rootPostSQL
 	}
-	// Only filtered requests need quote traversal. Seed it from the selected
-	// archive instead of expanding every post (including unrelated quotes).
-	prefix := ""
-	prefixArgs := []any{}
-	if query != "" || kind != "" || section == "media" {
-		seed := "SELECT DISTINCT post_id,post_id FROM target_posts"
-		if target != "" {
-			seed += " WHERE target=?"
-			prefixArgs = append(prefixArgs, target)
-		} else {
-			seed = "SELECT DISTINCT t.post_id,t.post_id FROM target_posts t LEFT JOIN monitors m ON m.username=t.target LEFT JOIN account_preferences ap ON ap.target=t.target WHERE COALESCE(m.show_in_timeline,ap.show_in_timeline,1)=1"
-		}
-		prefix = "WITH RECURSIVE related(root,id) AS (" + seed + " UNION SELECT r.root,p.quote_id FROM related r JOIN posts p ON p.id=r.id WHERE p.quote_id<>'') "
-	}
-	if query != "" {
-		where += ` AND EXISTS (SELECT 1 FROM related r JOIN posts q ON q.id=r.id WHERE r.root=p.id AND (instr(lower(q.text),lower(?))>0 OR instr(lower(q.username),lower(?))>0))`
-		args = append(args, query, query)
-	}
-	media := `EXISTS (SELECT 1 FROM related r JOIN media a ON a.post_id=r.id WHERE r.root=p.id`
 	switch section {
 	case "posts":
 		where += " AND " + rootPostSQL
 	case "replies":
 		where += " AND p.reply_to<>''"
-	case "media":
-		where += " AND " + media + ")"
 	}
-	switch kind {
-	case "photo":
-		where += " AND " + media + " AND a.kind='photo')"
-	case "video":
-		where += " AND " + media + " AND a.kind IN ('video','animated_gif'))"
-	case "media":
-		where += " AND " + media + ")"
-	case "text":
-		where += " AND NOT " + media + ")"
-	}
-	args = append(prefixArgs, args...)
+	filter, filterArgs := postFilter(query, kind, section == "media")
+	where += filter
+	args = append(args, filterArgs...)
 	result.Total = -1
 	if count {
-		if err := db.QueryRow(prefix+"SELECT COUNT(*)"+from+where, args...).Scan(&result.Total); err != nil {
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*)"+from+where, args...).Scan(&result.Total); err != nil {
 			return result, err
 		}
 	}
 	// Seek both parts of the compound index. An OR over different ID lengths
 	// can scan every same-length ID before the cursor on SQLite/MySQL.
-	ranges := []struct {
-		clause string
-		args   []any
-	}{{"", nil}}
+	ranges := timelineRanges(orderID, before)
 	if before != "" {
-		ranges = []struct {
-			clause string
-			args   []any
-		}{
-			{" AND length(" + orderID + ")=? AND " + orderID + "<?", []any{len(before), before}},
-			{" AND length(" + orderID + ")<?", []any{len(before)}},
-		}
 		offset = 0
 	}
 	for _, span := range ranges {
 		pageArgs := append(append([]any{}, args...), span.args...)
 		pageArgs = append(pageArgs, limit+1-len(result.Items), offset)
-		rows, err := db.Query(prefix+"SELECT "+postColumns+from+where+span.clause+" ORDER BY length("+orderID+") DESC,"+orderID+" DESC LIMIT ? OFFSET ?", pageArgs...)
+		rows, err := db.QueryContext(ctx, "SELECT "+postColumns+from+where+span.clause+" ORDER BY "+span.order+" LIMIT ? OFFSET ?", pageArgs...)
 		if err != nil {
 			return result, err
 		}
@@ -351,7 +321,7 @@ func listPostsPage(db *database.DB, target, query, kind, section string, offset,
 	if len(result.Items) > 0 {
 		result.NextCursor = result.Items[len(result.Items)-1].ID
 	}
-	if err := attachPosts(db, result.Items); err != nil {
+	if err := attachPosts(ctx, db, result.Items); err != nil {
 		return result, err
 	}
 	return result, nil

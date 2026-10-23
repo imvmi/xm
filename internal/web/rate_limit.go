@@ -54,10 +54,18 @@ func saveRateLimit(tx *database.Tx, until int64, failures int) error {
 // Carry an active cooldown from the old fixed-15-minute policy into the new
 // policy on upgrade. Never shorten it, or revive a stale, expired cooldown.
 func upgradeRateLimitState(db *database.DB, interval int, mode string, now int64) error {
-	if state(db, "rate_limit_failures") != "" {
+	gates, err := loadSchedulerState(db)
+	if err != nil {
+		return err
+	}
+	raw, err := readState(db, "rate_limit_failures")
+	if err != nil {
+		return err
+	}
+	if raw != "" {
 		return nil
 	}
-	oldUntil, _ := strconv.ParseInt(state(db, "cooldown_until"), 10, 64)
+	oldUntil := gates.CooldownUntil
 	if oldUntil <= now {
 		return nil
 	}

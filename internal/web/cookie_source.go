@@ -128,7 +128,14 @@ func (a *App) fetchCookie(w http.ResponseWriter, r *http.Request) {
 func (a *App) recoverCookie(ctx context.Context, generation, target string) error {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
-	if ctx.Err() != nil || state(a.store.DB, "cookie_imported") != generation || state(a.store.DB, "cookie_api_attempted") == "1" {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	gates, err := loadSchedulerState(a.store.DB)
+	if err != nil {
+		return err
+	}
+	if gates.CookieGeneration != generation || gates.CookieAttempted {
 		return nil
 	}
 	c, err := a.store.LoadCookieSource()

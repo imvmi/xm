@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -84,74 +85,57 @@ func parseBookmarkCursor(cursor string) (int64, string, error) {
 
 // Global bookmarks intentionally ignore monitor visibility. Account bookmarks
 // include archived roots and their quoted posts, without changing associations.
-func listBookmarkedPosts(db *database.DB, target, query, kind string, offset, limit int, before string, count bool) (PostList, error) {
+func listBookmarkedPosts(ctx context.Context, db *database.DB, target, query, kind string, offset, limit int, before string, count bool) (PostList, error) {
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit, Total: -1}
-	ctes := []string{}
 	args := []any{}
 	from := " FROM post_bookmarks b JOIN posts p ON p.id=b.post_id"
 	where := " WHERE 1=1"
 	if target != "" {
-		ctes = append(ctes, "bookmark_scope(id) AS (SELECT post_id FROM target_posts WHERE target=? UNION SELECT p.quote_id FROM bookmark_scope s JOIN posts p ON p.id=s.id WHERE p.quote_id<>'')")
+		// Walk indexed reverse quote links only for each candidate bookmark.
+		// UNION terminates cycles and includes quote-only archived posts.
+		where += ` AND EXISTS (WITH RECURSIVE owners(id) AS (
+ SELECT p.id UNION SELECT parent.id FROM owners o JOIN posts parent ON parent.quote_id=o.id)
+ SELECT 1 FROM owners o JOIN target_posts t ON t.post_id=o.id WHERE t.target=?)`
 		args = append(args, target)
-		where += " AND EXISTS (SELECT 1 FROM bookmark_scope s WHERE s.id=p.id)"
 	}
-	if query != "" || kind != "" {
-		seed := "SELECT post_id,post_id FROM post_bookmarks"
-		if target != "" {
-			seed += " WHERE post_id IN (SELECT id FROM bookmark_scope)"
-		}
-		ctes = append(ctes, "related(root,id) AS ("+seed+" UNION SELECT r.root,p.quote_id FROM related r JOIN posts p ON p.id=r.id WHERE p.quote_id<>'')")
-	}
-	if query != "" {
-		where += " AND EXISTS (SELECT 1 FROM related r JOIN posts q ON q.id=r.id WHERE r.root=p.id AND (instr(lower(q.text),lower(?))>0 OR instr(lower(q.username),lower(?))>0))"
-		args = append(args, query, query)
-	}
-	media := "EXISTS (SELECT 1 FROM related r JOIN media a ON a.post_id=r.id WHERE r.root=p.id"
-	switch kind {
-	case "photo":
-		where += " AND " + media + " AND a.kind='photo')"
-	case "video":
-		where += " AND " + media + " AND a.kind IN ('video','animated_gif'))"
-	case "media":
-		where += " AND " + media + ")"
-	case "text":
-		where += " AND NOT " + media + ")"
-	}
-	prefix := ""
-	if len(ctes) > 0 {
-		prefix = "WITH RECURSIVE " + strings.Join(ctes, ",") + " "
-	}
+	filter, filterArgs := postFilter(query, kind, false)
+	where += filter
+	args = append(args, filterArgs...)
 	if count {
-		if err := db.QueryRow(prefix+"SELECT COUNT(*)"+from+where, args...).Scan(&result.Total); err != nil {
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*)"+from+where, args...).Scan(&result.Total); err != nil {
 			return result, err
 		}
 	}
+	ranges, err := bookmarkRanges(before)
+	if err != nil {
+		return result, err
+	}
 	if before != "" {
-		at, id, err := parseBookmarkCursor(before)
+		offset = 0
+	}
+	for _, span := range ranges {
+		pageArgs := append(append([]any{}, args...), span.args...)
+		pageArgs = append(pageArgs, limit+1-len(result.Items), offset)
+		rows, err := db.QueryContext(ctx, "SELECT "+postColumns+from+where+span.clause+" ORDER BY "+span.order+" LIMIT ? OFFSET ?", pageArgs...)
 		if err != nil {
 			return result, err
 		}
-		where += " AND (b.created_at<? OR (b.created_at=? AND b.post_id<?))"
-		args = append(args, at, at, id)
-		offset = 0
-	}
-	args = append(args, limit+1, offset)
-	rows, err := db.Query(prefix+"SELECT "+postColumns+from+where+" ORDER BY b.created_at DESC,b.post_id DESC LIMIT ? OFFSET ?", args...)
-	if err != nil {
-		return result, err
-	}
-	for rows.Next() {
-		p, e := scanPost(rows)
-		if e != nil {
-			rows.Close()
-			return result, e
+		for rows.Next() {
+			p, e := scanPost(rows)
+			if e != nil {
+				rows.Close()
+				return result, e
+			}
+			result.Items = append(result.Items, p)
 		}
-		result.Items = append(result.Items, p)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return result, err
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return result, err
+		}
+		if len(result.Items) > limit {
+			break
+		}
 	}
 	result.HasMore = len(result.Items) > limit
 	if result.HasMore {
@@ -161,7 +145,7 @@ func listBookmarkedPosts(db *database.DB, target, query, kind string, offset, li
 		last := result.Items[len(result.Items)-1]
 		result.NextCursor = fmt.Sprintf("b:%d:%s", last.BookmarkedAt, last.ID)
 	}
-	if err = attachPosts(db, result.Items); err != nil {
+	if err = attachPosts(ctx, db, result.Items); err != nil {
 		return result, err
 	}
 	return result, nil

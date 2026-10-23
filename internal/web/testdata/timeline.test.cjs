@@ -9,7 +9,7 @@ function fixture(){
  const notices=[],nodes=new Map(), requests=[], observer={disconnect(){this.targets=[]},observe(target){this.observed++;this.targets.push(target)},observed:0,targets:[]};
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,html:'',children:[],attrs:{},addEventListener(){},setAttribute(k,v){this.attrs[k]=v},replaceChildren(){this.html='';this.children=[]},insertAdjacentHTML(_,html){this.html+=html;this.children.push(...[...html.matchAll(/<article class="post" data-post-id="([^"]+)"/g)].map(m=>({id:m[1]})))},querySelector(){return $('heading')}});return nodes.get(id)};
  const state={authenticated:true,view:'user',target:'alice',timelineTab:'posts',postRequest:0,postIDs:new Set(),postsLoading:false,postsError:false,hasMore:false,offset:0,total:0};
- const ctx=vm.createContext({state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:message=>notices.push(message),api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
+ const ctx=vm.createContext({cancelPostReads:()=>{},isRequestAbort:err=>err?.name==='AbortError',state,$,window:{IntersectionObserver:true},IntersectionObserver:function(cb){observer.callback=cb;return observer},URLSearchParams,clearTimeout,searchTimer:null,number:String,escape:String,avatar:()=>'',userAvatar:()=>'',icon:()=>'',date:String,mediaHTML:()=>'',quoteHTML:()=>'',releaseTimelineMedia:()=>{},toast:message=>notices.push(message),api:query=>new Promise((resolve,reject)=>requests.push({query,resolve,reject}))});
  vm.runInContext(source.slice(source.indexOf('function displayPostText('),source.indexOf("$('posts').addEventListener")),ctx);
  const page=(ids,total)=>({total,items:ids.map(id=>({id,username:'alice',text:`post-${id}`,media:[]}))});
  return {ctx,state,$,requests,observer,page,notices};
@@ -150,7 +150,7 @@ test('an archived quote links its handle without a separate source footer',()=>{
 function profileHTML(user){
  const nodes=new Map(),$=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',innerHTML:''});return nodes.get(id)};
  const state={users:[user],target:user.username};
- const ctx=vm.createContext({state,$,document:{title:''},number:String,userStat:(u,key)=>u.stats_pending?'—':String(u[key]),escape:String,date:value=>'DATE:'+value,icon:name=>`<svg data-icon="${name}"></svg>`,avatar:()=>'<span class="avatar"></span>',handle:u=>u.current_username||u.username});
+ const ctx=vm.createContext({cancelPostReads:()=>{},isRequestAbort:err=>err?.name==='AbortError',state,$,document:{title:''},number:String,userStat:(u,key)=>u.stats_pending?'—':String(u[key]),escape:String,date:value=>'DATE:'+value,icon:name=>`<svg data-icon="${name}"></svg>`,avatar:()=>'<span class="avatar"></span>',handle:u=>u.current_username||u.username});
  vm.runInContext(source.slice(source.indexOf('function renderProfile()'),source.indexOf('const timelineTabs=')),ctx);
  ctx.renderProfile();
  return $('profile-header').innerHTML;
@@ -241,4 +241,31 @@ test('initial navigation gets the SQLite connection before historical overview c
  const pending=ctx.enter();await new Promise(setImmediate);
  assert.deepEqual(calls,['/settings','navigate']);
  finishNavigation();await pending;assert.deepEqual(calls,['/settings','navigate','overview']);
+});
+
+function connectRequestAPI(f){
+ Object.assign(f.ctx,{AbortController,DOMException,setTimeout,showLogin:()=>{},fetch:(url,options)=>new Promise((resolve,reject)=>{
+  const call={query:url,signal:options.signal,resolve:body=>resolve({ok:true,status:200,json:async()=>body}),reject};
+  options.signal.addEventListener('abort',()=>reject(new DOMException('cancelled','AbortError')),{once:true});
+  f.requests.push(call);
+ })});
+ vm.runInContext(source.slice(source.indexOf('const postReadControllers='),source.indexOf('async function action(')),f.ctx);
+}
+test('refresh aborts old fetches, retains the new loading state, and emits no cancellation toast',async()=>{
+ const f=fixture();connectRequestAPI(f);
+ const old=f.ctx.refreshPosts();f.$('search').value='new';const current=f.ctx.refreshPosts();
+ assert.equal(f.requests[0].signal.aborted,true);await old;
+ assert.equal(f.state.postsLoading,true);assert.equal(f.state.postsError,false);assert.deepEqual(f.notices,[]);
+ f.requests[1].resolve(f.page(['8'],1));await current;
+ assert.match(f.$('posts').html,/post-8/);assert.equal(f.state.postsLoading,false);
+});
+test('a timed-out next page keeps the current cursor and can be retried',async()=>{
+ const f=fixture();connectRequestAPI(f);let expire;
+ f.ctx.setTimeout=fn=>{expire=fn;return 1};f.ctx.clearTimeout=()=>{};
+ let pending=f.ctx.refreshPosts();f.requests[0].resolve({...f.page(['8'],-1),next_cursor:'8',has_more:true});await pending;
+ pending=f.ctx.loadMorePosts();expire();await pending;
+ assert.equal(f.state.cursor,'8');assert.equal(f.state.offset,1);assert.equal(f.state.postsError,true);assert.equal(f.notices.length,1);
+ pending=f.ctx.loadMorePosts();assert.match(f.requests[2].query,/before=8/);
+ f.requests[2].resolve({...f.page(['7'],-1),has_more:false});await pending;
+ assert.equal(f.state.postsError,false);assert.equal(f.state.postIDs.size,2);
 });

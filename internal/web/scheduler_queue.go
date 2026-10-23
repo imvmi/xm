@@ -6,8 +6,69 @@ import (
 	"errors"
 	"time"
 
+	"xm/internal/archive"
 	"xm/internal/database"
 )
+
+type interruptedAttempt struct {
+	target       string
+	jobID, runID int64
+	stateError   *completionStateError
+}
+
+// A state/database failure after collection must not strand running=1 forever.
+// Retry this transaction at the next idle boundary; a process restart uses the
+// normal startup recovery. Keep archive/checkpoints and existing cooldowns;
+// reapply known upstream stop conditions before allowing any new work.
+func (s *Scheduler) recoverAttempt(attempt interruptedAttempt) error {
+	gates, err := loadSchedulerState(s.app.store.DB)
+	if err != nil {
+		return err
+	}
+	tx, err := s.app.store.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if failure := attempt.stateError; failure != nil && failure.collectionErr != nil {
+		switch archive.FailureKind(failure.collectionErr) {
+		case "rate":
+			cfg := s.app.Config()
+			until, count := rateLimitDeadline(time.Now().Unix(), cfg.DefaultInterval, gates.RateFailures, failure.collectionErr, cfg.RateLimitMode)
+			if err = saveRateLimit(tx, max(until, gates.CooldownUntil), count); err != nil {
+				return err
+			}
+		case "auth":
+			if gates.CookieGeneration == failure.cookieGeneration {
+				if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), "cookie_blocked", failure.message); err != nil {
+					return err
+				}
+			}
+		case "access", "identity", "checkpoint":
+			if _, err = tx.Exec("UPDATE monitors SET enabled=0,requested=0 WHERE username=?", attempt.target); err != nil {
+				return err
+			}
+			if _, err = tx.Exec("UPDATE collection_jobs SET status='failed',finished_at=?,message=? WHERE id=? AND finished_at=0", time.Now().Unix(), failure.message, attempt.jobID); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), "budget_batch_failed", "1"); err != nil {
+			return err
+		}
+	}
+	message := "采集结果保存中断，已归档内容保留，等待重新执行"
+	if _, err = tx.Exec("UPDATE monitors SET running=0,last_error=? WHERE username=? AND running=1", message, attempt.target); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE runs SET status='interrupted',finished_at=?,message=? WHERE id=? AND status='running'", time.Now().UTC().Format(time.RFC3339Nano), message, attempt.runID); err != nil {
+		return err
+	}
+	now := time.Now()
+	if _, err = tx.Exec("UPDATE collection_jobs SET status='queued',queued_at=?,queue_order=?,message=? WHERE id=? AND status='running' AND finished_at=0", now.Unix(), now.UnixNano(), message, attempt.jobID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func (s *Scheduler) savePending(targets []string) error {
 	if targets == nil {

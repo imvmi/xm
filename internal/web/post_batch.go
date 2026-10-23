@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"strings"
 
 	"xm/internal/archive"
@@ -9,7 +10,7 @@ import (
 
 // Fetch each quote level and its media in batches. A page costs a bounded
 // number of queries even when it contains hundreds of posts and shared quotes.
-func attachPosts(db *database.DB, items []PostView) error {
+func attachPosts(ctx context.Context, db *database.DB, items []PostView) error {
 	posts := make(map[string]PostView)
 	frontier := items
 	for _, p := range items {
@@ -27,7 +28,7 @@ func attachPosts(db *database.DB, items []PostView) error {
 		frontier = nil
 		for start := 0; start < len(ids); start += 500 {
 			args, marks := postBatchArgs(ids[start:min(start+500, len(ids))])
-			rows, err := db.Query("SELECT "+postColumns+" FROM posts p WHERE p.id IN ("+marks+")", args...)
+			rows, err := db.QueryContext(ctx, "SELECT "+postColumns+" FROM posts p WHERE p.id IN ("+marks+")", args...)
 			if err != nil {
 				return err
 			}
@@ -53,7 +54,7 @@ func attachPosts(db *database.DB, items []PostView) error {
 	}
 	for start := 0; start < len(ids); start += 500 {
 		args, marks := postBatchArgs(ids[start:min(start+500, len(ids))])
-		rows, err := db.Query("SELECT post_id,media_id,kind,status,last_error,bytes,sha256 FROM media WHERE post_id IN ("+marks+") ORDER BY post_id,media_id", args...)
+		rows, err := db.QueryContext(ctx, "SELECT post_id,media_id,kind,status,last_error,bytes,sha256 FROM media WHERE post_id IN ("+marks+") ORDER BY post_id,media_id", args...)
 		if err != nil {
 			return err
 		}
@@ -92,7 +93,7 @@ func attachPosts(db *database.DB, items []PostView) error {
 	for i := range items {
 		items[i] = attach(items[i].ID, 0, map[string]bool{})
 	}
-	return attachReplyPreviews(db, items)
+	return attachReplyPreviews(ctx, db, items)
 }
 
 func postBatchArgs(ids []string) ([]any, string) {

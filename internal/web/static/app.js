@@ -8,21 +8,46 @@ function toast(message, error=false) { clearTimeout(toastTimer); $('toast').text
 function date(value, short=false) { if(!value)return '尚未执行';const d=new Date(typeof value==='number'?value*1000:value);if(Number.isNaN(d.getTime()))return String(value);return d.toLocaleString('zh-CN',short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 function number(v) { return Number(v||0).toLocaleString('zh-CN'); }
 function bytes(v) { if(!v)return '0 B';const units=['B','KB','MB','GB','TB'];const i=Math.min(Math.floor(Math.log(v)/Math.log(1024)),4);return `${(v/1024**i).toFixed(i>0?1:0)} ${units[i]}`; }
-async function api(path, method='GET', data) {
-  const options={method,credentials:'same-origin',headers:{}};
+const postReadControllers=new Set();
+function cancelPostReads(){for(const controller of postReadControllers)controller.abort();postReadControllers.clear();}
+function isRequestAbort(err){return err?.name==='AbortError';}
+async function api(path, method='GET', data, request={}) {
+  const controller=new AbortController(),signal=request.signal;
+  const postRead=method==='GET'&&/^\/posts(?:[/?]|$)/.test(path);
+  if(postRead)postReadControllers.add(controller);
+  const abort=()=>controller.abort();
+  if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
+  // Reads have a client deadline even when the server or response body stalls.
+  // Long-running mutations retain their operation-specific server deadlines.
+  let timedOut=false;
+  const timeout=request.timeoutMS??(method==='GET'?30000:0);
+  const timer=timeout>0?setTimeout(()=>{if(!controller.signal.aborted){timedOut=true;controller.abort();}},timeout):null;
+  const options={method,credentials:'same-origin',headers:{},signal:controller.signal};
   if(method!=='GET'){options.headers['Content-Type']='application/json';options.headers['X-CSRF-Token']=state.csrf;options.body=JSON.stringify(data??{});}
-  let res;try{res=await fetch('/api'+path,options);}catch{throw new Error('无法连接服务，请检查服务是否正在运行');}
-  const body=await res.json().catch(()=>({error:'服务器返回了无法识别的响应'}));
-  if(res.status===401&&path!=='/login'){showLogin();throw new Error('登录已过期，请重新登录');}
-  if(!res.ok)throw new Error(body.error||'操作失败');return body;
+  try{
+    let res;
+    try{res=await fetch('/api'+path,options);}catch(err){if(controller.signal.aborted)throw err;throw new Error('无法连接服务，请检查服务是否正在运行');}
+    const body=await res.json().catch(err=>{if(controller.signal.aborted)throw err;return {error:'服务器返回了无法识别的响应'};});
+    if(controller.signal.aborted)throw new DOMException('请求已取消','AbortError');
+    if(res.status===401&&path!=='/login'){postReadControllers.delete(controller);showLogin();throw new Error('登录已过期，请重新登录');}
+    if(!res.ok)throw new Error(body.error||'操作失败');return body;
+  }catch(err){
+    if(timedOut){const timeoutError=new Error('请求超时，请稍后重试');timeoutError.name='TimeoutError';throw timeoutError;}
+    if(controller.signal.aborted)throw new DOMException('请求已取消','AbortError');
+    throw err;
+  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);postReadControllers.delete(controller);}
 }
+
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
+  cancelPostReads();
+  cancelBrowserDiagnostic();
+  if(typeof resetStorageCredentialSecrets==='function')resetStorageCredentialSecrets();
   if(typeof resetAPICredentials==='function')resetAPICredentials();
   releaseTimelineMedia();
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
-  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
+  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
   state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
@@ -71,6 +96,7 @@ function userAvatar(username){
 }
 function userURL(username) { return '#user/'+encodeURIComponent(username); }
 async function navigate() {
+  cancelPostReads();
   if(typeof resetPostThread==='function')resetPostThread();
   if(!state.authenticated)return;
   releaseTimelineMedia();
@@ -79,10 +105,12 @@ async function navigate() {
   accountRestoring=false;
   let next=location.hash.slice(1);const credentialsTab=next==='settings/credentials';if(credentialsTab)next='settings';
   if(typeof clearAPISecret==='function'&&next!=='settings')clearAPISecret();
+  if(typeof resetStorageCredentialSecrets==='function'&&next!=='settings')resetStorageCredentialSecrets();
   if(['accounts','archive','monitors'].includes(next)){next='archive';if(location.hash!=='#accounts')history.replaceState(null,'','#accounts');}
   const match=/^user\/([A-Za-z0-9_]{1,15})$/.exec(next);
   const postMatch=/^post\/(\d{1,64})$/.exec(next);state.focusPost=postMatch?postMatch[1]:'';
   state.view=match?'user':titles[next]&&next!=='user'?next:'home';
+  if(state.view!=='settings')cancelBrowserDiagnostic();
   accountRestoring=state.view==='archive';
   for(const name of Object.keys(titles))$('view-'+name).hidden=name!==state.view;
   for(const a of document.querySelectorAll('[data-view]')){const active=a.dataset.view===(state.view==='user'?'archive':state.view);a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}window.scrollTo({top:0,behavior:'instant'});
@@ -304,6 +332,7 @@ function updateTimelineEmpty(){
  $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击推文右上角的书签即可收藏；引用推文可先点击打开详情再收藏。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
 }
 async function refreshPosts(){
+ cancelPostReads();
  if(typeof resetPostThread==='function')resetPostThread();
  releaseTimelineMedia();
  clearTimeout(searchTimer);timelineObserver?.disconnect();state.postRequest++;
@@ -340,6 +369,7 @@ async function fetchMorePosts(flight){
   if(!state.hasMore&&state.total<0)state.total=state.postIDs.size;
   updateTimelineEmpty();
  }catch(err){
+  if(isRequestAbort(err))return;
   if(id!==state.postRequest||!state.authenticated||!['user','home'].includes(state.view))return;
   if(flight.background&&!flight.consumers.some(active=>active()))return;
   state.postsError=true;if(!flight.background)toast(err.message,true);
@@ -393,7 +423,7 @@ $('posts').addEventListener('click',event=>{
   }
   if(event.target.classList.contains('expand-text')){const text=event.target.previousElementSibling;const expanded=text.classList.toggle('expanded');event.target.textContent=expanded?'收起全文':'展开全文';}
 });
-$('search').addEventListener('input',()=>{clearTimeout(searchTimer);state.postRequest++;state.hasMore=false;state.postsLoading=true;timelineObserver?.disconnect();updateTimelineLoader();searchTimer=setTimeout(()=>refreshPosts(),300);});
+$('search').addEventListener('input',()=>{cancelPostReads();clearTimeout(searchTimer);state.postRequest++;state.hasMore=false;state.postsLoading=true;timelineObserver?.disconnect();updateTimelineLoader();searchTimer=setTimeout(()=>refreshPosts(),300);});
 $('kind-filter').addEventListener('change',()=>refreshPosts());
 $('refresh-archive').addEventListener('click',()=>action($('refresh-archive'),()=>Promise.all([refreshUsers('',true),refreshMonitors(),refreshOverview(true)])));
 $('refresh-user').addEventListener('click',()=>action($('refresh-user'),async()=>{const request=state.navRequest;await Promise.all([refreshUsers(state.target,true),refreshOverview(true)]);if(request===state.navRequest){renderProfile();await refreshPosts();}}));
@@ -558,13 +588,15 @@ $('global-auto-collection').addEventListener('click',()=>action($('global-auto-c
  }finally{globalCollectionPending=false;renderGlobalCollection(state.overview?.paused??state.settings?.polling_paused??!paused);}
 }));
 
-let chromeModePending=false,chromeDiagnosticPending=false;
+let chromeModePending=false,chromeDiagnosticPending=false,chromeDiagnosticController=null;
 function renderChromeMode(){
- const button=$('chrome-mode');
- button.disabled=!state.settings||chromeModePending||chromeDiagnosticPending;
+ const button=$('chrome-mode'),remote=$('browser-mode').value==='cdp';
+ button.disabled=!state.settings||chromeModePending||chromeDiagnosticPending||remote;
  button.setAttribute('aria-checked',String(state.settings?.chrome_headless!==false));
- $('chrome-mode-state').textContent=chromeModePending?'保存中…':state.settings?.chrome_headless===false?'有界面':'Headless';
+ $('chrome-mode-state').textContent=remote?'远端管理':chromeModePending?'保存中…':state.settings?.chrome_headless===false?'有界面':'Headless';
  $('test-chrome').disabled=chromeModePending||chromeDiagnosticPending;
+ $('test-browser-connection').disabled=chromeModePending||chromeDiagnosticPending;
+ $('chrome-mode-help').hidden=remote;
 }
 $('chrome-mode').addEventListener('click',()=>action($('chrome-mode'),async()=>{
  const headless=state.settings?.chrome_headless===false;
@@ -576,6 +608,31 @@ $('chrome-mode').addEventListener('click',()=>action($('chrome-mode'),async()=>{
   toast(headless?'已开启 Headless，下次诊断和采集生效':'已切换为有界面模式，下次诊断和采集将显示 Chrome 窗口');
  }finally{chromeModePending=false;renderChromeMode();}
 }));
+
+function syncBrowserFields(){
+ const remote=$('browser-mode').value==='cdp';$('cdp-fields').hidden=!remote;$('browser-local-help').hidden=remote;
+ $('cdp-host').disabled=!remote;$('cdp-port').disabled=!remote;renderChromeMode();
+}
+function populateBrowserSettings(s){
+ hydrateSettingsForm('browser-settings-form',()=>{$('browser-mode').value=s.browser_mode||'local';$('cdp-host').value=s.cdp_host||'127.0.0.1';$('cdp-port').value=s.cdp_port||9222;});syncBrowserFields();
+}
+$('browser-mode').addEventListener('change',syncBrowserFields);
+for(const event of ['input','change'])$('browser-settings-form').addEventListener(event,()=>{
+ cancelBrowserDiagnostic();
+ $('browser-connection-result').textContent='';$('chrome-result').textContent='';
+});
+function browserSettingsDraft(){
+ const input={browser_mode:$('browser-mode').value};
+ if(input.browser_mode==='cdp'){input.cdp_host=$('cdp-host').value.trim();input.cdp_port=Number($('cdp-port').value);}
+ return input;
+}
+$('browser-settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+ const submitted=settingsSnapshot('browser-settings-form');
+ const input=browserSettingsDraft();
+ await api('/settings','PUT',input);state.settings=await api('/settings');
+ acceptSettingsForm('browser-settings-form',submitted);populateBrowserSettings(state.settings);renderChromeMode();
+ $('chrome-result').textContent='';$('browser-settings-result').textContent='已保存，下次诊断和采集生效；当前任务继续使用原连接。';toast('浏览器设置已保存');
+});});
 
 function selectSettingsTab(name,focus=false){
  for(const button of document.querySelectorAll('[data-settings-tab]')){
@@ -591,7 +648,7 @@ for(const button of document.querySelectorAll('[data-settings-tab]')){
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
-  populateSQLiteSettings(s);
+  populateSQLiteSettings(s);populateBrowserSettings(s);
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='mysql'?'MySQL · '+s.database_name:'SQLite · 本地数据库';
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
@@ -638,7 +695,35 @@ $('cookie-form').addEventListener('submit',event=>{event.preventDefault();action
 function proxyChange() { if($('proxy-mode').value==='direct')return {proxy:''};const p=$('proxy-url').value.trim();if(p)return {proxy:p};if(!state.settings?.proxy_configured)throw new Error('请输入代理地址');return {}; }
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const submitted=settingsSnapshot('settings-form');await api('/settings','PUT',proxyChange());acceptSettingsForm('settings-form',submitted);toast('代理设置已保存，下一个采集任务生效');await refreshSettings();});});
 $('test-proxy').addEventListener('click',()=>action($('test-proxy'),async()=>{$('proxy-result').textContent='正在连接 X…';try{const r=await api('/proxy-test','POST',proxyChange());$('proxy-result').textContent=`收到 HTTP ${r.status} · ${r.latency_ms} ms。${r.message}`;}catch(err){$('proxy-result').textContent=err.message;throw err;}}));
-$('test-chrome').addEventListener('click',()=>action($('test-chrome'),async()=>{chromeDiagnosticPending=true;renderChromeMode();$('chrome-result').classList.remove('error');$('chrome-result').textContent='正在检查 Chrome、Cookie、X 网络和登录状态…';try{const r=await api('/chrome-test','POST');const mark={passed:'✓',failed:'✕',skipped:'○'};$('chrome-result').textContent=r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;$('chrome-result').classList.toggle('error',!r.ok);}catch(err){$('chrome-result').textContent=err.message;$('chrome-result').classList.add('error');throw err;}finally{chromeDiagnosticPending=false;renderChromeMode();}}));
+function cancelBrowserDiagnostic(){
+ if(!chromeDiagnosticController)return;
+ chromeDiagnosticController.abort();chromeDiagnosticController=null;chromeDiagnosticPending=false;
+ for(const id of ['browser-connection-result','chrome-result'])$(id).textContent='';
+ renderChromeMode();
+}
+async function testBrowserEnvironment(connectionOnly){
+ if(chromeDiagnosticPending||chromeModePending||!$('browser-settings-form').reportValidity())return;
+ const input={...browserSettingsDraft(),connection_only:connectionOnly};
+ const label=input.browser_mode==='cdp'?`CDP ${input.cdp_host.includes(':')?'['+input.cdp_host+']':input.cdp_host}:${input.cdp_port}`:'本地 Chrome';
+ const result=$(connectionOnly?'browser-connection-result':'chrome-result');
+ const controller=new AbortController();chromeDiagnosticController=controller;
+ chromeDiagnosticPending=true;renderChromeMode();result.classList.remove('error');
+ result.textContent=`测试配置：${label}\n`+(connectionOnly?'正在测试浏览器连接…':'正在检查 Chrome、Cookie、X 网络和登录状态…');
+ try{
+  const r=await api('/chrome-test','POST',input,{timeoutMS:50000,signal:controller.signal});
+  if(chromeDiagnosticController!==controller)return;
+  const mark={passed:'✓',failed:'✕',skipped:'○'};
+  result.textContent=`测试配置：${label}\n`+r.steps.map(s=>`${mark[s.status]||'·'} ${s.name}：${s.message}`).join('\n')+`\n耗时：${r.latency_ms} ms`;
+  result.classList.toggle('error',!r.ok);
+ }catch(err){
+  if(chromeDiagnosticController!==controller||isRequestAbort(err))return;
+  result.textContent=`测试配置：${label}\n${err.message}`;result.classList.add('error');toast(err.message,true);
+ }finally{
+  if(chromeDiagnosticController===controller){chromeDiagnosticController=null;chromeDiagnosticPending=false;renderChromeMode();}
+ }
+}
+$('test-browser-connection').addEventListener('click',()=>testBrowserEnvironment(true));
+$('test-chrome').addEventListener('click',()=>testBrowserEnvironment(false));
 const runLabels={running:['采集中','running'],bounded_complete:['已完成',''],incomplete:['本轮未完成','warn'],budget_wait:['历史等待','neutral'],failed:['采集失败','error'],media_failed:['媒体未完成','warn'],cancelled:['已停止','neutral'],interrupted:['已中断','warn']};
 const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追赶完成',known_boundary_reached:'已到达上次归档边界',max_scrolls_reached:'已达到本轮滚动上限',no_new_posts_observed:'本轮未再发现新内容'};
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};

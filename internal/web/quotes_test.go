@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"xm/internal/archive"
@@ -25,11 +26,11 @@ func TestQuoteTimelineFiltersUsersAndCycles(t *testing.T) {
 			t.Fatalf("quote relation/filter failed: %s %s", path, w.Body.String())
 		}
 	}
-	list, err := listPosts(a.store.DB, "", "", "text", "", 0, 24)
+	list, err := listPosts(context.Background(), a.store.DB, "", "", "text", "", 0, 24)
 	if err != nil || list.Total != 0 {
 		t.Fatal("quoted video classified as plain text")
 	}
-	list, err = listPosts(a.store.DB, "bob", "", "", "", 0, 24)
+	list, err = listPosts(context.Background(), a.store.DB, "bob", "", "", "", 0, 24)
 	if err != nil || list.Total != 0 {
 		t.Fatal("quote author became monitored timeline")
 	}
@@ -46,14 +47,14 @@ func TestQuoteTimelineFiltersUsersAndCycles(t *testing.T) {
 	if _, err = a.store.DB.Exec("UPDATE posts SET quote_id='200' WHERE id='100'"); err != nil {
 		t.Fatal(err)
 	}
-	list, err = listPosts(a.store.DB, "alice", "", "video", "", 0, 24)
+	list, err = listPosts(context.Background(), a.store.DB, "alice", "", "video", "", 0, 24)
 	if err != nil || list.Items[0].Quote == nil || !list.Items[0].Quote.QuoteUnavailable {
 		t.Fatal("cycle did not stop at unavailable marker", err)
 	}
 	if _, err = a.store.DB.Exec("UPDATE posts SET quote_id='missing' WHERE id='200'"); err != nil {
 		t.Fatal(err)
 	}
-	list, err = listPosts(a.store.DB, "alice", "", "", "", 0, 24)
+	list, err = listPosts(context.Background(), a.store.DB, "alice", "", "", "", 0, 24)
 	if err != nil || !list.Items[0].QuoteUnavailable || list.Items[0].Quote != nil {
 		t.Fatal("missing quote should keep parent visible", err)
 	}

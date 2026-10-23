@@ -61,6 +61,7 @@ async function loadThreadContext(){
    button.hidden=false;button.disabled=false;button.textContent='加载更早的推文';
   }else if(button)button.remove();
  }catch(err){
+  if(isRequestAbort(err))return;
   if(activeThread(session,request,selected)){
    let button=$('thread-context-more');
    if(!button){$('posts').insertAdjacentHTML('afterbegin','<button id="thread-context-more" class="thread-load-more" type="button"></button>');button=$('thread-context-more');}
@@ -84,6 +85,7 @@ async function loadThreadReplies(){
   $('thread-replies-status').textContent=threadReplySeen.size?`已显示 ${threadReplySeen.size} 条直接回复${threadRepliesMore?'，可继续加载。':'。'}`:'暂时没有已归档的回复。';
   $('thread-replies-more').hidden=!threadRepliesMore;$('thread-replies-more').disabled=false;$('thread-replies-more').textContent='加载更多回复';
  }catch(err){
+  if(isRequestAbort(err))return;
   if(activeThread(session,request,id)){$('thread-replies-status').textContent=err.message;$('thread-replies-more').hidden=false;$('thread-replies-more').disabled=false;$('thread-replies-more').textContent='重试加载回复';}
  }finally{if(session===postThreadSession)threadRepliesLoading=false;}
 }

@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -92,7 +94,7 @@ func TestTimelineCursorAcrossAccountsAndConcurrentInserts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first, err := listPostsPage(a.store.DB, "", "", "", "", 0, 2, "", true)
+	first, err := listPostsPage(context.Background(), a.store.DB, "", "", "", "", 0, 2, "", true)
 	if err != nil || first.Total != 3 || len(first.Items) != 2 || first.Items[0].ID != "101" || first.NextCursor != "99" || !first.HasMore {
 		t.Fatalf("first page: %+v %v", first, err)
 	}
@@ -103,12 +105,12 @@ func TestTimelineCursorAcrossAccountsAndConcurrentInserts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, target := range []string{"", "alice"} {
-		next, err := listPostsPage(a.store.DB, target, "", "", "", 0, 2, first.NextCursor, false)
+		next, err := listPostsPage(context.Background(), a.store.DB, target, "", "", "", 0, 2, first.NextCursor, false)
 		if err != nil || next.Total != -1 || len(next.Items) != 1 || next.Items[0].ID != "9" || next.HasMore {
 			t.Fatalf("cursor page: %+v %v", next, err)
 		}
 	}
-	filtered, err := listPostsPage(a.store.DB, "alice", "needle", "", "", 0, 2, "", true)
+	filtered, err := listPostsPage(context.Background(), a.store.DB, "alice", "needle", "", "", 0, 2, "", true)
 	if err != nil || filtered.Total != 1 || filtered.Items[0].ID != "101" {
 		t.Fatalf("quote search: %+v %v", filtered, err)
 	}
@@ -177,23 +179,111 @@ func TestLargeTimelineUsesOrderedIndexes(t *testing.T) {
 	}
 	for _, target := range []string{"", "alice"} {
 		start := time.Now()
-		page, err := listPostsPage(a.store.DB, target, "", "", "", 0, 24, "", true)
+		page, err := listPostsPage(context.Background(), a.store.DB, target, "", "", "", 0, 24, "", true)
 		if err != nil || len(page.Items) != 24 || page.Total != rowCount {
 			t.Fatalf("large page: %v", err)
 		}
 		t.Logf("%d rows target=%q first page + count: %s", rowCount, target, time.Since(start))
 		counted := page
 		start = time.Now()
-		page, err = listPostsPage(a.store.DB, target, "", "", "", 0, 24, "", false)
+		page, err = listPostsPage(context.Background(), a.store.DB, target, "", "", "", 0, 24, "", false)
 		if err != nil || page.Total != -1 || !reflect.DeepEqual(page.Items, counted.Items) || page.HasMore != counted.HasMore || page.NextCursor != counted.NextCursor {
 			t.Fatalf("uncounted first page differs: %+v %v", page, err)
 		}
 		t.Logf("%d rows target=%q first page without count: %s", rowCount, target, time.Since(start))
 		start = time.Now()
-		page, err = listPostsPage(a.store.DB, target, "", "", "", 0, 24, "100100", false)
+		page, err = listPostsPage(context.Background(), a.store.DB, target, "", "", "", 0, 24, "100100", false)
 		if err != nil || len(page.Items) != 24 || page.Items[0].ID != "100099" {
 			t.Fatalf("deep cursor: %+v %v", page, err)
 		}
 		t.Logf("%d rows target=%q deep cursor: %s", rowCount, target, time.Since(start))
 	}
+	// Search and media filters must retain ordered seeks. Every root has media,
+	// so first/deep pages should only inspect enough candidates to fill the page.
+	if _, err = a.store.DB.Exec("INSERT INTO media(post_id,media_id,kind,source_url,updated_at) SELECT id,'photo','photo','','' FROM posts"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.store.DB.Exec("INSERT INTO post_bookmarks(post_id,created_at) SELECT id,100 FROM posts"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ query, kind, section string }{
+		{"fixture", "", ""}, {"", "photo", ""}, {"fixture", "photo", "media"}, {"fixture", "photo", "bookmarks"},
+	} {
+		for _, target := range []string{"", "alice"} {
+			for _, cursor := range []string{"", "100100"} {
+				before := cursor
+				if tc.section == "bookmarks" && cursor != "" {
+					before = "b:100:" + cursor
+				}
+				start := time.Now()
+				page, err := listPostsPage(context.Background(), a.store.DB, target, tc.query, tc.kind, tc.section, 0, 24, before, false)
+				if err != nil || len(page.Items) != 24 || (cursor != "" && page.Items[0].ID != "100099") {
+					t.Fatalf("filtered page %+v target=%s before=%s: %+v %v", tc, target, before, page, err)
+				}
+				t.Logf("%d rows filtered=%+v target=%q cursor=%q: %s", rowCount, tc, target, before, time.Since(start))
+			}
+		}
+	}
+	filter, args := postFilter("fixture", "photo", false)
+	for _, tc := range []struct{ query, index string }{
+		{"SELECT p.id FROM posts p WHERE " + rootPostSQL + filter + " ORDER BY length(p.id) DESC,p.id DESC LIMIT 25", "posts_timeline"},
+		{"SELECT p.id FROM target_posts t JOIN posts p ON p.id=t.post_id WHERE t.target='alice'" + filter + " ORDER BY length(t.post_id) DESC,t.post_id DESC LIMIT 25", "target_posts_timeline"},
+		{"SELECT p.id FROM post_bookmarks b JOIN posts p ON p.id=b.post_id WHERE b.created_at=100 AND b.post_id<'100100'" + filter + " ORDER BY b.post_id DESC LIMIT 25", "bookmarks_recent"},
+		{"SELECT p.id FROM posts p WHERE " + rootPostSQL + filter + " AND length(p.id)=6 AND p.id<'100100' ORDER BY p.id DESC LIMIT 25", "posts_timeline"},
+		{"SELECT p.id FROM target_posts t JOIN posts p ON p.id=t.post_id WHERE t.target='alice'" + filter + " AND length(t.post_id)=6 AND t.post_id<'100100' ORDER BY t.post_id DESC LIMIT 25", "target_posts_timeline"},
+		{"SELECT p.id FROM post_bookmarks b JOIN posts p ON p.id=b.post_id WHERE 1=1" + filter + " ORDER BY b.created_at DESC,b.post_id DESC LIMIT 25", "bookmarks_recent"},
+	} {
+		rows, err := a.store.DB.Query("EXPLAIN QUERY PLAN "+tc.query, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := ""
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err = rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan += detail + "\n"
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(plan, tc.index) || strings.Contains(plan, "TEMP B-TREE FOR ORDER BY") || strings.Contains(plan, "AUTOMATIC") || !strings.Contains(plan, "CORRELATED") {
+			t.Fatalf("filtered query lost candidate/index evaluation: %s", plan)
+		}
+	}
+
+	// Interrupt an executing full-range search as well as pool waits (covered
+	// in read_timeout_test). The connection must be reusable afterwards.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := listPostsPage(ctx, a.store.DB, "", "absent search term", "photo", "", 0, 24, "", true)
+		done <- err
+	}()
+	pool := a.store.DB.Reader
+	deadline := time.Now().Add(2 * time.Second)
+	for pool.Stats().InUse == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if pool.Stats().InUse == 0 {
+		t.Fatal("search did not acquire connection")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("running search cancellation: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("running search ignored cancellation")
+	}
+	if err := pool.PingContext(context.Background()); err != nil {
+		t.Fatal("canceled query left connection unusable", err)
+	}
+
 }

@@ -24,7 +24,7 @@ func (a *App) postDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := PostList{Items: []PostView{p}, Total: 1, Limit: 1}
-	if err = attachPosts(a.store.DB, result.Items); err != nil {
+	if err = attachPosts(r.Context(), a.store.DB, result.Items); err != nil {
 		problem(w, 500, "读取推文失败")
 		return
 	}

@@ -38,7 +38,7 @@ func TestUnifiedAccountLifecycleAndPreferences(t *testing.T) {
 	if err != nil || len(users) != 1 || users[0].Monitored || users[0].ShowInTimeline || users[0].CurrentUsername != "alice_new" {
 		t.Fatalf("cancelled account: %+v %v", users, err)
 	}
-	p, err := listPostsPage(a.store.DB, "", "", "", "", 0, 24, "", true)
+	p, err := listPostsPage(context.Background(), a.store.DB, "", "", "", "", 0, 24, "", true)
 	if err != nil || p.Total != 0 {
 		t.Fatalf("cancellation revealed hidden archive: %+v %v", p, err)
 	}
@@ -54,7 +54,7 @@ func TestUnifiedAccountLifecycleAndPreferences(t *testing.T) {
 	}
 	// Archive-only accounts can change visibility without recreating a monitor.
 	ok(t, b.request("PUT", "/api/users/alice/timeline", map[string]bool{"show_in_timeline": true}, "http://localhost", true), 200)
-	p, err = listPostsPage(a.store.DB, "", "", "", "", 0, 24, "", true)
+	p, err = listPostsPage(context.Background(), a.store.DB, "", "", "", "", 0, 24, "", true)
 	if err != nil || p.Total != 1 {
 		t.Fatalf("archive-only visibility: %+v %v", p, err)
 	}
@@ -246,7 +246,7 @@ func TestHomeTimelineVisibility(t *testing.T) {
 		{"hidden archive search", "hidden", "needle", "photo", "", 10, 2, []string{"999", "100"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := listPostsPage(a.store.DB, tc.target, tc.query, tc.kind, "", 0, tc.limit, tc.before, true)
+			p, err := listPostsPage(context.Background(), a.store.DB, tc.target, tc.query, tc.kind, "", 0, tc.limit, tc.before, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +266,7 @@ func TestHomeTimelineVisibility(t *testing.T) {
 	if _, err := a.store.DB.Exec("UPDATE monitors SET show_in_timeline=0"); err != nil {
 		t.Fatal(err)
 	}
-	p, err := listPostsPage(a.store.DB, "", "", "", "", 0, 24, "", false)
+	p, err := listPostsPage(context.Background(), a.store.DB, "", "", "", "", 0, 24, "", false)
 	if err != nil || p.Total != -1 || len(p.Items) != 1 || p.Items[0].ID != "99" {
 		t.Fatalf("hidden page: %+v %v", p, err)
 	}

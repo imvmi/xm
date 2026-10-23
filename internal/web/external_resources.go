@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -69,7 +70,7 @@ type externalAccountView struct {
 	LastSuccess int64  `json:"last_success"`
 }
 
-func (a *App) externalAccountRows(c apiCredential, target, cursor string, limit int) ([]externalAccountView, error) {
+func (a *App) externalAccountRows(ctx context.Context, c apiCredential, target, cursor string, limit int) ([]externalAccountView, error) {
 	filter, args := apiAccountFilter(c, "u.username")
 	query := `WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
  SELECT u.username,COALESCE(i.current_username,u.username),COALESCE(i.user_id,''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.replies,0),COALESCE(m.baseline_status,'not_started'),COALESCE(m.running,0),EXISTS(SELECT 1 FROM collection_jobs j WHERE j.target=u.username AND j.finished_at=0 AND j.status<>'running'),COALESCE(m.next_run,0),COALESCE(m.last_success,0)
@@ -84,7 +85,7 @@ func (a *App) externalAccountRows(c apiCredential, target, cursor string, limit 
 	}
 	query += " ORDER BY u.username LIMIT ?"
 	args = append(args, limit)
-	rows, err := a.store.DB.Query(query, args...)
+	rows, err := a.store.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (a *App) externalAccounts(w http.ResponseWriter, r *http.Request, c apiCred
 		problem(w, 400, err.Error())
 		return
 	}
-	items, err := a.externalAccountRows(c, "", cursor, limit+1)
+	items, err := a.externalAccountRows(r.Context(), c, "", cursor, limit+1)
 	if err != nil {
 		problem(w, 500, "读取账号失败")
 		return
@@ -119,7 +120,7 @@ func (a *App) externalAccounts(w http.ResponseWriter, r *http.Request, c apiCred
 	respond(w, 200, map[string]any{"items": items, "has_more": more, "next_cursor": next})
 }
 func (a *App) externalAccount(w http.ResponseWriter, r *http.Request, c apiCredential) {
-	items, err := a.externalAccountRows(c, r.PathValue("account"), "", 1)
+	items, err := a.externalAccountRows(r.Context(), c, r.PathValue("account"), "", 1)
 	if err != nil {
 		problem(w, 500, "读取账号失败")
 		return
@@ -462,7 +463,7 @@ func (a *App) externalTimeline(w http.ResponseWriter, r *http.Request, c apiCred
 		return
 	}
 	target := r.PathValue("account")
-	items, err := a.externalAccountRows(c, target, "", 1)
+	items, err := a.externalAccountRows(r.Context(), c, target, "", 1)
 	if err != nil {
 		problem(w, 500, "读取账号失败")
 		return
@@ -471,7 +472,7 @@ func (a *App) externalTimeline(w http.ResponseWriter, r *http.Request, c apiCred
 		problem(w, 404, "账号不存在")
 		return
 	}
-	page, err := listPostsPage(a.store.DB, target, q.Get("q"), q.Get("kind"), section, 0, limit, cursor, q.Get("count") == "1")
+	page, err := listPostsPage(r.Context(), a.store.DB, target, q.Get("q"), q.Get("kind"), section, 0, limit, cursor, q.Get("count") == "1")
 	if err != nil {
 		problem(w, 500, "读取时间线失败")
 		return
@@ -481,7 +482,7 @@ func (a *App) externalTimeline(w http.ResponseWriter, r *http.Request, c apiCred
 	}
 	respond(w, 200, page)
 }
-func (a *App) externalPostAllowed(c apiCredential, id string) (bool, error) {
+func (a *App) externalPostAllowed(ctx context.Context, c apiCredential, id string) (bool, error) {
 	if !validPostID(id) {
 		return false, nil
 	}
@@ -492,12 +493,12 @@ func (a *App) externalPostAllowed(c apiCredential, id string) (bool, error) {
  SELECT COUNT(*) FROM ancestors a JOIN target_posts t ON t.post_id=a.id WHERE ` + filter
 	args := append([]any{id}, accountArgs...)
 	var n int
-	err := a.store.DB.QueryRow(query, args...).Scan(&n)
+	err := a.store.DB.QueryRowContext(ctx, query, args...).Scan(&n)
 	return n > 0, err
 }
 func (a *App) externalPost(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	id := r.PathValue("post")
-	allowed, err := a.externalPostAllowed(c, id)
+	allowed, err := a.externalPostAllowed(r.Context(), c, id)
 	if err != nil {
 		problem(w, 500, "读取权限失败")
 		return
@@ -506,13 +507,13 @@ func (a *App) externalPost(w http.ResponseWriter, r *http.Request, c apiCredenti
 		problem(w, 404, "推文不存在或未授权")
 		return
 	}
-	p, err := scanPost(a.store.DB.QueryRow("SELECT "+postColumns+" FROM posts p WHERE p.id=?", id))
+	p, err := scanPost(a.store.DB.QueryRowContext(r.Context(), "SELECT "+postColumns+" FROM posts p WHERE p.id=?", id))
 	if err != nil {
 		problem(w, 404, "推文不存在")
 		return
 	}
 	items := []PostView{p}
-	if err = attachPosts(a.store.DB, items); err != nil {
+	if err = attachPosts(r.Context(), a.store.DB, items); err != nil {
 		problem(w, 500, "读取推文失败")
 		return
 	}
@@ -520,7 +521,7 @@ func (a *App) externalPost(w http.ResponseWriter, r *http.Request, c apiCredenti
 	respond(w, 200, items[0])
 }
 func (a *App) externalMedia(w http.ResponseWriter, r *http.Request, c apiCredential) {
-	allowed, err := a.externalPostAllowed(c, r.PathValue("post"))
+	allowed, err := a.externalPostAllowed(r.Context(), c, r.PathValue("post"))
 	if err != nil {
 		apiError(w, 500, "internal_error", "读取权限失败")
 		return
@@ -532,7 +533,7 @@ func (a *App) externalMedia(w http.ResponseWriter, r *http.Request, c apiCredent
 	a.media(w, r)
 }
 func (a *App) externalAvatar(w http.ResponseWriter, r *http.Request, c apiCredential) {
-	items, err := a.externalAccountRows(c, r.PathValue("account"), "", 1)
+	items, err := a.externalAccountRows(r.Context(), c, r.PathValue("account"), "", 1)
 	if err != nil || len(items) == 0 || items[0].UserID == "" {
 		apiError(w, 404, "not_found", "头像不存在")
 		return

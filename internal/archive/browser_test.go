@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/chromedp"
@@ -311,7 +312,7 @@ func TestBrowserSessionTimeSliceAndCrashOffline(t *testing.T) {
 		t.Fatal("user cancellation swallowed as a time slice")
 	}
 	process := chromedp.FromContext(session.root).Browser.Process()
-	profile := session.profile
+	profile := localBrowserProfile(t, session.root)
 	if err = process.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -387,4 +388,25 @@ func TestTimelineFailureRetainsDiagnosticCategory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func localBrowserProfile(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	var profile string
+	err := chromedp.Do(ctx, chromedp.Func(func(c context.Context, _ *chromedp.Target) error {
+		info, err := cdp.Call(c, chromedp.FromContext(ctx).Browser, cdpbrowser.GetBrowserCommandLine, cdp.Empty{})
+		if err != nil {
+			return err
+		}
+		for _, arg := range info.Arguments {
+			if strings.HasPrefix(arg, "--user-data-dir=") {
+				profile = strings.TrimPrefix(arg, "--user-data-dir=")
+			}
+		}
+		return nil
+	}))
+	if err != nil || profile == "" {
+		t.Fatalf("missing local browser profile: %v", err)
+	}
+	return profile
 }

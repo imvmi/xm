@@ -86,7 +86,7 @@ func (a *App) authenticateAPI(r *http.Request) (apiCredential, error) {
 	if !ok || len(id) != 26 {
 		return apiCredential{}, errors.New("invalid credential")
 	}
-	c, err := a.apiCredential(id)
+	c, err := scanAPICredential(a.store.DB.QueryRowContext(r.Context(), "SELECT "+credentialColumns+" FROM api_credentials WHERE id=?", id))
 	if err != nil {
 		return c, err
 	}

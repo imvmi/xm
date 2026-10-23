@@ -26,6 +26,7 @@ const (
 	defaultRemoteCacheBytes  = int64(2 << 30)
 	minRemoteCacheBytes      = int64(64 << 20)
 	maxRemoteCacheBytes      = int64(100 << 30)
+	remoteCacheDiskReserve   = uint64(64 << 20)
 )
 
 type remoteMediaCacheSettings struct {
@@ -60,12 +61,18 @@ func (a *App) updateRemoteMediaCache(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "缓存容量必须为 64 MiB 到 100 GiB")
 		return
 	}
+	// A fill owns this lock until its temporary file has been committed/removed.
+	if !a.cachePruneMu.TryLock() {
+		problem(w, 409, "正在写入缓存，请稍后修改容量或清空缓存")
+		return
+	}
+	defer a.cachePruneMu.Unlock()
 	raw, err := json.Marshal(input)
 	if err != nil || setState(a.store.DB, remoteMediaCacheStateKey, string(raw)) != nil {
 		problem(w, 500, "保存缓存设置失败")
 		return
 	}
-	if err = a.pruneRemoteMediaCache(input.MaxBytes, ""); err != nil {
+	if err = a.pruneRemoteMediaCacheLocked(input.MaxBytes, ""); err != nil {
 		problem(w, 500, "设置已保存，但清理超额缓存失败")
 		return
 	}
@@ -74,7 +81,10 @@ func (a *App) updateRemoteMediaCache(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) clearRemoteMediaCache(w http.ResponseWriter, _ *http.Request) {
-	a.cachePruneMu.Lock()
+	if !a.cachePruneMu.TryLock() {
+		problem(w, 409, "正在写入缓存，请稍后清空")
+		return
+	}
 	err := os.RemoveAll(remoteMediaCacheRoot(a.Config().DataDir))
 	a.cachePruneMu.Unlock()
 	if err != nil {
@@ -139,6 +149,38 @@ func (a *App) ensureRemoteMediaCached(ctx context.Context, id, key string, size 
 		return path, nil
 	}
 
+	// Only one cache fill is admitted at a time. Other media requests fall back
+	// to streaming immediately, rather than queueing whole files on disk.
+	if !a.cachePruneMu.TryLock() {
+		return "", errors.New("缓存正在填充")
+	}
+	defer a.cachePruneMu.Unlock()
+	// Recheck persisted policy under the same lock as settings/clear operations:
+	// a request that waited on its entry lock may carry an obsolete capacity.
+	raw, err := readState(a.store.DB, remoteMediaCacheStateKey)
+	if err != nil {
+		return "", err
+	}
+	var settings remoteMediaCacheSettings
+	if json.Unmarshal([]byte(raw), &settings) != nil || !settings.Enabled {
+		return "", errors.New("缓存未启用")
+	}
+	maxBytes = min(maxBytes, settings.MaxBytes)
+	if size < 0 || maxBytes <= 0 || size > maxBytes {
+		return "", errors.New("媒体超过缓存容量")
+	}
+	root := remoteMediaCacheRoot(a.Config().DataDir)
+	if err = archive.PrivateDir(root); err != nil {
+		return "", errors.New("无法创建远程媒体缓存目录")
+	}
+	// Evict before downloading, reserving the entire advertised length.
+	if err = a.pruneRemoteMediaCacheLocked(maxBytes-size, ""); err != nil {
+		return "", err
+	}
+	free, err := a.cacheDiskAvailable(root)
+	if err != nil || free < remoteCacheDiskReserve || uint64(size) > free-remoteCacheDiskReserve {
+		return "", errors.New("缓存磁盘空间不足，改为直接读取")
+	}
 	remote, err := archive.NewRemote(a.Config(), id)
 	if err != nil {
 		return "", err
@@ -153,25 +195,28 @@ func (a *App) ensureRemoteMediaCached(ctx context.Context, id, key string, size 
 		return "", err
 	}
 	defer body.Close()
-
-	root := remoteMediaCacheRoot(a.Config().DataDir)
-	if err = archive.PrivateDir(root); err != nil {
-		return "", errors.New("无法创建远程媒体缓存目录")
-	}
 	temp, err := os.CreateTemp(root, ".cache-*")
 	if err != nil {
 		return "", errors.New("无法创建远程媒体缓存文件")
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
+	defer temp.Close()
 	if err = temp.Chmod(0600); err != nil {
-		temp.Close()
 		return "", err
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(temp, hasher), io.LimitReader(body, size+1))
+	written, copyErr := io.Copy(io.MultiWriter(temp, hasher), io.LimitReader(body, size))
 	if copyErr == nil && written != size {
 		copyErr = errors.New("远程媒体长度不一致")
+	}
+	if copyErr == nil {
+		// Check for an oversized upstream response without writing past the reservation.
+		var extra [1]byte
+		n, e := io.ReadFull(body, extra[:])
+		if n != 0 || e != io.EOF {
+			copyErr = errors.New("远程媒体长度不一致")
+		}
 	}
 	if copyErr == nil && len(expectedHash) == 64 && !strings.EqualFold(hex.EncodeToString(hasher.Sum(nil)), expectedHash) {
 		copyErr = errors.New("远程媒体校验失败")
@@ -188,7 +233,7 @@ func (a *App) ensureRemoteMediaCached(ctx context.Context, id, key string, size 
 	if err = os.Rename(tempName, path); err != nil {
 		return "", errors.New("无法提交远程媒体缓存文件")
 	}
-	if err = a.pruneRemoteMediaCache(maxBytes, path); err != nil {
+	if err = a.pruneRemoteMediaCacheLocked(maxBytes, path); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -288,9 +333,6 @@ func remoteMediaCacheUsage(dataDir string) (int64, error) {
 	}
 	var total int64
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
 		info, infoErr := entry.Info()
 		if infoErr == nil && info.Mode().IsRegular() {
 			total += info.Size()
@@ -302,6 +344,11 @@ func remoteMediaCacheUsage(dataDir string) (int64, error) {
 func (a *App) pruneRemoteMediaCache(maxBytes int64, keep string) error {
 	a.cachePruneMu.Lock()
 	defer a.cachePruneMu.Unlock()
+	return a.pruneRemoteMediaCacheLocked(maxBytes, keep)
+}
+
+// Caller holds cachePruneMu, including throughout every cache fill.
+func (a *App) pruneRemoteMediaCacheLocked(maxBytes int64, keep string) error {
 	root := remoteMediaCacheRoot(a.Config().DataDir)
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -313,11 +360,14 @@ func (a *App) pruneRemoteMediaCache(maxBytes int64, keep string) error {
 	files := make([]cachedFile, 0, len(entries))
 	var total int64
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
+		info, infoErr := entry.Info()
+		if errors.Is(infoErr, os.ErrNotExist) {
 			continue
 		}
-		info, infoErr := entry.Info()
-		if infoErr != nil || !info.Mode().IsRegular() {
+		if infoErr != nil {
+			return infoErr
+		}
+		if !info.Mode().IsRegular() {
 			continue
 		}
 		file := cachedFile{path: filepath.Join(root, entry.Name()), size: info.Size(), modTime: info.ModTime()}
@@ -340,5 +390,31 @@ func (a *App) pruneRemoteMediaCache(maxBytes int64, keep string) error {
 		}
 		total -= file.size
 	}
+	if total > maxBytes {
+		return errors.New("无法腾出足够缓存空间")
+	}
 	return nil
+}
+
+// Called before serving requests, while the process worker lock is held.
+// A crash can leave incomplete files; never treat them as archived media.
+func (a *App) recoverRemoteMediaCache() error {
+	a.cachePruneMu.Lock()
+	defer a.cachePruneMu.Unlock()
+	root := remoteMediaCacheRoot(a.Config().DataDir)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("无法检查服务器媒体缓存")
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".cache-") && !entry.IsDir() {
+			if err = os.Remove(filepath.Join(root, entry.Name())); err != nil {
+				return errors.New("无法清理未完成的媒体缓存")
+			}
+		}
+	}
+	return a.pruneRemoteMediaCacheLocked(a.remoteMediaCacheSettings().MaxBytes, "")
 }

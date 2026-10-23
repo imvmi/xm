@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -161,53 +160,29 @@ func orderedCaptures(ctx context.Context, input <-chan captured) <-chan captured
 	return output
 }
 
-// BrowserSession owns one Chrome process that can collect several targets in
-// sequence. Each target still gets an isolated tab and timeout, while cookies,
-// the temporary browser profile and the proxy bridge are shared across batches.
+// BrowserSession owns a local Chrome process or an isolated remote context.
+// Targets share its cookies and connection but get separate tabs and deadlines.
 type BrowserSession struct {
 	cfg          Config
 	cookies      Cookies
 	root         context.Context
 	closeBrowser context.CancelFunc
-	closeAlloc   context.CancelFunc
-	bridge       *BrowserProxy
-	profile      string
 }
 
 func NewBrowserSession(parent context.Context, cfg Config, cookies Cookies) (*BrowserSession, error) {
-	profile, err := os.MkdirTemp("", "xm-chrome-*")
+	root, closeBrowser, err := newBrowserContext(parent, cfg, true)
 	if err != nil {
 		return nil, err
 	}
-	s := &BrowserSession{cfg: cfg, cookies: cookies, profile: profile}
-	fail := func(err error) (*BrowserSession, error) {
-		s.Close()
-		return nil, err
-	}
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.UserDataDir(profile), chromedp.Flag("headless", cfg.Headless), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("disable-quic", true))
-	if cfg.ChromePath != "" {
-		opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
-	}
-	if cfg.Proxy != "" {
-		s.bridge, err = StartBrowserProxy(cfg.Proxy)
-		if err != nil {
-			return fail(err)
-		}
-		opts = append(opts, chromedp.ProxyServer(s.bridge.URL()))
-	} else {
-		opts = append(opts, chromedp.Flag("no-proxy-server", true))
-	}
-	alloc, closeAlloc := chromedp.NewExecAllocator(parent, opts...)
-	s.closeAlloc = closeAlloc
-	s.root, s.closeBrowser = chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
+	s := &BrowserSession{cfg: cfg, cookies: cookies, root: root, closeBrowser: closeBrowser}
+	fail := func(err error) (*BrowserSession, error) { s.Close(); return nil, err }
 	// Chrome's initial allocation inherits the first action context. Keep that
 	// context alive for the service and bound startup with a separate watchdog.
 	startupTimer := time.AfterFunc(20*time.Second, s.closeBrowser)
 	err = chromedp.Do(s.root, chromedp.Navigate("about:blank"))
 	startedInTime := startupTimer.Stop()
 	if err != nil || !startedInTime {
-		return fail(errors.New("无法启动 Chrome；请检查 chrome_path 和 Chrome 运行环境"))
+		return fail(errors.New(browserStartError(cfg)))
 	}
 	return s, nil
 }
@@ -228,19 +203,6 @@ func (s *BrowserSession) Close() {
 	}
 	if s.closeBrowser != nil {
 		s.closeBrowser()
-		s.closeBrowser = nil
-	}
-	if s.closeAlloc != nil {
-		s.closeAlloc()
-		s.closeAlloc = nil
-	}
-	if s.bridge != nil {
-		s.bridge.Close()
-		s.bridge = nil
-	}
-	if s.profile != "" {
-		_ = os.RemoveAll(s.profile)
-		s.profile = ""
 	}
 }
 
@@ -402,30 +364,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 	var browser context.Context
 	var err error
 	if root == nil {
-		profile, err := os.MkdirTemp("", "xm-chrome-*")
+		var closeBrowser context.CancelFunc
+		browser, closeBrowser, err = newBrowserContext(ctx, cfg, true)
 		if err != nil {
 			return result, err
 		}
-		defer os.RemoveAll(profile)
-		opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-		opts = append(opts, chromedp.UserDataDir(profile), chromedp.Flag("headless", cfg.Headless), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("disable-quic", true))
-		if cfg.ChromePath != "" {
-			opts = append(opts, chromedp.ExecPath(cfg.ChromePath))
-		}
-		if cfg.Proxy != "" {
-			bridge, e := StartBrowserProxy(cfg.Proxy)
-			if e != nil {
-				return result, e
-			}
-			defer bridge.Close()
-			opts = append(opts, chromedp.ProxyServer(bridge.URL()))
-		} else {
-			opts = append(opts, chromedp.Flag("no-proxy-server", true))
-		}
-		alloc, closeAlloc := chromedp.NewExecAllocator(ctx, opts...)
-		defer closeAlloc()
-		var closeBrowser context.CancelFunc
-		browser, closeBrowser = chromedp.NewContext(alloc, chromedp.WithErrorf(func(string, ...any) {}))
 		defer closeBrowser()
 	} else {
 		var closeBrowser context.CancelFunc
@@ -466,7 +409,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 		return nil
 	}))
 	if err != nil {
-		return result, errors.New("无法启动 Chrome 或导入 Cookie；请检查 chrome_path 和 Chrome 运行环境")
+		return result, errors.New(browserStartError(cfg) + "；请同时检查 Cookie")
 	}
 	if setup != nil {
 		if err = setup(browser); err != nil {

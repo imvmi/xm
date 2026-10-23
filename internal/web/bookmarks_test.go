@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -61,7 +62,7 @@ func TestBookmarkAPIAndPersistence(t *testing.T) {
 	if err := a.store.DB.QueryRow("SELECT created_at FROM post_bookmarks WHERE post_id='100'").Scan(&at); err != nil || at != first.At {
 		t.Fatal("bookmark overwritten on repeat save", err)
 	}
-	page, err := listPosts(a.store.DB, "alice", "", "", "posts", 0, 10)
+	page, err := listPosts(context.Background(), a.store.DB, "alice", "", "", "posts", 0, 10)
 	if err != nil || len(page.Items) != 1 || !page.Items[0].Bookmarked {
 		t.Fatal("normal timeline lacks bookmark state", err)
 	}
@@ -71,14 +72,14 @@ func TestBookmarkAPIAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	page, err = listPosts(store.DB, "", "", "", "bookmarks", 0, 10)
+	page, err = listPosts(context.Background(), store.DB, "", "", "", "bookmarks", 0, 10)
 	if err != nil || page.Total != 1 || page.Items[0].BookmarkedAt != first.At {
 		t.Fatal("bookmark not persistent or duplicated", err, page)
 	}
 	for i := 0; i < 2; i++ {
 		ok(t, b.request("PUT", path, map[string]bool{"bookmarked": false}, "http://localhost", true), 200)
 	}
-	page, err = listPosts(a.store.DB, "", "", "", "bookmarks", 0, 10)
+	page, err = listPosts(context.Background(), a.store.DB, "", "", "", "bookmarks", 0, 10)
 	if err != nil || page.Total != 0 {
 		t.Fatal("unbookmark failed", err)
 	}
@@ -115,7 +116,7 @@ func TestBookmarkScopesQuotesAndFilters(t *testing.T) {
 		{"alice", "", "text", "bookmarks", "101"},
 		{"alice", "", "video", "bookmarks", ""},
 	} {
-		page, err := listPosts(a.store.DB, tc.target, tc.query, tc.kind, tc.section, 0, 20)
+		page, err := listPosts(context.Background(), a.store.DB, tc.target, tc.query, tc.kind, tc.section, 0, 20)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +137,7 @@ func TestBookmarkScopesQuotesAndFilters(t *testing.T) {
 	if _, err := a.store.DB.Exec("DELETE FROM monitors WHERE username='alice'"); err != nil {
 		t.Fatal(err)
 	}
-	page, err := listPosts(a.store.DB, "alice", "", "", "bookmarks", 0, 20)
+	page, err := listPosts(context.Background(), a.store.DB, "alice", "", "", "bookmarks", 0, 20)
 	if err != nil || page.Total != 3 {
 		t.Fatal("removing monitor lost bookmarks", err)
 	}
@@ -153,13 +154,13 @@ func TestBookmarkCursorSurvivesChanges(t *testing.T) {
 	for _, id := range []string{"9", "10", "11", "99"} {
 		putTestBookmark(t, a, id, 100)
 	}
-	first, err := listPostsPage(a.store.DB, "alice", "", "", "bookmarks", 0, 2, "", true)
+	first, err := listPostsPage(context.Background(), a.store.DB, "alice", "", "", "bookmarks", 0, 2, "", true)
 	if err != nil || first.Total != 4 || len(first.Items) != 2 || first.Items[0].ID != "99" || first.Items[1].ID != "9" || !first.HasMore {
 		t.Fatal("bad first page", err, first)
 	}
 	ok(t, b.request("PUT", "/api/posts/9/bookmark", map[string]bool{"bookmarked": false}, "http://localhost", true), 200)
 	putTestBookmark(t, a, "100", 200)
-	page, err := listPostsPage(a.store.DB, "alice", "", "", "bookmarks", 0, 2, first.NextCursor, false)
+	page, err := listPostsPage(context.Background(), a.store.DB, "alice", "", "", "bookmarks", 0, 2, first.NextCursor, false)
 	if err != nil || len(page.Items) != 2 || page.Items[0].ID != "11" || page.Items[1].ID != "10" || page.HasMore || page.Total != -1 {
 		t.Fatal("cursor skipped or repeated", err, page)
 	}

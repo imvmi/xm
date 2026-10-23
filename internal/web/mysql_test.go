@@ -172,7 +172,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	if e != nil || cookies.AuthToken != "migration-auth" || cookies.CSRF != "migration-csrf" {
 		t.Fatal("Cookie migration failed", e)
 	}
-	list, e := listPosts(dest.store.DB, "alice", "中文", "video", "", 0, 20)
+	list, e := listPosts(context.Background(), dest.store.DB, "alice", "中文", "video", "", 0, 20)
 	if e != nil || len(list.Items) != 1 || list.Items[0].Quote == nil {
 		t.Fatal(list, e)
 	}
