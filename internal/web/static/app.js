@@ -306,6 +306,7 @@ const timelineObserver='IntersectionObserver' in window?new IntersectionObserver
  if(entries.some(e=>e.isIntersecting&&(e.target===timelinePrefetchTarget||e.target===$('timeline-loader')))&&!state.postsError)loadMorePosts();
 },{rootMargin:'0px 0px 320px 0px'}):null;
 function observeTimelineEnd(){
+ if(typeof observeTimelineVideos==='function')observeTimelineVideos();
  timelineObserver?.disconnect();timelinePrefetchTarget=null;
  if(typeof mediaViewerOpen==='function'&&mediaViewerOpen())return;
  if(!timelineObserver||state.postsLoading||state.postsError||!state.hasMore||!state.authenticated||!['home','user'].includes(state.view))return;
@@ -523,13 +524,13 @@ $('collection-settings-form').addEventListener('submit',event=>{event.preventDef
   if(interval!==state.settings.default_interval_seconds)input.default_interval_seconds=interval;
   await api('/settings','PUT',input);state.settings=await api('/settings');
   acceptSettingsForm('collection-settings-form',submitted);populateCollectionSettings(state.settings);
-  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'采集设置已保存；下次自动采集计划已重新安排。其他设置从下一个任务生效，账号间隔会更新当前等待。':'采集设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('采集设置已保存');
+  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'爬虫设置已保存；下次自动采集计划已重新安排。其他设置从下一个任务生效，账号间隔会更新当前等待。':'爬虫设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('爬虫设置已保存');
 });});
 $('archive-display-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const submitted=settingsSnapshot('archive-display-form');
-  await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value),video_default_muted:$('video-default-muted').checked,video_loop:$('video-loop').checked,media_preload_mode:$('media-preload-mode').value,image_cache_seconds:Number($('image-cache-hours').value)*3600,video_cache_seconds:Number($('video-cache-minutes').value)*60});
+  await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value),video_default_muted:$('video-default-muted').checked,video_loop:$('video-loop').checked,video_auto_next:$('video-auto-next').checked,video_timeline_autoplay:$('video-timeline-autoplay').checked,media_preload_mode:$('media-preload-mode').value,image_cache_seconds:Number($('image-cache-hours').value)*3600,video_cache_seconds:Number($('video-cache-minutes').value)*60});
   state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);populateArchiveDisplaySettings(state.settings);
-  acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='界面显示设置已保存。';toast('界面显示设置已保存');
+  acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='时间线设置已保存。';toast('时间线设置已保存');
 });});
 function populateSQLiteSettings(s){
  $('sqlite-performance-panel').hidden=s.database_driver!=='sqlite';
@@ -541,7 +542,7 @@ $('sqlite-performance-form').addEventListener('submit',event=>{event.preventDefa
  state.settings=await api('/settings');acceptSettingsForm('sqlite-performance-form',submitted);populateSQLiteSettings(state.settings);
  $('sqlite-performance-result').textContent='读取设置已保存并生效，无需重启。';toast('读取设置已保存');
 });});
-function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
+function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('video-auto-next').checked=s.video_auto_next===true;$('video-timeline-autoplay').checked=s.video_timeline_autoplay===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
 function populateCollectionSettings(s){
  renderGlobalCollection(s.polling_paused);
  hydrateSettingsForm('collection-settings-form',()=>{
@@ -635,6 +636,8 @@ $('browser-settings-form').addEventListener('submit',event=>{event.preventDefaul
 });});
 
 function selectSettingsTab(name,focus=false){
+ if(name==='storage'||name==='migration')name='data';
+ if(!document.querySelector(`[data-settings-tab="${name}"]`))name='account';
  for(const button of document.querySelectorAll('[data-settings-tab]')){
   const selected=button.dataset.settingsTab===name;
   button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;

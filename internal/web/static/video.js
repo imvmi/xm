@@ -1,6 +1,31 @@
 'use strict';
 let videoPlayRequest=0,expandedVideoShell=null,videoFullscreenRequest=0,videoPageOverflow='';
 let videoDrag=null,videoTap=null,videoSwipePending=false,videoSuppressClick=false;
+let timelineAutoVideo=null,timelineVideoSlots=new Map(),timelineVideoBlocked=new WeakSet();
+const timelineVideoObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{
+ for(const entry of entries)if(timelineVideoSlots.has(entry.target))timelineVideoSlots.set(entry.target,entry.isIntersecting?entry.intersectionRatio:0);
+ syncTimelineAutoplay();
+},{threshold:[0,.25,.5,.75,1]}):null;
+function observeTimelineVideos(){
+ if(!timelineVideoObserver||state.settings?.video_timeline_autoplay!==true)return;
+ for(const slot of timelineVideoSlots.keys())if(!slot.isConnected){timelineVideoObserver.unobserve(slot);timelineVideoSlots.delete(slot);}
+ for(const slot of $('posts').querySelectorAll('.video-slot'))if(!timelineVideoSlots.has(slot)){timelineVideoSlots.set(slot,0);timelineVideoObserver.observe(slot);}
+ syncTimelineAutoplay();
+}
+function syncTimelineAutoplay(){
+ if(expandedVideoShell)return;
+ const allowed=state.settings?.video_timeline_autoplay===true&&state.authenticated&&['home','user'].includes(state.view)&&!document.hidden&&!$('image-dialog').open;
+ let next=null,best=0;
+ if(allowed)for(const [slot,ratio] of timelineVideoSlots){
+  const video=slot.querySelector('video');
+  if(slot.isConnected&&ratio>=.5&&!timelineVideoBlocked.has(video)&&ratio>best){next=video;best=ratio;}
+ }
+ if(timelineAutoVideo&&timelineAutoVideo!==next){timelineAutoVideo.pause();timelineAutoVideo=null;}
+ if(!next||timelineAutoVideo===next)return;
+ timelineAutoVideo=next;
+ if(next.getAttribute('src')&&!next.dataset.prefetch){next.loop=state.settings?.video_loop===true;playTimelineVideo(next,true);}
+ else startTimelineVideo(next.closest('.video-shell').querySelector('[data-video-src]'),true);
+}
 function videoIcon(name){
  const paths={play:'<path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/>',pause:'<path d="M7 5h4v14H7zm6 0h4v14h-4z" fill="currentColor" stroke="none"/>',muted:'<path d="M11 5 6 9H3v6h3l5 4zM16 9l6 6m0-6-6 6"/>',sound:'<path d="M11 5 6 9H3v6h3l5 4zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',expand:'<path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/>',collapse:'<path d="M3 9h6V3m12 6h-6V3M9 21v-6H3m12 6v-6h6"/>'};
  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]||paths.play}</svg>`;
@@ -41,14 +66,19 @@ function collapseExpandedVideo(restoreFocus=true,keepPrefetch=null){
  document.body.style.overflow=videoPageOverflow;
  if(document.fullscreenElement===shell)document.exitFullscreen().catch(()=>{});
  const video=shell.querySelector('video');syncVideoControls(video);
+ video.loop=state.settings?.video_loop===true;
+ if(state.settings?.video_timeline_autoplay===true)timelineAutoVideo=video;
  if(restoreFocus&&video.isConnected)video.focus({preventScroll:true});
- observeTimelineEnd();
+ if(!keepPrefetch)observeTimelineEnd();
 }
 function expandTimelineVideo(video){
  const shell=video.closest('.video-shell');if(!shell||expandedVideoShell===shell)return;
  if(expandedVideoShell)collapseExpandedVideo(false);
+ if(timelineAutoVideo&&timelineAutoVideo!==video)timelineAutoVideo.pause();
+ timelineAutoVideo=null;
  const request=++videoFullscreenRequest;
  expandedVideoShell=shell;videoPageOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
+ video.loop=state.settings?.video_loop===true&&state.settings?.video_auto_next!==true;
  shell.classList.add('video-expanded');shell.setAttribute('role','dialog');shell.setAttribute('aria-modal','true');shell.setAttribute('aria-label','视频播放器');
  syncVideoControls(video);video.focus({preventScroll:true});
  requestVideoPrefetch();
@@ -62,6 +92,7 @@ function expandTimelineVideo(video){
 }
 function toggleVideoFullscreen(video){if(expandedVideoShell===video.closest('.video-shell'))collapseExpandedVideo();else expandTimelineVideo(video);}
 function resetTimelineVideo(video,failed=false){
+ if(failed)timelineVideoBlocked.add(video);
  const shell=video.closest('.video-shell');
  if(shell===expandedVideoShell)collapseExpandedVideo(false);
  delete video.dataset.playRequest;
@@ -71,28 +102,31 @@ function resetTimelineVideo(video,failed=false){
  syncVideoControls(video);
 }
 function releaseTimelineMedia(){
+ videoSuppressClick=false;
  resetVideoPrefetch();
  videoTap=null;
  if(typeof closeTimelineGallery==='function')closeTimelineGallery();
  if(expandedVideoShell)collapseExpandedVideo(false);
  for(const video of document.querySelectorAll('#posts video[src]'))resetTimelineVideo(video);
+ timelineVideoObserver?.disconnect();timelineVideoSlots.clear();timelineVideoBlocked=new WeakSet();timelineAutoVideo=null;
 }
-function playTimelineVideo(video){
+function playTimelineVideo(video,automatic=false){
  const request=video.dataset.playRequest;
  video.play().catch(err=>{
   if(!video.isConnected||video.dataset.playRequest!==request||!video.getAttribute('src')||err.name==='AbortError')return;
-  if(err.name==='NotAllowedError'){syncVideoControls(video);toast('请点击下方播放按钮继续播放');return;}
+  if(err.name==='NotAllowedError'){timelineVideoBlocked.add(video);syncVideoControls(video);if(!automatic)toast('请点击下方播放按钮继续播放');return;}
   resetTimelineVideo(video,true);
  });
  syncVideoControls(video);
 }
-function startTimelineVideo(button){
+function startTimelineVideo(button,automatic=false){
  const video=button.closest('.video-shell')?.querySelector('video');if(!video||(video.getAttribute('src')&&!video.dataset.prefetch))return;
  claimVideoPrefetch(video);video.preload='auto';
  video.dataset.playRequest=String(++videoPlayRequest);
  video.muted=defaultVideoMuted();video.loop=state.settings?.video_loop===true;
  button.hidden=true;video.hidden=false;if(video.getAttribute('src')!==button.dataset.videoSrc)video.src=button.dataset.videoSrc;
- playTimelineVideo(video);expandTimelineVideo(video);
+ if(!automatic){timelineVideoBlocked.delete(video);expandTimelineVideo(video);}
+ playTimelineVideo(video,automatic);
 }
 $('posts').addEventListener('click',event=>{
  const load=event.target.closest('[data-video-src]');if(load){event.preventDefault();startTimelineVideo(load);return;}
@@ -101,7 +135,7 @@ $('posts').addEventListener('click',event=>{
  if(button){
   event.preventDefault();
   switch(button.dataset.videoAction){
-   case 'play':if(video.paused||video.ended){if(video.ended)video.currentTime=0;playTimelineVideo(video);}else video.pause();break;
+   case 'play':if(video.paused||video.ended){timelineVideoBlocked.delete(video);if(video.ended)video.currentTime=0;playTimelineVideo(video);}else{timelineVideoBlocked.add(video);video.pause();}break;
    case 'mute':video.muted=!(video.muted||video.volume===0);if(!video.muted&&video.volume===0)video.volume=1;break;
    case 'fullscreen':toggleVideoFullscreen(video);break;
   }
@@ -115,14 +149,14 @@ function resetVideoDrag(){
  const video=expandedVideoShell?.querySelector('video');
  if(video)video.style.transform='';
 }
-async function nextExpandedVideo(){
+async function nextExpandedVideo(automatic=false){
  if(videoSwipePending||!expandedVideoShell)return;
  const shell=expandedVideoShell,request=videoFullscreenRequest;
- const active=()=>expandedVideoShell===shell&&request===videoFullscreenRequest;
+ const active=()=>expandedVideoShell===shell&&request===videoFullscreenRequest&&(!automatic||(!document.hidden&&state.settings?.video_auto_next===true));
  videoSwipePending=true;
  syncVideoControls(shell.querySelector('video'));
  const next=await nextTimelineMedia(shell,'.video-shell',active);
- if(!active())return;
+ if(!active()){if(expandedVideoShell===shell){videoSwipePending=false;syncVideoControls(shell.querySelector('video'));}return;}
  if(!next){videoSwipePending=false;syncVideoControls(shell.querySelector('video'));if(!state.postsError)toast('已到当前时间线的最后一条视频');return;}
  // Finish the old native fullscreen exit before opening the next player, so
  // its fullscreenchange event cannot collapse the new player.
@@ -187,7 +221,10 @@ for(const name of ['play','playing','pause','ended','timeupdate','loadedmetadata
   if(event.target.closest('.video-shell')===expandedVideoShell){
    if(name==='waiting'||name==='pause')clearVideoPrefetch();
    if(name==='playing'||name==='canplay')requestVideoPrefetch();
+   if(name==='ended'&&state.settings?.video_auto_next===true&&!document.hidden)void nextExpandedVideo(true);
   }
+  if(name==='ended')timelineVideoBlocked.add(event.target);
+  if(name==='play'&&!event.target.paused&&!expandedVideoShell&&state.settings?.video_timeline_autoplay===true)timelineAutoVideo=event.target;
   if(name==='play')for(const other of document.querySelectorAll('#posts video[src]'))if(other!==event.target)other.pause();
   syncVideoControls(event.target);
  },true);
@@ -214,3 +251,5 @@ document.addEventListener('keydown',event=>{
  }
 });
 window.addEventListener('pagehide',releaseTimelineMedia);
+document.addEventListener('visibilitychange',syncTimelineAutoplay);
+$('image-dialog').addEventListener('toggle',syncTimelineAutoplay);

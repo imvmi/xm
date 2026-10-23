@@ -56,7 +56,7 @@ function accountCard(u){
  const key=escape(u.username),pending=accountPending.has(u.username),disabled=pending?' disabled':'';
  const [label,cls]=u.runtime_pending?['状态加载中','neutral']:u.monitored?monitorStatus(u):['仅保留归档','neutral'];
  const shown=visibleInTimeline(u),enabled=!!u.monitored&&!!u.enabled;
- const autoHelp=!u.monitored?'仅保留归档；请在管理菜单中重新添加监控':u.runtime_pending?'正在读取采集状态':enabled?'关闭将停止当前采集并取消排队；归档保留':state.overview?.paused?'启用后仍需在采集设置中恢复全局自动采集':'按采集设置中的统一周期自动采集';
+ const autoHelp=!u.monitored?'仅保留归档；请在管理菜单中重新添加监控':u.runtime_pending?'正在读取采集状态':enabled?'关闭将停止当前采集并取消排队；归档保留':state.overview?.paused?'启用后仍需在爬虫设置中恢复全局自动采集':'按爬虫设置中的统一周期自动采集';
  const lastSaved=u.stats_pending?'统计加载中…':u.last_saved?'最近归档 '+date(u.last_saved,true):'等待第一次采集';
  return `<div class="account-card-top"><div class="account-identity"><a class="account-avatar-link" href="${userURL(u.username)}" aria-label="查看 ${escape(u.name||handle(u))} 的归档">${avatar(handle(u),'user-avatar',u.avatar_url)}</a><span><strong><a class="account-name" href="${userURL(u.username)}" title="${escape(u.name||handle(u))}">${escape(u.name||handle(u))}</a>${u.protected?icon('lock'):''}</strong><a class="user-handle" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer" title="@${escape(handle(u))}">@${escape(handle(u))}</a>${u.current_username&&u.current_username!==u.username?`<small class="muted" title="原 @${key} · 归档已延续">原 @${key} · 归档已延续</small>`:''}</span></div><span class="badge ${cls}">${label}${accountNeedsAttention(u)&&label!=='需关注'?' · 需关注':''}</span></div>
  <div class="account-stats"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个媒体</span><span class="account-last-saved"><span title="${escape(lastSaved)}">${escape(lastSaved)}</span></span></div>
@@ -67,7 +67,7 @@ function accountManagementHTML(u){
  let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${collectionActions(u)}<button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${key}" data-op="replies"><span>包含回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">包含该账号发出的回复。切换后立即保存，并重新建立历史采集基线；已归档内容保留。</p>${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}`):action('readd','重新添加监控');
  if(accountPending.has(u.username))operations=operations.replace(/<button\b([^>]*)>/g,(tag,attrs)=>attrs.includes('disabled')?tag:`<button disabled${attrs}>`);
  const detail=u.monitored&&!u.runtime_pending?`<details class="account-details" data-detail="${key}:status"${accountExpanded.has(u.username+':status')?' open':''}><summary>采集详情${accountNeedsAttention(u)?' · 需关注':''}</summary><div>${baselineHTML(u)}${checkpointHTML(u)}${u.last_error?`<p class="account-error">${escape(u.last_error)}</p>`:''}${monitorNextStep(u)}<p>最近结束：${u.last_finished?escape(date(u.last_finished,true)):'尚未采集'}</p><p>${!u.enabled||state.overview?.paused?'自动采集已暂停':u.next_run>state.overview?.server_time?'下次：'+escape(date(u.next_run,true)):'等待调度'} · 每 ${number(u.interval_seconds/3600)} 小时</p><p>上轮新增 ${number(u.new_posts)} 条</p><a class="account-task-link" href="#activity">查看任务 →</a></div></details>`:'';
- const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往采集设置恢复。':'自动采集按统一周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
+ const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往爬虫设置恢复。':'自动采集按统一周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
  return `<p class="account-menu-help">${escape(help)}</p><div class="account-action-list">${operations}</div>${detail}`;
 }
 function renderAccountMenu(){
@@ -171,7 +171,7 @@ async function handleAccountAction(event){
     const monitor=state.monitors.find(m=>m.username===u.username);if(monitor)monitor.replies=!u.replies;
     toast(u.replies?'已关闭包含回复':'已开启包含回复');break;
    }
-   case 'toggle':await api('/monitors/'+target,'PUT',{replies:!!u.replies,enabled:!u.enabled});toast(u.enabled?'已关闭自动采集':state.overview?.paused?'账号自动采集已开启；全局仍暂停，请在采集设置中恢复':'已开启自动采集');break;
+   case 'toggle':await api('/monitors/'+target,'PUT',{replies:!!u.replies,enabled:!u.enabled});toast(u.enabled?'已关闭自动采集':state.overview?.paused?'账号自动采集已开启；全局仍暂停，请在爬虫设置中恢复':'已开启自动采集');break;
    case 'reset-progress':await api('/monitors/'+target+'/reset-progress','POST');toast('断点已重置，等待采集');break;
    case 'stop':await api('/monitors/'+target+'/stop','POST');toast('已请求停止并暂停监控');break;
    case 'cancel-queue':{const result=await api('/activity/jobs/'+u.queued_job.id,'DELETE');toast(result.message);break;}

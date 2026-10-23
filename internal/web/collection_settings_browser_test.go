@@ -54,12 +54,12 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.settings!==null && !document.getElementById('view-settings').hidden && document.getElementById('scroll-delay').value==='3'`)
-	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='X 登录' && $('settings-tab-display').textContent==='界面显示' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「归档存储」中的服务器缓存相互独立')`) {
+	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='认证' && $('settings-tab-display').textContent==='时间线' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「数据 → 媒体存储」中的服务器缓存相互独立')`) {
 		t.Fatal("navigation and settings organization are inconsistent")
 	}
 	// Reader limits have their own form and apply without a restart.
 	if a.store.DB.Dialect == "sqlite" {
-		eval(`(()=>{$('settings-tab-storage').click();return true})()`)
+		eval(`(()=>{$('settings-tab-data').click();return true})()`)
 		if !eval(`!$('sqlite-performance-panel').hidden && $('sqlite-read-connections').value==='4'`) {
 			t.Fatal("SQLite concurrency control missing")
 		}

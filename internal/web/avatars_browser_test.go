@@ -72,8 +72,8 @@ func TestAvatarCacheSettingsBrowser(t *testing.T) {
 	password, _ := json.Marshal(testPassword)
 	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type="submit"]').click();return true})()`)
 	wait(`state.authenticated && $('avatar-cache-status').textContent.includes('已缓存 1 张')`)
-	eval(`(()=>{$('settings-tab-storage').click();return true})()`)
-	if !eval(`!$('settings-storage').hidden && !$('avatar-migrate') && !$('avatar-cache-clear').disabled && !$('avatar-cache-status').textContent.includes('待迁移')`) {
+	eval(`(()=>{$('settings-tab-data').click();return true})()`)
+	if !eval(`!$('settings-data').hidden && !$('avatar-migrate') && !$('avatar-cache-clear').disabled && !$('avatar-cache-status').textContent.includes('待迁移')`) {
 		t.Fatal("avatar controls unavailable on local storage")
 	}
 	for _, theme := range []string{"light", "dark"} {

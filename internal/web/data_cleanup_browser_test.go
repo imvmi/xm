@@ -52,8 +52,8 @@ func TestDataCleanupBrowser(t *testing.T) {
 	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type="submit"]').click();return true})()`)
 	wait(`state.authenticated && !!migrationState`)
 	eval(`(()=>{$('settings-tab-account').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));$('settings-tab-credentials').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));return true})()`)
-	if !eval(`!$('settings-cleanup').hidden && $('settings-tab-cleanup').getAttribute('aria-selected')==='true' && document.activeElement===$('settings-tab-cleanup')`) {
-		t.Fatal("cleanup tab is not keyboard accessible")
+	if !eval(`$('settings-cleanup').hidden && !$('settings-tab-cleanup') && ! $('settings-data').hidden && document.activeElement===$('settings-tab-data')`) {
+		t.Fatal("hidden cleanup module remains in settings navigation")
 	}
 	for _, theme := range []string{"light", "dark"} {
 		for _, width := range []int64{1280, 390} {

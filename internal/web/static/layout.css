@@ -181,7 +181,7 @@ dialog form {
 .settings-section {
   max-width:1040px;
 }
-.settings-section:not(#settings-storage) {
+.settings-section:not(#settings-data) {
   max-width:760px;
 }
 .settings-section>.panel+.panel {

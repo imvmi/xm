@@ -5,20 +5,22 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
 function fixture(){
- const state={settings:{}},plays=[],notices=[],events={},postEvents={},documentEvents={};
+ const state={settings:{}},observers=[],plays=[],notices=[],events={},postEvents={},documentEvents={};
  const element=()=>({dataset:{},attributes:{},style:{},hidden:false,innerHTML:'',textContent:'',
   classList:{values:new Set(),add(v){this.values.add(v)},remove(v){this.values.delete(v)},contains(v){return this.values.has(v)}},
   setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},focus(){}});
  const strong=element(),small=element(),controls=element(),play=element(),mute=element(),full=element(),seek=element(),time=element(),loading=element();
- const video=Object.assign(element(),{hidden:true,isConnected:true,muted:false,volume:1,paused:true,ended:false,duration:100,currentTime:0,readyState:4,src:'',pauses:0,loads:0,getAttribute(k){return k==='src'?this.src:this.attributes[k]},removeAttribute(k){if(k==='src')this.src='';else delete this.attributes[k]},pause(){this.pauses++;this.paused=true},load(){this.loads++},play(){this.paused=false;return new Promise((resolve,reject)=>plays.push({resolve,reject,muted:this.muted}))},closest(q){return q==='.video-shell'?shell:null}});
+ const video=Object.assign(element(),{hidden:true,isConnected:true,muted:false,volume:1,paused:true,ended:false,duration:100,currentTime:0,readyState:4,src:'',pauses:0,loads:0,getAttribute(k){return k==='src'?this.src:this.attributes[k]},removeAttribute(k){if(k==='src')this.src='';else delete this.attributes[k]},pause(){this.pauses++;this.paused=true},load(){this.loads++},play(){this.paused=false;return new Promise((resolve,reject)=>plays.push({resolve,reject,muted:this.muted}))},closest(q){return q==='.video-shell'?shell:q==='.video-slot'?slot:null}});
  const button=Object.assign(element(),{dataset:{videoSrc:'/media/100/asset?v=hash'},closest(){return shell},querySelector(q){return q==='strong'?strong:small}});
  const shell=Object.assign(element(),{querySelector(q){return {'video':video,'[data-video-src]':button,'.video-controls':controls,'[data-video-action="play"]':play,'[data-video-action="mute"]':mute,'[data-video-action="fullscreen"]':full,'.video-seek':seek,'.video-time':time,'.video-loading':loading}[q]}});
+ const slot={isConnected:true,querySelector:()=>video};
+ const IntersectionObserver=class{constructor(callback){this.callback=callback;observers.push(this)}observe(){}unobserve(){}disconnect(){}};
  const document={body:{style:{overflow:'auto'}},querySelectorAll:()=>video.src?[video]:[],addEventListener:(k,fn)=>documentEvents[k]=fn,fullscreenEnabled:false,fullscreenElement:null,exitFullscreen(){this.fullscreenElement=null;return Promise.resolve()}};
- const ctx=vm.createContext({state,document,$:()=>({addEventListener:(k,fn)=>postEvents[k]=fn}),window:{addEventListener:(k,fn)=>events[k]=fn},escape:v=>String(v).replaceAll('&','&amp;').replaceAll('"','&quot;'),icon:()=>'',toast:m=>notices.push(m)});
+ const ctx=vm.createContext({state,document,IntersectionObserver,$:()=>({open:false,querySelectorAll:()=>[slot],addEventListener:(k,fn)=>postEvents[k]=fn}),window:{IntersectionObserver,addEventListener:(k,fn)=>events[k]=fn},escape:v=>String(v).replaceAll('&','&amp;').replaceAll('"','&quot;'),icon:()=>'',toast:m=>notices.push(m)});
  vm.runInContext(source.slice(source.indexOf('function defaultVideoMuted()'),source.indexOf('function displayPostText(')),ctx);
  Object.assign(ctx,{requestVideoPrefetch(){},clearVideoPrefetch(){},resetVideoPrefetch(){},claimVideoPrefetch(video){delete video.dataset.prefetch},observeTimelineEnd(){},prefetchedVideo:null,videoPrefetchOwner:null});
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../static/video.js'),'utf8'),ctx);
- return {ctx,state,video,button,shell,controls,play,mute,full,seek,document,plays,strong,small,events,postEvents,documentEvents,notices};
+ return {ctx,state,observers,slot,video,button,shell,controls,play,mute,full,seek,document,plays,strong,small,events,postEvents,documentEvents,notices};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 test('media renders original versioned images and videos without src or posters',()=>{
@@ -61,7 +63,7 @@ test('browser sound restrictions leave separate controls available for a user ge
 test('fullscreen toggles preserve source, progress, playback and sound; release restores scrolling',()=>{
  const f=fixture();f.ctx.startTimelineVideo(f.button);
  assert.equal(f.shell.classList.contains('video-expanded'),true);assert.equal(f.document.body.style.overflow,'hidden');
- f.video.currentTime=27;f.video.muted=false;f.video.loop=true;
+ f.video.currentTime=27;f.video.muted=false;f.video.loop=true;f.state.settings.video_loop=true;
  f.ctx.toggleVideoFullscreen(f.video);
  assert.equal(f.shell.classList.contains('video-expanded'),false);assert.equal(f.document.body.style.overflow,'auto');
  assert.equal(f.video.currentTime,27);assert.equal(f.video.paused,false);assert.equal(f.video.muted,false);assert.equal(f.video.loop,true);assert.equal(f.video.src,f.button.dataset.videoSrc);
@@ -130,4 +132,30 @@ test('a prefetched video reuses its source and becomes a normal visible player',
  f.ctx.startTimelineVideo(f.button);
  assert.equal(f.video.src,f.button.dataset.videoSrc);assert.equal(f.video.dataset.prefetch,undefined);
  assert.equal(f.video.hidden,false);assert.equal(f.button.hidden,true);assert.equal(f.plays.length,1);assert.equal(f.video.loads,0);
+});
+
+test('viewport autoplay stays inline, pauses out of view and does not retry denied playback',async()=>{
+ const f=fixture();Object.assign(f.state,{authenticated:true,view:'home'});f.state.settings.video_timeline_autoplay=true;
+ f.ctx.observeTimelineVideos();
+ const visibility=ratio=>f.observers[0].callback([{target:f.slot,isIntersecting:ratio>0,intersectionRatio:ratio}]);
+ visibility(.75);assert.equal(f.plays.length,1);assert.equal(f.shell.classList.contains('video-expanded'),false);
+ visibility(.8);assert.equal(f.plays.length,1);
+ visibility(0);assert.equal(f.video.paused,true);
+ visibility(1);assert.equal(f.plays.length,2);
+ const denied=new Error('gesture required');denied.name='NotAllowedError';f.video.paused=true;f.plays[1].reject(denied);await tick();
+ visibility(0);visibility(1);assert.equal(f.plays.length,2);assert.equal(f.notices.length,0);assert.equal(f.controls.hidden,false);
+});
+test('manual pause prevents viewport autoplay from resuming after scrolling',()=>{
+ const f=fixture();Object.assign(f.state,{authenticated:true,view:'home'});f.state.settings.video_timeline_autoplay=true;
+ f.ctx.observeTimelineVideos();
+ const visibility=ratio=>f.observers[0].callback([{target:f.slot,isIntersecting:ratio>0,intersectionRatio:ratio}]);
+ visibility(1);
+ f.postEvents.click({preventDefault(){},target:{closest:q=>q==='[data-video-src]'?null:q==='.video-shell'?f.shell:{dataset:{videoAction:'play'}}}});
+ visibility(0);visibility(1);assert.equal(f.video.paused,true);assert.equal(f.plays.length,1);
+});
+test('auto-next takes precedence over fullscreen looping and inline restores looping',()=>{
+ const f=fixture();Object.assign(f.state.settings,{video_auto_next:true,video_loop:true});
+ f.ctx.startTimelineVideo(f.button);assert.equal(f.video.loop,false);
+ f.ctx.collapseExpandedVideo();assert.equal(f.video.loop,true);
+ f.ctx.expandTimelineVideo(f.video);assert.equal(f.video.loop,false);
 });

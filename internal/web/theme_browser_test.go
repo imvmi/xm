@@ -116,7 +116,7 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 			}
 			if name == "settings" {
 				wait(`$('archive-theme').value==='dark'`)
-				eval(`(()=>{$('settings-tab-storage').click();return true})()`)
+				eval(`(()=>{$('settings-tab-data').click();return true})()`)
 				wait(`$('storage-readonly-name').textContent==='本地文件系统'`)
 				if !eval(`$('remote-cache-panel').hidden && $('remote-cache-note').hidden && !$('remote-cache-panel').getBoundingClientRect().height && !$('remote-cache-note').getBoundingClientRect().height`) {
 					t.Fatal("remote cache controls visible for local storage", width)

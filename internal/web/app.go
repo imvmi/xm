@@ -491,36 +491,38 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
 	browserSettingsInput
 	SQLiteReadConnections *int `json:"sqlite_read_connections"`
 
-	ChromeHeadless      *bool   `json:"chrome_headless"`
-	Proxy               *string `json:"proxy"`
-	DefaultInterval     *int    `json:"default_interval_seconds"`
-	QueueInterval       *int    `json:"queue_interval_seconds"`
-	RateLimitMode       *string `json:"rate_limit_mode"`
-	RequestTimeout      *int    `json:"request_timeout_seconds"`
-	ScrollDelay         *int    `json:"scroll_delay_seconds"`
-	ScrollJitter        *int    `json:"scroll_jitter_seconds"`
-	TimelineIdleSeconds *int    `json:"timeline_idle_seconds"`
-	KnownBoundaryPosts  *int    `json:"known_boundary_posts"`
-	MaxMediaBytes       *int64  `json:"max_media_bytes"`
-	BrowserMaxAge       *int    `json:"browser_max_age_seconds"`
-	BrowserMaxTasks     *int    `json:"browser_max_tasks"`
-	MediaRetryInitial   *int    `json:"media_retry_initial_seconds"`
-	MediaRetryMax       *int    `json:"media_retry_max_seconds"`
-	Paused              *bool   `json:"polling_paused"`
-	ArchiveTheme        *string `json:"archive_theme"`
-	MediaPreloadMode    *string `json:"media_preload_mode"`
-	VideoLoop           *bool   `json:"video_loop"`
-	VideoDefaultMuted   *bool   `json:"video_default_muted"`
-	ImageCacheSeconds   *int    `json:"image_cache_seconds"`
-	VideoCacheSeconds   *int    `json:"video_cache_seconds"`
-	TimelinePageSize    *int    `json:"timeline_page_size"`
+	ChromeHeadless        *bool   `json:"chrome_headless"`
+	Proxy                 *string `json:"proxy"`
+	DefaultInterval       *int    `json:"default_interval_seconds"`
+	QueueInterval         *int    `json:"queue_interval_seconds"`
+	RateLimitMode         *string `json:"rate_limit_mode"`
+	RequestTimeout        *int    `json:"request_timeout_seconds"`
+	ScrollDelay           *int    `json:"scroll_delay_seconds"`
+	ScrollJitter          *int    `json:"scroll_jitter_seconds"`
+	TimelineIdleSeconds   *int    `json:"timeline_idle_seconds"`
+	KnownBoundaryPosts    *int    `json:"known_boundary_posts"`
+	MaxMediaBytes         *int64  `json:"max_media_bytes"`
+	BrowserMaxAge         *int    `json:"browser_max_age_seconds"`
+	BrowserMaxTasks       *int    `json:"browser_max_tasks"`
+	MediaRetryInitial     *int    `json:"media_retry_initial_seconds"`
+	MediaRetryMax         *int    `json:"media_retry_max_seconds"`
+	Paused                *bool   `json:"polling_paused"`
+	ArchiveTheme          *string `json:"archive_theme"`
+	MediaPreloadMode      *string `json:"media_preload_mode"`
+	VideoAutoNext         *bool   `json:"video_auto_next"`
+	VideoTimelineAutoplay *bool   `json:"video_timeline_autoplay"`
+	VideoLoop             *bool   `json:"video_loop"`
+	VideoDefaultMuted     *bool   `json:"video_default_muted"`
+	ImageCacheSeconds     *int    `json:"image_cache_seconds"`
+	VideoCacheSeconds     *int    `json:"video_cache_seconds"`
+	TimelinePageSize      *int    `json:"timeline_page_size"`
 }
 
 func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -642,6 +644,12 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.MediaPreloadMode = *v.MediaPreloadMode
+	}
+	if v.VideoAutoNext != nil {
+		cfg.VideoAutoNext = *v.VideoAutoNext
+	}
+	if v.VideoTimelineAutoplay != nil {
+		cfg.VideoTimelineAutoplay = *v.VideoTimelineAutoplay
 	}
 	if v.VideoLoop != nil {
 		cfg.VideoLoop = *v.VideoLoop

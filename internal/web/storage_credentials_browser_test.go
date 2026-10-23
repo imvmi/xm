@@ -93,7 +93,7 @@ func TestStorageCredentialsBrowser(t *testing.T) {
 	wait(`state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`!$('view-settings').hidden && $('storage-credentials-profile').options.length===2`)
-	eval(`(()=>{$('settings-tab-storage').click();return true})()`)
+	eval(`(()=>{$('settings-tab-data').click();return true})()`)
 	if !eval(`!$('storage-credentials-panel').hidden && $('storage-credentials-panel').getBoundingClientRect().height>0 && $('storage-credentials-profile').value==='history' && $('storage-credentials-username').value==='user' && $('storage-credentials-password').value==='' && $('storage-credentials-password').type==='password'`) {
 		t.Fatal("historical credentials UI missing or leaked saved password")
 	}

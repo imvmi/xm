@@ -109,12 +109,12 @@
         <div class="panel notification-history"><div class="panel-heading"><div><h2>最近发送记录</h2><p>最近 30 条记录。临时失败最多自动重试 5 次。</p></div><button id="notification-refresh" class="button secondary" type="button">刷新记录</button></div><div id="notification-deliveries" class="panel-body"></div></div>
       </section>
       <section id="view-settings" class="view management-view" hidden>
-        <div class="page-heading"><div><h1>设置</h1><p>管理登录凭据、采集、界面显示、归档存储、API 凭据与数据维护。</p></div></div>
+        <div class="page-heading"><div><h1>设置</h1><p>管理认证、爬虫、时间线、数据与外部访问凭据。</p></div></div>
         <p id="settings-draft-notice" class="notice" role="status" hidden>有未保存修改。切换页面会保留草稿，刷新或关闭页面前请保存。</p>
-        <div class="settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">X 登录</button><button type="button" role="tab" id="settings-tab-collection" aria-controls="settings-collection" aria-selected="false" data-settings-tab="collection" tabindex="-1">采集设置</button><button type="button" role="tab" id="settings-tab-display" aria-controls="settings-display" aria-selected="false" data-settings-tab="display" tabindex="-1">界面显示</button><button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="false" data-settings-tab="storage" tabindex="-1">归档存储</button><button type="button" role="tab" id="settings-tab-migration" aria-controls="settings-migration" aria-selected="false" data-settings-tab="migration" tabindex="-1">数据迁移</button><button type="button" role="tab" id="settings-tab-cleanup" aria-controls="settings-cleanup" aria-selected="false" data-settings-tab="cleanup" tabindex="-1">清理数据</button><button type="button" role="tab" id="settings-tab-credentials" aria-controls="settings-credentials" aria-selected="false" data-settings-tab="credentials" tabindex="-1">API 凭据</button></div>
+        <div class="settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" id="settings-tab-account" aria-controls="settings-account" aria-selected="true" data-settings-tab="account">认证</button><button type="button" role="tab" id="settings-tab-collection" aria-controls="settings-collection" aria-selected="false" data-settings-tab="collection" tabindex="-1">爬虫</button><button type="button" role="tab" id="settings-tab-display" aria-controls="settings-display" aria-selected="false" data-settings-tab="display" tabindex="-1">时间线</button><button type="button" role="tab" id="settings-tab-data" aria-controls="settings-data" aria-selected="false" data-settings-tab="data" tabindex="-1">数据</button><button type="button" role="tab" id="settings-tab-credentials" aria-controls="settings-credentials" aria-selected="false" data-settings-tab="credentials" tabindex="-1">凭据</button></div>
         <section id="settings-account" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-account">
           <p class="field-help">这里管理采集时使用的 X 登录凭据，不是 XM 管理员登录。要添加或管理被采集的账号，请前往<a href="#accounts">「账号」</a>。</p>
-          <div class="panel"><div class="panel-heading"><div><h2>X 登录凭据</h2><p>仅采集当前 X 账号有权访问的动态。</p></div><span id="cookie-badge" class="badge neutral">未导入</span></div><div class="panel-body"><p id="cookie-status" class="muted"></p><form id="cookie-form"><label for="cookie-content">粘贴 Cookie</label><textarea id="cookie-content" rows="5" placeholder="auth_token=…; ct0=…&#10;也支持 JSON 和 Netscape 格式" autocomplete="off" spellcheck="false"></textarea><div class="file-row"><label class="button secondary file-button">选择 Cookie 文件<input id="cookie-file" type="file" accept=".json,.txt" hidden></label><span id="cookie-file-name" class="muted">或直接粘贴到上方</span></div><p class="field-help">auth_token 与 ct0 明文保存在数据库中，导入后不会回显。锁推账号需要先获准关注。</p><button class="button primary" type="submit">保存 Cookie</button></form></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>认证</h2><p>管理 X 登录 Cookie，仅采集当前 X 账号有权访问的动态。</p></div><span id="cookie-badge" class="badge neutral">未导入</span></div><div class="panel-body"><p id="cookie-status" class="muted"></p><form id="cookie-form"><label for="cookie-content">粘贴 Cookie</label><textarea id="cookie-content" rows="5" placeholder="auth_token=…; ct0=…&#10;也支持 JSON 和 Netscape 格式" autocomplete="off" spellcheck="false"></textarea><div class="file-row"><label class="button secondary file-button">选择 Cookie 文件<input id="cookie-file" type="file" accept=".json,.txt" hidden></label><span id="cookie-file-name" class="muted">或直接粘贴到上方</span></div><p class="field-help">auth_token 与 ct0 明文保存在数据库中，导入后不会回显。锁推账号需要先获准关注。</p><button class="button primary" type="submit">保存 Cookie</button></form></div></div>
           <div class="panel"><div class="panel-heading"><div><h2>从 API 获取 Cookie</h2><p>保存接口配置，手动获取或在登录失效时自动恢复。</p></div></div><div class="panel-body">
             <form id="cookie-api-form" autocomplete="off"><fieldset id="cookie-api-fields" class="cookie-api-fields">
               <label for="cookie-api-url">接口地址</label><input id="cookie-api-url" type="url" required maxlength="4096" placeholder="https://example.com/info/x" spellcheck="false">
@@ -135,8 +135,8 @@
           <p class="settings-caption">更新 Cookie 后，下一个任务会使用新凭据。<a href="#accounts">前往账号 →</a></p>
         </section>
         <section id="settings-collection" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-collection" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>采集设置</h2><p>所有监控账号共用。修改后请保存，正在运行的任务继续使用原设置。</p></div></div><div class="panel-body">
-            <div class="global-collection-control"><div><h3 id="global-collection-label">全局自动采集</h3><p id="global-collection-help" class="field-help">切换后立即保存。关闭后暂停所有账号的自动采集，当前任务继续执行，仍可手动采集；开启后按各账号的采集设置运行。</p></div><button id="global-auto-collection" type="button" class="timeline-switch" role="switch" aria-checked="false" aria-labelledby="global-collection-label" aria-describedby="global-collection-help" disabled><span class="switch-track" aria-hidden="true"></span><span id="global-collection-state">加载中</span></button></div>
+          <div class="panel"><div class="panel-heading"><div><h2>爬虫</h2><p>所有监控账号共用。修改后请保存，正在运行的任务继续使用原设置。</p></div></div><div class="panel-body">
+            <div class="global-collection-control"><div><h3 id="global-collection-label">全局自动采集</h3><p id="global-collection-help" class="field-help">切换后立即保存。关闭后暂停所有账号的自动采集，当前任务继续执行，仍可手动采集；开启后按各账号的采集计划运行。</p></div><button id="global-auto-collection" type="button" class="timeline-switch" role="switch" aria-checked="false" aria-labelledby="global-collection-label" aria-describedby="global-collection-help" disabled><span class="switch-track" aria-hidden="true"></span><span id="global-collection-state">加载中</span></button></div>
             <form id="collection-settings-form">
               <section class="collection-plan" aria-labelledby="collection-plan-title"><h3 id="collection-plan-title">采集计划</h3><p id="plan-summary" class="group-summary"></p>
                 <div class="field-pair"><div><label for="default-interval">自动采集周期（小时）</label><input id="default-interval" type="number" min="1" max="168" step="any" required value="6"></div><div><label for="queue-interval">账号之间的等待时间（秒）</label><input id="queue-interval" type="number" min="0" max="3600" step="1" required value="60"></div></div>
@@ -169,7 +169,7 @@
                 <p class="field-help">临时失败会逐次延长等待时间，到期后在后续采集任务中重试。永久格式、域名或大小错误不会自动重试；S3 单文件上传上限仍为 5 GiB。</p>
                 <button class="text-button" type="button" data-default-group="media">填入本组默认值</button>
               </details>
-              <div class="collection-save-bar"><span id="collection-draft-status" role="status">设置已保存</span><button class="button primary" type="submit">保存采集设置</button></div>
+              <div class="collection-save-bar"><span id="collection-draft-status" role="status">设置已保存</span><button class="button primary" type="submit">保存爬虫设置</button></div>
               <p id="collection-settings-result" class="field-help" role="status" aria-live="polite"></p>
             </form>
           </div></div>
@@ -186,7 +186,7 @@
           <p class="settings-caption">诊断会分别显示 Chrome、Cookie、X 网络和登录状态。</p>
         </section>
         <section id="settings-display" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-display" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>界面显示</h2><p>设置全站外观、时间线加载、视频播放与浏览器缓存。</p></div></div><div class="panel-body">
+          <div class="panel"><div class="panel-heading"><div><h2>时间线</h2><p>设置全站外观、时间线加载、视频播放与浏览器缓存。</p></div></div><div class="panel-body">
             <form id="archive-display-form">
               <section class="display-preference-group" aria-labelledby="display-appearance-title"><h3 id="display-appearance-title">外观与时间线</h3>
               <label for="archive-theme">主题模式</label><select id="archive-theme"><option value="system">跟随系统</option><option value="light">日间模式</option><option value="dark">夜间模式</option></select>
@@ -195,73 +195,41 @@
               <p class="field-help">用于首页和账号时间线的每批加载数量，范围 10～1000 条。</p>
               </section>
               <section class="display-preference-group" aria-labelledby="display-video-title"><h3 id="display-video-title">视频播放</h3>
+              <label class="check-label"><input id="video-auto-next" type="checkbox"> 全屏播放结束后自动播放下一条</label>
+              <p class="field-help">默认关闭。开启后按当前时间线的顺序和筛选条件继续播放，直到最后一条；关闭后仍可手动上滑切换。</p>
+              <label class="check-label"><input id="video-timeline-autoplay" type="checkbox"> 时间线滚动到视频时自动播放</label>
+              <p class="field-help">默认关闭。开启后视频进入可视区域时在时间线内播放，同一时间只播放一条；离开可视区域或切到后台时暂停。手动暂停的视频不会自动恢复。</p>
               <label class="check-label"><input id="video-loop" type="checkbox"> 视频循环播放</label>
-              <p class="field-help">默认关闭。开启后，点击播放的视频将在结束时自动重播。</p>
+              <p class="field-help">默认关闭。开启后视频结束时重播；全屏开启自动播放下一条时，优先切换到下一条。</p>
               <label class="check-label"><input id="video-default-muted" type="checkbox" checked> 视频默认静音</label>
-              <p class="field-help">视频不会自动播放，不生成封面。此开关控制每次开始播放时是否静音，单击画面可切换全屏与内嵌，通过独立按钮播放、暂停或临时调整声音。</p>
+              <p class="field-help">控制每次开始播放时是否静音。浏览器可能限制有声自动播放，受限时可点击播放按钮继续。点击画面进入全屏，通过全屏按钮或下滑返回时间线。</p>
               </section>
               <section class="display-preference-group" aria-labelledby="display-preload-title"><h3 id="display-preload-title">媒体预加载</h3><label for="media-preload-mode">图片与视频预加载</label><select id="media-preload-mode"><option value="off">关闭</option><option value="standard" selected>标准（推荐）</option><option value="enhanced">增强视频缓冲</option></select><p class="field-help">标准模式提前获取下一页、预加载后面两张图片和下一条视频的元数据。增强模式还允许浏览器提前缓冲下一条视频，可能下载完整视频并增加流量；当前播放卡顿或页面进入后台时停止额外预加载。</p></section>
-              <section class="display-preference-group" aria-labelledby="display-cache-title"><h3 id="display-cache-title">浏览器缓存</h3><p class="field-help">保存在当前设备的浏览器中，对本地和远端存储均有效；与「归档存储」中的服务器缓存相互独立。</p>
+              <section class="display-preference-group" aria-labelledby="display-cache-title"><h3 id="display-cache-title">浏览器缓存</h3><p class="field-help">保存在当前设备的浏览器中，对本地和远端存储均有效；与「数据 → 媒体存储」中的服务器缓存相互独立。</p>
               <div class="field-pair"><div><label for="image-cache-hours">图片缓存时间（小时）</label><input id="image-cache-hours" type="number" min="1" max="720" step="1" required value="168"></div><div><label for="video-cache-minutes">视频缓存时间（分钟）</label><input id="video-cache-minutes" type="number" min="1" max="1440" step="1" required value="10"></div></div>
               <p class="field-help">原图默认 168 小时（7 天），原视频默认 10 分钟；不压缩或转码。有效期不等于自动删除时间，浏览器自行管理缓存空间。修改影响新响应，已缓存的内容可能继续使用原有效期；个人设备退出登录后也可能保留缓存。头像固定缓存 1 小时。</p>
               </section>
-              <div class="form-actions"><button class="button primary" type="submit">保存显示设置</button></div><p id="archive-display-result" class="field-help" role="status" aria-live="polite"></p>
+              <div class="form-actions"><button class="button primary" type="submit">保存时间线设置</button></div><p id="archive-display-result" class="field-help" role="status" aria-live="polite"></p>
             </form>
           </div></div>
         </section>
-        <section id="settings-storage" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-storage" hidden>
-          <div class="storage-lock-note"><svg><use href="#i-lock"/></svg><div><strong>存储目的地受保护</strong><p>通过“数据迁移”切换数据库，或在本地与远端之间迁移媒体。<span id="remote-cache-note" hidden>远端媒体的服务器缓存可在下方调整。</span></p></div></div>
-          <div class="storage-summary-grid"><div class="panel"><div class="panel-heading"><div><h2>归档数据库</h2></div></div><div class="panel-body"><h3 id="database-label">数据库</h3><p id="database-help" class="field-help"></p></div></div>
-          <div class="panel storage-panel"><div class="panel-heading"><div><h2>媒体存储</h2></div><span id="storage-badge" class="badge neutral">本地磁盘</span></div><div id="storage-readonly" class="panel-body"><h3 id="storage-readonly-name"></h3><p id="storage-readonly-detail" class="muted"></p><p class="field-help">图片、视频和引用媒体保存在此位置；凭据不会下发到浏览器。</p></div></div></div>
-          <div id="sqlite-performance-panel" class="panel" hidden><div class="panel-heading"><div><h2>SQLite 读取性能</h2><p>允许时间线、统计等读取同时进行，减少相互等待。</p></div></div><div class="panel-body"><form id="sqlite-performance-form"><label for="sqlite-read-connections">读取并发数</label><input id="sqlite-read-connections" type="number" min="1" max="16" step="1" value="4" required aria-describedby="sqlite-read-help"><p id="sqlite-read-help" class="field-help">默认 4，可设置为 1～16。数值越大，允许同时进行的读取越多，也会增加内存和磁盘负载。通常保留默认值即可；写入始终串行执行。保存后立即生效，无需重启；降低数值会等待已有读取结束，不中断查询。</p><div class="form-actions"><button class="button primary" type="submit">保存读取设置</button></div><p id="sqlite-performance-result" class="field-help" role="status" aria-live="polite"></p></form></div></div>
-          <div class="panel"><div class="panel-heading"><div><h2>头像缓存</h2><p>来源 URL 保存在数据库，图片缓存在运行 XM 的电脑上。</p></div></div><div class="panel-body"><p id="avatar-cache-status" class="cache-usage" role="status">正在读取头像信息…</p><p class="field-help">清理缓存后，在下次查看时按需下载；原始 URL、推文和媒体不会删除。</p><div class="form-actions"><button id="avatar-cache-clear" class="button secondary" type="button">清理头像缓存</button></div><p id="avatar-cache-result" class="field-help" role="status" aria-live="polite"></p></div></div>
-          <div id="storage-credentials-panel" class="panel storage-panel" hidden>
-            <div class="panel-heading"><div><h2>更新存储凭据</h2><p>更新已有存储连接的登录凭据，数据库和媒体位置保持不变。</p></div></div>
-            <div class="panel-body"><form id="storage-credentials-form" autocomplete="off">
-              <label for="storage-credentials-profile">存储连接</label><select id="storage-credentials-profile"></select>
-              <p id="storage-credentials-destination" class="field-help"></p>
-              <div id="storage-credentials-login"><label for="storage-credentials-username">用户名</label><input id="storage-credentials-username" autocomplete="off"><label for="storage-credentials-password">新密码</label><input id="storage-credentials-password" type="password" autocomplete="new-password" placeholder="留空保留原密码"></div>
-              <div id="storage-credentials-s3" hidden><label for="storage-credentials-access">新 Access Key</label><input id="storage-credentials-access" type="password" autocomplete="new-password" placeholder="与 Secret Key 一起填写"><label for="storage-credentials-secret">新 Secret Key</label><input id="storage-credentials-secret" type="password" autocomplete="new-password"><label for="storage-credentials-token">新 Session Token（可选）</label><input id="storage-credentials-token" type="password" autocomplete="new-password" placeholder="留空保留原 Token"><label class="check-label"><input id="storage-credentials-clear-token" type="checkbox">清除现有 Session Token</label></div>
-              <p class="field-help">提交后会测试存储读写与测试文件清理，成功才保存。新请求和下一次采集使用新凭据，已经开始的任务继续使用原凭据。</p>
-              <div class="form-actions"><button class="button primary" type="submit">验证并更新凭据</button></div><p id="storage-credentials-result" class="field-help" role="status" aria-live="polite"></p>
-            </form></div>
-          </div>
-          <div id="remote-cache-panel" class="panel remote-cache-panel" hidden><div class="panel-heading"><div><h2>服务器媒体缓存</h2><p>在 XM 服务器上缓存 WebDAV / S3 媒体，减少远端重复读取；不是浏览器缓存。</p></div><span id="remote-cache-badge" class="badge neutral">未启用</span></div><div class="panel-body"><form id="remote-cache-form"><label class="check-label"><input id="remote-cache-enabled" type="checkbox">启用服务器磁盘缓存</label><div class="field-pair"><div><label for="remote-cache-size">容量上限</label><div class="input-unit"><input id="remote-cache-size" type="number" min="64" max="102400" step="64" required><span>MiB</span></div></div><div><label>当前占用</label><p id="remote-cache-usage" class="cache-usage">0 B</p></div></div><p class="field-help">图片首次访问时写入缓存，之后优先从本地返回；下载前淘汰最久未使用的文件并预留空间；缓存繁忙或磁盘空间不足时直接读取。视频优先复用已有缓存，未命中时直接流式读取，避免等待完整下载。超过缓存容量的图片也直接读取。</p><div class="form-actions"><button class="button primary" type="submit">保存缓存设置</button><button id="remote-cache-clear" class="button secondary" type="button">清空服务器缓存</button></div><p id="remote-cache-result" class="field-help" role="status" aria-live="polite"></p></form></div></div>
-          <p class="settings-caption">数据库保存正文、Cookie、管理员凭据和运行配置；媒体文件与启动配置需一并备份，服务器缓存无需备份。</p>
-        </section>
-        <section id="settings-credentials" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-credentials" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>API 凭据</h2><p>为外部调用方签发密钥，并限制操作权限和账号范围。</p></div><a class="button secondary" href="/docs/api" target="_blank" rel="noopener">查看 API 文档 ↗</a></div><div class="panel-body">
-            <p class="field-help">每个调用方使用独立凭据。密钥仅在创建或轮换时展示一次，请通过可信方式交付。对外访问请使用 HTTPS。</p>
-            <div class="form-actions"><button id="credential-new" type="button" class="button primary">创建凭据</button><button id="credential-refresh" type="button" class="button secondary">刷新列表</button></div><div id="credential-list"></div>
+        <section id="settings-data" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-data" hidden>
+          <div class="storage-lock-note"><svg><use href="#i-lock"/></svg><div><strong>数据与存储管理</strong><p>数据库保存归档内容与运行配置，媒体存储保存图片与视频。切换位置请先检查迁移，一次执行一个任务，源数据库和源文件会保留。<span id="remote-cache-note" hidden>远端媒体可使用服务器缓存。</span></p></div></div>
+          <nav class="data-jump-links" aria-label="数据页分组"><button type="button" class="button secondary" data-data-jump="data-database">数据库配置与迁移 ↓</button><button type="button" class="button secondary" data-data-jump="data-media">媒体位置与缓存 ↓</button></nav>
+          <p id="migration-error" class="field-help" role="alert"></p>
+          <div id="migration-preview-panel" class="panel migration-preview" hidden><div class="panel-body"><h3 id="migration-preview-title">迁移前检查</h3><p id="migration-preview-summary"></p><p id="migration-preview-warning" class="field-help"></p>
+            <div id="migration-confirm-panel" hidden><label id="migration-confirm-label" for="migration-confirm">输入“开始迁移”确认操作</label><input id="migration-confirm" autocomplete="off" placeholder="开始迁移"><button id="migration-start" type="button" class="button primary" disabled>确认开始迁移</button></div>
           </div></div>
-          <div id="credential-editor" class="panel" hidden><div class="panel-heading"><h2 id="credential-editor-title">创建 API 凭据</h2><button id="credential-close" class="button secondary" type="button">关闭</button></div><div class="panel-body"><form id="credential-form" autocomplete="off">
-            <label for="credential-name">凭据名称</label><input id="credential-name" required maxlength="100" placeholder="例如：内容同步服务">
-            <label for="credential-description">调用方 / 用途备注</label><textarea id="credential-description" rows="2" maxlength="500"></textarea>
-            <label class="check-label"><input id="credential-enabled" type="checkbox" checked>启用凭据</label>
-            <fieldset><legend>操作权限</legend><div class="credential-scopes"><label class="check-label"><input id="credential-scope-accounts-read" type="checkbox" data-api-scope="accounts:read">读取账号</label><label class="check-label"><input id="credential-scope-accounts-write" type="checkbox" data-api-scope="accounts:write">添加和修改账号</label><label class="check-label"><input id="credential-scope-accounts-delete" type="checkbox" data-api-scope="accounts:delete">取消监控</label><label class="check-label"><input id="credential-scope-tasks-read" type="checkbox" data-api-scope="tasks:read">读取本凭据的任务</label><label class="check-label"><input id="credential-scope-tasks-create" type="checkbox" data-api-scope="tasks:create">提交及重试任务</label><label class="check-label"><input id="credential-scope-tasks-rescan" type="checkbox" data-api-scope="tasks:rescan">重新扫描</label><label class="check-label"><input id="credential-scope-tasks-cancel" type="checkbox" data-api-scope="tasks:cancel">取消本凭据的任务</label><label class="check-label"><input id="credential-scope-timeline-read" type="checkbox" data-api-scope="timeline:read">读取归档时间线</label><label class="check-label"><input id="credential-scope-media-read" type="checkbox" data-api-scope="media:read">读取归档媒体</label></div></fieldset>
-            <label class="check-label"><input id="credential-all-accounts" type="checkbox">允许全部账号（包括将来添加的账号）</label>
-            <label for="credential-accounts">允许访问的账号</label><textarea id="credential-accounts" rows="3" placeholder="每行一个账号名，也可以用逗号分隔" required></textarea><p class="field-help">可提前授权尚未添加的账号。调用方只能添加授权范围内的账号；任务只允许查询和取消由本凭据提交的任务。账号授权包含归档中的引用内容。</p>
-            <label for="credential-expiry">有效期至</label><input id="credential-expiry" type="datetime-local" required><label class="check-label"><input id="credential-no-expiry" type="checkbox">永不过期</label>
-            <div class="credential-limits"><div><label for="credential-request-limit">每分钟请求数</label><input id="credential-request-limit" type="number" min="1" max="600" value="60" required></div><div><label for="credential-task-limit">每分钟任务提交数</label><input id="credential-task-limit" type="number" min="1" max="60" value="5" required></div><div><label for="credential-queue-limit">最多未结束任务数</label><input id="credential-queue-limit" type="number" min="1" max="100" value="5" required></div></div>
-            <button type="submit" class="button primary">保存凭据</button>
-          </form></div></div>
-          <div class="panel"><div class="panel-heading"><div><h2>API 操作记录</h2><p>最近 100 条管理及外部写入操作；最多保留 1000 条或 30 天。</p></div></div><div id="credential-audit" class="panel-body"></div></div>
-        </section>
-        <section id="settings-cleanup" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-cleanup" hidden>
-          <div class="panel"><div class="panel-heading"><div><h2>清理历史记录</h2><p>删除通知与任务的历史记录，释放可复用的数据库空间。</p></div></div><div class="panel-body">
-            <label class="check-label"><input id="data-cleanup-notifications" type="checkbox" checked aria-describedby="data-cleanup-notifications-help">通知的最近发送记录</label>
-            <p id="data-cleanup-notifications-help" class="field-help">清理全部已发送、发送失败和已取消的记录。待发送、自动重试中的通知及通知去重数据会保留。</p>
-            <label class="check-label"><input id="data-cleanup-tasks" type="checkbox" checked aria-describedby="data-cleanup-tasks-help">任务中的最近记录</label>
-            <p id="data-cleanup-tasks-help" class="field-help">清理全部已结束的任务、执行记录及关联统计。正在执行、排队或等待重试的任务及关联记录会保留。</p>
-            <p class="field-help">清理范围包含列表中未显示的历史记录，不影响归档推文、媒体、账号和设置。清理后数据库空间可供后续写入复用，文件大小不一定立即减小。</p>
-            <button id="data-cleanup-open" type="button" class="button danger">清理所选记录</button>
-            <p id="data-cleanup-result" class="field-help" role="status" aria-live="polite"></p>
+          <div id="migration-job-panel" class="panel" hidden><div class="panel-heading"><div><h2>迁移进度</h2><p id="migration-job-kind"></p></div><span id="migration-badge" class="badge neutral">未开始</span></div><div class="panel-body">
+            <p id="migration-phase" role="status" aria-live="polite"></p><progress id="migration-progress" max="1" value="0" aria-label="迁移进度"></progress><p id="migration-counts" class="field-help"></p><p id="migration-message"></p>
+            <div class="form-actions"><button id="migration-pause" type="button" class="button secondary">暂停</button><button id="migration-retry" type="button" class="button secondary">继续 / 重试剩余项</button><button id="migration-acknowledge" type="button" class="button primary" hidden>确认完成并隐藏</button></div>
+            <details id="migration-failures-panel" hidden><summary>失败详情（最多显示 100 项）</summary><ul id="migration-failures" class="migration-failures"></ul></details>
+            <p class="field-help">存储重试仅处理仍在来源存储中的文件；数据库重试会重新建立完整快照，MySQL / MariaDB 目标须保持为空。已切换后新增的数据不会同步回源位置。</p>
           </div></div>
-        </section>
-        <section id="settings-migration" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-migration" hidden>
-          <p class="field-help">数据库与媒体文件分别迁移，一次执行一个任务。本地指运行 XM 的服务器磁盘，源数据库和源文件会保留。</p>
-          <div class="migration-sections">
-            <div id="migration-database-section" class="panel">
+
+          <section class="data-group" id="data-database" aria-labelledby="data-database-title"><header class="data-group-heading"><span class="data-group-number" aria-hidden="true">01</span><div><h2 id="data-database-title">数据库</h2><p>管理归档正文、账号、认证信息与运行配置的保存和迁移。</p></div></header>
+          <div class="data-panel-grid"><div class="panel"><div class="panel-heading"><div><h2>归档数据库</h2></div></div><div class="panel-body"><h3 id="database-label">数据库</h3><p id="database-help" class="field-help"></p></div></div><div id="sqlite-performance-panel" class="panel" hidden><div class="panel-heading"><div><h2>SQLite 读取性能</h2><p>允许时间线、统计等读取同时进行，减少相互等待。</p></div></div><div class="panel-body"><form id="sqlite-performance-form"><label for="sqlite-read-connections">读取并发数</label><input id="sqlite-read-connections" type="number" min="1" max="16" step="1" value="4" required aria-describedby="sqlite-read-help"><p id="sqlite-read-help" class="field-help">默认 4，可设置为 1～16。数值越大，允许同时进行的读取越多，也会增加内存和磁盘负载。通常保留默认值即可；写入始终串行执行。保存后立即生效，无需重启；降低数值会等待已有读取结束，不中断查询。</p><div class="form-actions"><button class="button primary" type="submit">保存读取设置</button></div><p id="sqlite-performance-result" class="field-help" role="status" aria-live="polite"></p></form></div></div></div>
+          <div id="migration-database-section" class="panel migration-config">
               <div class="panel-heading"><div><h2>数据库迁移</h2><p>迁移归档、账号、设置和任务记录。</p></div><span id="migration-database-current" class="badge neutral">加载中</span></div>
               <div class="panel-body">
                 <div class="migration-route"><span id="migration-database-source">—</span><span aria-hidden="true">→</span><strong id="migration-database-target">—</strong></div>
@@ -285,8 +253,10 @@
                 <button id="migration-database-preview" type="button" class="button secondary">检查数据库迁移</button>
               </div>
             </div>
-            <div id="migration-storage-section" class="panel">
-              <div class="panel-heading"><div><h2>存储迁移</h2><p>迁移已归档媒体，同时切换新媒体的保存位置。</p></div><span id="migration-storage-current" class="badge neutral">加载中</span></div>
+          </section>
+          <section class="data-group" id="data-media" aria-labelledby="data-media-title"><header class="data-group-heading"><span class="data-group-number" aria-hidden="true">02</span><div><h2 id="data-media-title">媒体存储</h2><p>管理原图、视频的保存位置、连接凭据与缓存。本地指运行 XM 的服务器磁盘。</p></div></header>
+          <div class="panel storage-panel"><div class="panel-heading"><div><h2>媒体存储</h2></div><span id="storage-badge" class="badge neutral">本地磁盘</span></div><div id="storage-readonly" class="panel-body"><h3 id="storage-readonly-name"></h3><p id="storage-readonly-detail" class="muted"></p><p class="field-help">图片、视频和引用媒体保存在此位置；凭据不会下发到浏览器。</p></div></div><div id="migration-storage-section" class="panel migration-config">
+              <div class="panel-heading"><div><h2>媒体迁移</h2><p>迁移已归档媒体，同时切换新媒体的保存位置。</p></div><span id="migration-storage-current" class="badge neutral">加载中</span></div>
               <div class="panel-body">
                 <p id="migration-storage-help" class="field-help"></p>
                 <div class="migration-fields">
@@ -317,26 +287,58 @@
                 </div>
                 <button id="migration-preview" type="button" class="button secondary">检查存储迁移</button>
               </div>
-            </div>
+            </div><div id="storage-credentials-panel" class="panel storage-panel" hidden>
+            <div class="panel-heading"><div><h2>更新存储凭据</h2><p>更新已有存储连接的登录凭据，数据库和媒体位置保持不变。</p></div></div>
+            <div class="panel-body"><form id="storage-credentials-form" autocomplete="off">
+              <label for="storage-credentials-profile">存储连接</label><select id="storage-credentials-profile"></select>
+              <p id="storage-credentials-destination" class="field-help"></p>
+              <div id="storage-credentials-login"><label for="storage-credentials-username">用户名</label><input id="storage-credentials-username" autocomplete="off"><label for="storage-credentials-password">新密码</label><input id="storage-credentials-password" type="password" autocomplete="new-password" placeholder="留空保留原密码"></div>
+              <div id="storage-credentials-s3" hidden><label for="storage-credentials-access">新 Access Key</label><input id="storage-credentials-access" type="password" autocomplete="new-password" placeholder="与 Secret Key 一起填写"><label for="storage-credentials-secret">新 Secret Key</label><input id="storage-credentials-secret" type="password" autocomplete="new-password"><label for="storage-credentials-token">新 Session Token（可选）</label><input id="storage-credentials-token" type="password" autocomplete="new-password" placeholder="留空保留原 Token"><label class="check-label"><input id="storage-credentials-clear-token" type="checkbox">清除现有 Session Token</label></div>
+              <p class="field-help">提交后会测试存储读写与测试文件清理，成功才保存。新请求和下一次采集使用新凭据，已经开始的任务继续使用原凭据。</p>
+              <div class="form-actions"><button class="button primary" type="submit">验证并更新凭据</button></div><p id="storage-credentials-result" class="field-help" role="status" aria-live="polite"></p>
+            </form></div>
           </div>
+          <div class="data-panel-grid"><div class="panel"><div class="panel-heading"><div><h2>头像缓存</h2><p>来源 URL 保存在数据库，图片缓存在运行 XM 的电脑上。</p></div></div><div class="panel-body"><p id="avatar-cache-status" class="cache-usage" role="status">正在读取头像信息…</p><p class="field-help">清理缓存后，在下次查看时按需下载；原始 URL、推文和媒体不会删除。</p><div class="form-actions"><button id="avatar-cache-clear" class="button secondary" type="button">清理头像缓存</button></div><p id="avatar-cache-result" class="field-help" role="status" aria-live="polite"></p></div></div><div id="remote-cache-panel" class="panel remote-cache-panel" hidden><div class="panel-heading"><div><h2>服务器媒体缓存</h2><p>在 XM 服务器上缓存 WebDAV / S3 媒体，减少远端重复读取；不是浏览器缓存。</p></div><span id="remote-cache-badge" class="badge neutral">未启用</span></div><div class="panel-body"><form id="remote-cache-form"><label class="check-label"><input id="remote-cache-enabled" type="checkbox">启用服务器磁盘缓存</label><div class="field-pair"><div><label for="remote-cache-size">容量上限</label><div class="input-unit"><input id="remote-cache-size" type="number" min="64" max="102400" step="64" required><span>MiB</span></div></div><div><label>当前占用</label><p id="remote-cache-usage" class="cache-usage">0 B</p></div></div><p class="field-help">图片首次访问时写入缓存，之后优先从本地返回；下载前淘汰最久未使用的文件并预留空间；缓存繁忙或磁盘空间不足时直接读取。视频优先复用已有缓存，未命中时直接流式读取，避免等待完整下载。超过缓存容量的图片也直接读取。</p><div class="form-actions"><button class="button primary" type="submit">保存缓存设置</button><button id="remote-cache-clear" class="button secondary" type="button">清空服务器缓存</button></div><p id="remote-cache-result" class="field-help" role="status" aria-live="polite"></p></form></div></div></div>
           <div class="panel"><div class="panel-heading"><div><h2>迁移后的本地副本</h2><p>仅清理已迁出且重新校验通过的媒体，数据库保留在本机。</p></div></div><div class="panel-body"><p id="migration-cleanup-summary" class="field-help">正在读取副本统计…</p><button id="migration-cleanup-preview" type="button" class="button secondary" disabled>检查本地副本清理</button></div></div>
-          <p id="migration-error" class="field-help" role="alert"></p>
-          <div id="migration-preview-panel" class="panel migration-preview" hidden><div class="panel-body"><h3 id="migration-preview-title">迁移前检查</h3><p id="migration-preview-summary"></p><p id="migration-preview-warning" class="field-help"></p>
-            <div id="migration-confirm-panel" hidden><label id="migration-confirm-label" for="migration-confirm">输入“开始迁移”确认操作</label><input id="migration-confirm" autocomplete="off" placeholder="开始迁移"><button id="migration-start" type="button" class="button primary" disabled>确认开始迁移</button></div>
+          </section>
+          <p class="settings-caption">备份时请同时保存数据库、媒体文件与启动配置；头像及服务器媒体缓存可重新生成，无需备份。</p>
+        </section>
+        <section id="settings-credentials" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-credentials" hidden>
+          <div class="panel"><div class="panel-heading"><div><h2>凭据</h2><p>管理外部调用方的 API 密钥，限制操作权限和账号范围。</p></div><a class="button secondary" href="/docs/api" target="_blank" rel="noopener">查看 API 文档 ↗</a></div><div class="panel-body">
+            <p class="field-help">每个调用方使用独立凭据。密钥仅在创建或轮换时展示一次，请通过可信方式交付。对外访问请使用 HTTPS。</p>
+            <div class="form-actions"><button id="credential-new" type="button" class="button primary">创建凭据</button><button id="credential-refresh" type="button" class="button secondary">刷新列表</button></div><div id="credential-list"></div>
           </div></div>
-          <div id="migration-job-panel" class="panel" hidden><div class="panel-heading"><div><h2>迁移进度</h2><p id="migration-job-kind"></p></div><span id="migration-badge" class="badge neutral">未开始</span></div><div class="panel-body">
-            <p id="migration-phase" role="status" aria-live="polite"></p><progress id="migration-progress" max="1" value="0" aria-label="迁移进度"></progress><p id="migration-counts" class="field-help"></p><p id="migration-message"></p>
-            <div class="form-actions"><button id="migration-pause" type="button" class="button secondary">暂停</button><button id="migration-retry" type="button" class="button secondary">继续 / 重试剩余项</button><button id="migration-acknowledge" type="button" class="button primary" hidden>确认完成并隐藏</button></div>
-            <details id="migration-failures-panel" hidden><summary>失败详情（最多显示 100 项）</summary><ul id="migration-failures" class="migration-failures"></ul></details>
-            <p class="field-help">存储重试仅处理仍在来源存储中的文件；数据库重试会重新建立完整快照，MySQL 目标须保持为空。已切换后新增的数据不会同步回源位置。</p>
+          <div id="credential-editor" class="panel" hidden><div class="panel-heading"><h2 id="credential-editor-title">创建 API 凭据</h2><button id="credential-close" class="button secondary" type="button">关闭</button></div><div class="panel-body"><form id="credential-form" autocomplete="off">
+            <label for="credential-name">凭据名称</label><input id="credential-name" required maxlength="100" placeholder="例如：内容同步服务">
+            <label for="credential-description">调用方 / 用途备注</label><textarea id="credential-description" rows="2" maxlength="500"></textarea>
+            <label class="check-label"><input id="credential-enabled" type="checkbox" checked>启用凭据</label>
+            <fieldset><legend>操作权限</legend><div class="credential-scopes"><label class="check-label"><input id="credential-scope-accounts-read" type="checkbox" data-api-scope="accounts:read">读取账号</label><label class="check-label"><input id="credential-scope-accounts-write" type="checkbox" data-api-scope="accounts:write">添加和修改账号</label><label class="check-label"><input id="credential-scope-accounts-delete" type="checkbox" data-api-scope="accounts:delete">取消监控</label><label class="check-label"><input id="credential-scope-tasks-read" type="checkbox" data-api-scope="tasks:read">读取本凭据的任务</label><label class="check-label"><input id="credential-scope-tasks-create" type="checkbox" data-api-scope="tasks:create">提交及重试任务</label><label class="check-label"><input id="credential-scope-tasks-rescan" type="checkbox" data-api-scope="tasks:rescan">重新扫描</label><label class="check-label"><input id="credential-scope-tasks-cancel" type="checkbox" data-api-scope="tasks:cancel">取消本凭据的任务</label><label class="check-label"><input id="credential-scope-timeline-read" type="checkbox" data-api-scope="timeline:read">读取归档时间线</label><label class="check-label"><input id="credential-scope-media-read" type="checkbox" data-api-scope="media:read">读取归档媒体</label></div></fieldset>
+            <label class="check-label"><input id="credential-all-accounts" type="checkbox">允许全部账号（包括将来添加的账号）</label>
+            <label for="credential-accounts">允许访问的账号</label><textarea id="credential-accounts" rows="3" placeholder="每行一个账号名，也可以用逗号分隔" required></textarea><p class="field-help">可提前授权尚未添加的账号。调用方只能添加授权范围内的账号；任务只允许查询和取消由本凭据提交的任务。账号授权包含归档中的引用内容。</p>
+            <label for="credential-expiry">有效期至</label><input id="credential-expiry" type="datetime-local" required><label class="check-label"><input id="credential-no-expiry" type="checkbox">永不过期</label>
+            <div class="credential-limits"><div><label for="credential-request-limit">每分钟请求数</label><input id="credential-request-limit" type="number" min="1" max="600" value="60" required></div><div><label for="credential-task-limit">每分钟任务提交数</label><input id="credential-task-limit" type="number" min="1" max="60" value="5" required></div><div><label for="credential-queue-limit">最多未结束任务数</label><input id="credential-queue-limit" type="number" min="1" max="100" value="5" required></div></div>
+            <button type="submit" class="button primary">保存凭据</button>
+          </form></div></div>
+          <div class="panel"><div class="panel-heading"><div><h2>API 操作记录</h2><p>最近 100 条管理及外部写入操作；最多保留 1000 条或 30 天。</p></div></div><div id="credential-audit" class="panel-body"></div></div>
+        </section>
+        <section id="settings-cleanup" class="settings-section" role="tabpanel" aria-label="清理历史记录" hidden>
+          <div class="panel"><div class="panel-heading"><div><h2>清理历史记录</h2><p>删除通知与任务的历史记录，释放可复用的数据库空间。</p></div></div><div class="panel-body">
+            <label class="check-label"><input id="data-cleanup-notifications" type="checkbox" checked aria-describedby="data-cleanup-notifications-help">通知的最近发送记录</label>
+            <p id="data-cleanup-notifications-help" class="field-help">清理全部已发送、发送失败和已取消的记录。待发送、自动重试中的通知及通知去重数据会保留。</p>
+            <label class="check-label"><input id="data-cleanup-tasks" type="checkbox" checked aria-describedby="data-cleanup-tasks-help">任务中的最近记录</label>
+            <p id="data-cleanup-tasks-help" class="field-help">清理全部已结束的任务、执行记录及关联统计。正在执行、排队或等待重试的任务及关联记录会保留。</p>
+            <p class="field-help">清理范围包含列表中未显示的历史记录，不影响归档推文、媒体、账号和设置。清理后数据库空间可供后续写入复用，文件大小不一定立即减小。</p>
+            <button id="data-cleanup-open" type="button" class="button danger">清理所选记录</button>
+            <p id="data-cleanup-result" class="field-help" role="status" aria-live="polite"></p>
           </div></div>
         </section>
+
       </section>
     </div>
   </main>
 </div>
 <dialog id="account-menu-dialog" aria-labelledby="account-menu-title" aria-describedby="account-menu-handle"><div class="dialog-heading"><div><h2 id="account-menu-title"><a id="account-menu-name">账号管理</a></h2><a id="account-menu-handle" class="muted" target="_blank" rel="noopener noreferrer"></a></div><button type="button" class="icon-button" data-close="account-menu-dialog" aria-label="关闭账号管理">×</button></div><div id="account-menu-content"></div></dialog>
-<dialog id="monitor-dialog"><form id="monitor-form"><div class="dialog-heading"><div><h2 id="monitor-dialog-title">添加监控账号</h2></div><button type="button" class="icon-button" data-close="monitor-dialog" aria-label="关闭">×</button></div><label for="monitor-username">X 用户名或主页地址</label><input id="monitor-username" placeholder="@username 或 https://x.com/username" required autocomplete="off"><p class="field-help">自动采集使用「设置 → 采集设置」中的统一周期。</p><label class="check-label"><input id="monitor-replies" type="checkbox">包含该账号发出的回复</label><label class="check-label"><input id="monitor-enabled" type="checkbox" checked>启用自动轮询</label><label class="check-label"><input id="monitor-timeline" type="checkbox" checked><span class="option-copy"><strong>在主时间线显示</strong><small>关闭后仍会采集，可在该账号归档中查看。</small></span></label><p class="field-help">首次采集及修改“包含回复”后会重新建立历史基线；动态更新（增量采集）遇到已归档边界后停止，未完成任务保留断点。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="monitor-dialog">取消</button><button class="button primary" type="submit">保存账号</button></div></form></dialog>
+<dialog id="monitor-dialog"><form id="monitor-form"><div class="dialog-heading"><div><h2 id="monitor-dialog-title">添加监控账号</h2></div><button type="button" class="icon-button" data-close="monitor-dialog" aria-label="关闭">×</button></div><label for="monitor-username">X 用户名或主页地址</label><input id="monitor-username" placeholder="@username 或 https://x.com/username" required autocomplete="off"><p class="field-help">自动采集使用「设置 → 爬虫」中的统一周期。</p><label class="check-label"><input id="monitor-replies" type="checkbox">包含该账号发出的回复</label><label class="check-label"><input id="monitor-enabled" type="checkbox" checked>启用自动轮询</label><label class="check-label"><input id="monitor-timeline" type="checkbox" checked><span class="option-copy"><strong>在主时间线显示</strong><small>关闭后仍会采集，可在该账号归档中查看。</small></span></label><p class="field-help">首次采集及修改“包含回复”后会重新建立历史基线；动态更新（增量采集）遇到已归档边界后停止，未完成任务保留断点。</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="monitor-dialog">取消</button><button class="button primary" type="submit">保存账号</button></div></form></dialog>
 <dialog id="credential-secret-dialog" aria-labelledby="credential-secret-title"><h2 id="credential-secret-title">保存 API 密钥</h2><p id="credential-secret-status" role="status"></p><label for="credential-secret">完整密钥</label><textarea id="credential-secret" class="credential-secret" rows="3" readonly autocomplete="off" spellcheck="false"></textarea><details><summary>调用示例（请替换占位符）</summary><pre>curl https://YOUR_XM_HOST/api/v1/me \
   -H 'Authorization: Bearer YOUR_API_KEY'</pre></details><p><a href="/docs/api#quickstart" target="_blank" rel="noopener">查看接入指南 ↗</a></p><div class="dialog-actions"><button id="credential-copy" type="button" class="button secondary">复制密钥</button><button type="button" class="button primary" data-close="credential-secret-dialog">已保存，关闭</button></div></dialog>
 <dialog id="credential-action-dialog" aria-labelledby="credential-action-title"><h2 id="credential-action-title">确认凭据操作</h2><p id="credential-action-text"></p><p id="credential-action-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="credential-action-dialog">取消</button><button id="credential-action-confirm" type="button" class="button danger">确认操作</button></div></dialog>

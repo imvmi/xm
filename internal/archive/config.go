@@ -13,44 +13,46 @@ import (
 type Config struct {
 	SQLiteReadConnections int `json:"sqlite_read_connections"`
 
-	Database             DatabaseConfig        `json:"database,omitempty"`
-	NotificationChannels []NotificationChannel `json:"notification_channels,omitempty"`
-	MediaStorage         string                `json:"media_storage,omitempty"`
-	StorageProfiles      []StorageProfile      `json:"storage_profiles,omitempty"`
-	DataDir              string                `json:"data_dir"`
-	Proxy                string                `json:"proxy"`
-	BrowserMode          string                `json:"browser_mode"`
-	CDPHost              string                `json:"cdp_host"`
-	CDPPort              int                   `json:"cdp_port"`
-	ChromePath           string                `json:"chrome_path"`
-	Headless             bool                  `json:"headless"`
-	RequestTimeout       int                   `json:"request_timeout_seconds"`
-	RequestInterval      int                   `json:"request_interval_seconds"`
-	RequestJitter        int                   `json:"request_jitter_seconds"`
-	RequestBudgetMode    string                `json:"request_budget_mode"` // Legacy persisted value; request-count limits are no longer enforced.
-	RateLimitMode        string                `json:"rate_limit_mode"`
-	ScrollDelay          int                   `json:"scroll_delay_seconds"`
-	ScrollJitter         int                   `json:"scroll_jitter_seconds"`
-	MaxScrolls           int                   `json:"max_scrolls"`
-	MaxPostsPerRun       int                   `json:"max_posts_per_run"`
-	PageBudget           int                   `json:"page_budget"`
-	TimelineIdleSeconds  int                   `json:"timeline_idle_seconds"`
-	KnownBoundaryPosts   int                   `json:"known_boundary_posts"`
-	MaxMediaBytes        int64                 `json:"max_media_bytes"`
-	BrowserMaxAge        int                   `json:"browser_max_age_seconds"`
-	BrowserMaxTasks      int                   `json:"browser_max_tasks"`
-	MediaRetryInitial    int                   `json:"media_retry_initial_seconds"`
-	MediaRetryMax        int                   `json:"media_retry_max_seconds"`
-	QueueInterval        int                   `json:"queue_interval_seconds"`
-	DefaultInterval      int                   `json:"default_interval_seconds"`
-	PollingPaused        bool                  `json:"polling_paused"`
-	ArchiveTheme         string                `json:"archive_theme"`
-	VideoDefaultMuted    *bool                 `json:"video_default_muted,omitempty"`
-	MediaPreloadMode     string                `json:"media_preload_mode"`
-	VideoLoop            bool                  `json:"video_loop"`
-	ImageCacheSeconds    int                   `json:"image_cache_seconds"`
-	VideoCacheSeconds    int                   `json:"video_cache_seconds"`
-	TimelinePageSize     int                   `json:"timeline_page_size"`
+	Database              DatabaseConfig        `json:"database,omitempty"`
+	NotificationChannels  []NotificationChannel `json:"notification_channels,omitempty"`
+	MediaStorage          string                `json:"media_storage,omitempty"`
+	StorageProfiles       []StorageProfile      `json:"storage_profiles,omitempty"`
+	DataDir               string                `json:"data_dir"`
+	Proxy                 string                `json:"proxy"`
+	BrowserMode           string                `json:"browser_mode"`
+	CDPHost               string                `json:"cdp_host"`
+	CDPPort               int                   `json:"cdp_port"`
+	ChromePath            string                `json:"chrome_path"`
+	Headless              bool                  `json:"headless"`
+	RequestTimeout        int                   `json:"request_timeout_seconds"`
+	RequestInterval       int                   `json:"request_interval_seconds"`
+	RequestJitter         int                   `json:"request_jitter_seconds"`
+	RequestBudgetMode     string                `json:"request_budget_mode"` // Legacy persisted value; request-count limits are no longer enforced.
+	RateLimitMode         string                `json:"rate_limit_mode"`
+	ScrollDelay           int                   `json:"scroll_delay_seconds"`
+	ScrollJitter          int                   `json:"scroll_jitter_seconds"`
+	MaxScrolls            int                   `json:"max_scrolls"`
+	MaxPostsPerRun        int                   `json:"max_posts_per_run"`
+	PageBudget            int                   `json:"page_budget"`
+	TimelineIdleSeconds   int                   `json:"timeline_idle_seconds"`
+	KnownBoundaryPosts    int                   `json:"known_boundary_posts"`
+	MaxMediaBytes         int64                 `json:"max_media_bytes"`
+	BrowserMaxAge         int                   `json:"browser_max_age_seconds"`
+	BrowserMaxTasks       int                   `json:"browser_max_tasks"`
+	MediaRetryInitial     int                   `json:"media_retry_initial_seconds"`
+	MediaRetryMax         int                   `json:"media_retry_max_seconds"`
+	QueueInterval         int                   `json:"queue_interval_seconds"`
+	DefaultInterval       int                   `json:"default_interval_seconds"`
+	PollingPaused         bool                  `json:"polling_paused"`
+	ArchiveTheme          string                `json:"archive_theme"`
+	VideoDefaultMuted     *bool                 `json:"video_default_muted,omitempty"`
+	MediaPreloadMode      string                `json:"media_preload_mode"`
+	VideoAutoNext         bool                  `json:"video_auto_next"`
+	VideoTimelineAutoplay bool                  `json:"video_timeline_autoplay"`
+	VideoLoop             bool                  `json:"video_loop"`
+	ImageCacheSeconds     int                   `json:"image_cache_seconds"`
+	VideoCacheSeconds     int                   `json:"video_cache_seconds"`
+	TimelinePageSize      int                   `json:"timeline_page_size"`
 }
 
 // Bootstrap is the only configuration kept outside the database.

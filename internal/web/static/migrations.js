@@ -1,4 +1,5 @@
 'use strict';
+for(const button of document.querySelectorAll('[data-data-jump]'))button.addEventListener('click',()=>$(button.dataset.dataJump).scrollIntoView({block:'start',behavior:'instant'}));
 let migrationState=null, migrationChecked=null, migrationRetry=false, migrationRefreshing=false, migrationPreviewVersion=0, migrationConfigKey='',migrationRequest=0;
 const migrationLabels={running:'执行中',switching:'正在重启',paused:'已暂停',failed:'需重试',completed:'已完成'};
 const migrationConfirmation=kind=>kind==='cleanup'?'清理本地副本':'开始迁移';
@@ -35,7 +36,7 @@ function migrationAvailability(){
  $('migration-user-label').textContent=smb?'用户名（域账号：域名\\用户名）':'用户名';
  $('migration-proxy-option').hidden=smb;
  if(smb)$('migration-remote-proxy').checked=false;
- document.querySelectorAll('.migration-sections input,.migration-sections select,.migration-sections button').forEach(el=>{el.disabled=busy;});
+ document.querySelectorAll('.migration-config input,.migration-config select,.migration-config button').forEach(el=>{el.disabled=busy;});
  $('migration-preview').disabled=busy||!migrationState||!$('migration-storage-target').value;
  $('migration-database-preview').disabled=busy||!migrationState;
  const copies=migrationState?.local_copies||{items:0,bytes:0};
@@ -98,9 +99,9 @@ async function checkMigration(kind,retry=false){
   $('migration-preview-warning').textContent=p.warning;$('migration-preview-panel').hidden=false;$('migration-confirm-panel').hidden=false;
   $('migration-confirm-label').textContent='输入“'+migrationConfirmation(kind)+'”确认操作';$('migration-confirm').placeholder=migrationConfirmation(kind);
   $('migration-start').textContent=retry?'确认继续 / 重试':kind==='cleanup'?'确认清理本地副本':'确认开始迁移';$('migration-confirm').focus();
- }catch(e){if(version===migrationPreviewVersion)$('migration-error').textContent=e.message;}
+ }catch(e){if(version===migrationPreviewVersion){$('migration-error').textContent=e.message;$('migration-error').scrollIntoView({block:'center'});}}
 }
-document.querySelectorAll('.migration-sections input,.migration-sections select').forEach(el=>el.addEventListener('input',resetMigrationPreview));
+document.querySelectorAll('.migration-config input,.migration-config select').forEach(el=>el.addEventListener('input',resetMigrationPreview));
 $('migration-database-engine').addEventListener('change',()=>{resetMigrationPreview();migrationAvailability();});
 $('migration-source').addEventListener('change',()=>{resetMigrationPreview();migrationStorageTargets();});
 $('migration-storage-target').addEventListener('change',()=>{resetMigrationPreview();migrationAvailability();});
@@ -125,7 +126,7 @@ $('migration-retry').addEventListener('click',()=>action($('migration-retry'),as
 $('migration-start').addEventListener('click',()=>action($('migration-start'),async()=>{
  if(!migrationChecked||$('migration-confirm').value!==migrationConfirmation(migrationChecked?.kind))return;
  await api('/migrations','POST',{...migrationChecked,retry:migrationRetry,confirm:$('migration-confirm').value});
- document.querySelectorAll('.migration-sections input[type="password"]').forEach(el=>{el.value='';});
+ document.querySelectorAll('.migration-config input[type="password"]').forEach(el=>{el.value='';});
  const cleanup=migrationChecked.kind==='cleanup';resetMigrationPreview();await refreshMigrations();toast(cleanup?'本地副本清理已启动，未通过校验的文件会保留':'迁移任务已启动，源数据会保留');
 }));
 $('migration-pause').addEventListener('click',()=>action($('migration-pause'),async()=>{const r=await api('/migrations/pause','POST');toast(r.message);await refreshMigrations();}));
