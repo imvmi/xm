@@ -41,6 +41,7 @@ function addThreadPosts(items,role,position){
  const html=fresh.map(p=>postHTML(p,{threadRole:role})).join('');
  if(position==='prepend')$('posts').insertAdjacentHTML('afterbegin',html);
  else $('thread-replies-status').insertAdjacentHTML('beforebegin',html);
+ if(typeof observeTimelineVideos==='function')observeTimelineVideos();
  return fresh.length;
 }
 async function loadThreadContext(){

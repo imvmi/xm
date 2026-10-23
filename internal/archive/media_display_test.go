@@ -18,7 +18,7 @@ func TestMediaDisplaySettingsUpgradeAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reproduce an existing installation with no media-display preference columns.
-	for _, column := range []string{"video_default_muted", "video_loop", "video_auto_next", "video_timeline_autoplay", "image_cache_seconds", "video_cache_seconds"} {
+	for _, column := range []string{"video_default_muted", "video_loop", "video_auto_next", "video_timeline_autoplay", "video_timeline_preload", "image_cache_seconds", "video_cache_seconds"} {
 		if _, err = s.DB.Exec("ALTER TABLE system_settings DROP COLUMN " + column); err != nil {
 			t.Fatal(err)
 		}
@@ -29,13 +29,14 @@ func TestMediaDisplaySettingsUpgradeAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := s.LoadSettings(cfg)
-	if err != nil || !loaded.VideoMutedByDefault() || loaded.VideoLoop || loaded.VideoAutoNext || loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 604800 || loaded.VideoCacheSeconds != 600 {
+	if err != nil || !loaded.VideoMutedByDefault() || loaded.VideoLoop || loaded.VideoAutoNext || loaded.VideoTimelinePreload || loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 604800 || loaded.VideoCacheSeconds != 600 {
 		t.Fatal("upgrade defaults not applied", err)
 	}
 	muted := false
 	loaded.VideoDefaultMuted = &muted
 	loaded.VideoLoop = true
 	loaded.VideoAutoNext = true
+	loaded.VideoTimelinePreload = true
 	loaded.VideoTimelineAutoplay = true
 	loaded.ImageCacheSeconds = 48 * 3600
 	loaded.VideoCacheSeconds = 300
@@ -48,7 +49,7 @@ func TestMediaDisplaySettingsUpgradeAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err = s.LoadSettings(cfg)
-	if err != nil || loaded.VideoMutedByDefault() || !loaded.VideoLoop || !loaded.VideoAutoNext || !loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 48*3600 || loaded.VideoCacheSeconds != 300 {
+	if err != nil || loaded.VideoMutedByDefault() || !loaded.VideoLoop || !loaded.VideoAutoNext || !loaded.VideoTimelinePreload || !loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 48*3600 || loaded.VideoCacheSeconds != 300 {
 		t.Fatal("reopen reset saved preferences", err)
 	}
 }

@@ -11,21 +11,21 @@ import (
 func TestMediaDisplaySettingsPersistAndControlCache(t *testing.T) {
 	a := testApp(t)
 	b := login(t, a)
-	if !a.Config().VideoMutedByDefault() || a.Config().VideoLoop || a.Config().VideoAutoNext || a.Config().VideoTimelineAutoplay || a.Config().MediaPreloadMode != "standard" || a.Config().ImageCacheSeconds != imageCacheSeconds || a.Config().VideoCacheSeconds != videoCacheSeconds {
+	if !a.Config().VideoMutedByDefault() || a.Config().VideoLoop || a.Config().VideoAutoNext || a.Config().VideoTimelinePreload || a.Config().VideoTimelineAutoplay || a.Config().MediaPreloadMode != "standard" || a.Config().ImageCacheSeconds != imageCacheSeconds || a.Config().VideoCacheSeconds != videoCacheSeconds {
 		t.Fatal("incorrect defaults", a.Config().VideoMutedByDefault(), a.Config().ImageCacheSeconds, a.Config().VideoCacheSeconds)
 	}
-	input := map[string]any{"video_default_muted": false, "video_loop": true, "video_auto_next": true, "video_timeline_autoplay": true, "media_preload_mode": "enhanced", "image_cache_seconds": 48 * 3600, "video_cache_seconds": 5 * 60}
+	input := map[string]any{"video_default_muted": false, "video_loop": true, "video_auto_next": true, "video_timeline_preload": true, "video_timeline_autoplay": true, "media_preload_mode": "enhanced", "image_cache_seconds": 48 * 3600, "video_cache_seconds": 5 * 60}
 	ok(t, b.request("PUT", "/api/settings", input, "http://localhost", true), 200)
 	w := b.request("GET", "/api/settings", nil, "", false)
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["media_preload_mode"] != "enhanced" || got["video_default_muted"] != false || got["video_loop"] != true || got["video_auto_next"] != true || got["video_timeline_autoplay"] != true || got["image_cache_seconds"] != float64(48*3600) || got["video_cache_seconds"] != float64(300) {
+	if got["media_preload_mode"] != "enhanced" || got["video_default_muted"] != false || got["video_loop"] != true || got["video_auto_next"] != true || got["video_timeline_autoplay"] != true || got["video_timeline_preload"] != true || got["image_cache_seconds"] != float64(48*3600) || got["video_cache_seconds"] != float64(300) {
 		t.Fatal("settings API did not return saved values", got)
 	}
 	reloaded, err := a.store.LoadSettings(a.Config())
-	if err != nil || reloaded.MediaPreloadMode != "enhanced" || reloaded.VideoMutedByDefault() || !reloaded.VideoLoop || !reloaded.VideoAutoNext || !reloaded.VideoTimelineAutoplay || reloaded.ImageCacheSeconds != 48*3600 || reloaded.VideoCacheSeconds != 300 {
+	if err != nil || reloaded.MediaPreloadMode != "enhanced" || reloaded.VideoMutedByDefault() || !reloaded.VideoLoop || !reloaded.VideoAutoNext || !reloaded.VideoTimelinePreload || !reloaded.VideoTimelineAutoplay || reloaded.ImageCacheSeconds != 48*3600 || reloaded.VideoCacheSeconds != 300 {
 		t.Fatal("preferences not persisted", err)
 	}
 	// Unrelated partial updates preserve playback and cache preferences.
@@ -42,15 +42,15 @@ func TestMediaDisplaySettingsPersistAndControlCache(t *testing.T) {
 		{"image_cache_seconds": 0}, {"image_cache_seconds": -1}, {"image_cache_seconds": 3601}, {"image_cache_seconds": 31 * 24 * 3600},
 		{"video_cache_seconds": 0}, {"video_cache_seconds": -1}, {"video_cache_seconds": 61}, {"video_cache_seconds": 86460},
 		{"video_default_muted": "false"},
-		{"video_loop": "true"}, {"video_auto_next": "true"}, {"video_timeline_autoplay": 1}, {"media_preload_mode": ""}, {"media_preload_mode": "invalid"}, {"media_preload_mode": true},
+		{"video_loop": "true"}, {"video_auto_next": "true"}, {"video_timeline_autoplay": 1}, {"video_timeline_preload": "true"}, {"media_preload_mode": ""}, {"media_preload_mode": "invalid"}, {"media_preload_mode": true},
 	} {
 		ok(t, b.request("PUT", "/api/settings", invalid, "http://localhost", true), 400)
 	}
-	if a.Config().VideoMutedByDefault() || !a.Config().VideoLoop || !a.Config().VideoAutoNext || !a.Config().VideoTimelineAutoplay || a.Config().VideoCacheSeconds != 300 {
+	if a.Config().VideoMutedByDefault() || !a.Config().VideoLoop || !a.Config().VideoAutoNext || !a.Config().VideoTimelinePreload || !a.Config().VideoTimelineAutoplay || a.Config().VideoCacheSeconds != 300 {
 		t.Fatal("invalid update changed saved preferences")
 	}
-	ok(t, b.request("PUT", "/api/settings", map[string]any{"video_default_muted": true, "video_loop": false, "video_auto_next": false, "video_timeline_autoplay": false}, "http://localhost", true), 200)
-	if !a.Config().VideoMutedByDefault() || a.Config().VideoLoop || a.Config().VideoAutoNext || a.Config().VideoTimelineAutoplay {
+	ok(t, b.request("PUT", "/api/settings", map[string]any{"video_default_muted": true, "video_loop": false, "video_auto_next": false, "video_timeline_preload": false, "video_timeline_autoplay": false}, "http://localhost", true), 200)
+	if !a.Config().VideoMutedByDefault() || a.Config().VideoLoop || a.Config().VideoAutoNext || a.Config().VideoTimelinePreload || a.Config().VideoTimelineAutoplay {
 		t.Fatal("mute setting cannot be turned back on")
 	}
 }
@@ -58,7 +58,7 @@ func TestMediaDisplaySettingsPersistAndControlCache(t *testing.T) {
 func TestMediaDisplaySettingsDatabaseCopy(t *testing.T) {
 	a := testApp(t)
 	b := login(t, a)
-	ok(t, b.request("PUT", "/api/settings", map[string]any{"video_default_muted": false, "video_loop": true, "video_auto_next": true, "video_timeline_autoplay": true, "media_preload_mode": "enhanced", "image_cache_seconds": 7200, "video_cache_seconds": 120}, "http://localhost", true), 200)
+	ok(t, b.request("PUT", "/api/settings", map[string]any{"video_default_muted": false, "video_loop": true, "video_auto_next": true, "video_timeline_preload": true, "video_timeline_autoplay": true, "media_preload_mode": "enhanced", "image_cache_seconds": 7200, "video_cache_seconds": 120}, "http://localhost", true), 200)
 	dst, err := archive.OpenStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestMediaDisplaySettingsDatabaseCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := dst.LoadSettings(archive.DefaultConfig())
-	if err != nil || loaded.MediaPreloadMode != "enhanced" || loaded.VideoMutedByDefault() || !loaded.VideoLoop || !loaded.VideoAutoNext || !loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 7200 || loaded.VideoCacheSeconds != 120 {
+	if err != nil || loaded.MediaPreloadMode != "enhanced" || loaded.VideoMutedByDefault() || !loaded.VideoLoop || !loaded.VideoAutoNext || !loaded.VideoTimelinePreload || !loaded.VideoTimelineAutoplay || loaded.ImageCacheSeconds != 7200 || loaded.VideoCacheSeconds != 120 {
 		t.Fatal("database migration lost media preferences", err)
 	}
 }

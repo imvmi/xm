@@ -319,4 +319,21 @@ func TestVideoFullscreenControlsBrowser(t *testing.T) {
 	if !eval(`document.querySelector('video').paused && !document.querySelector('video').getAttribute('src')`) {
 		t.Fatal("disabled viewport autoplay loaded a video")
 	}
+	// Preload is an independent persisted preference, even with viewer prefetch off.
+	eval(`(()=>{location.hash='settings';return true})()`)
+	wait(`state.view==='settings' && $('video-timeline-autoplay').checked===false`)
+	eval(`(()=>{$('settings-tab-display').click();$('video-timeline-preload').checked=true;$('archive-display-form').requestSubmit();return true})()`)
+	wait(`state.settings.video_timeline_preload===true && state.settings.video_timeline_autoplay===false && state.settings.media_preload_mode==='off'`)
+	eval(`(()=>{location.hash='home';return true})()`)
+	wait(`state.view==='home' && !state.postsLoading && document.querySelector('video')?.dataset.prefetch==='timeline' && document.querySelector('video').readyState>=1`)
+	if !eval(`document.querySelector('video').paused && document.querySelector('video').hidden && !expandedVideoShell`) {
+		t.Fatal("preload alone started playback")
+	}
+	eval(`(()=>{window.preloaded=document.querySelector('video');window.preloadedSource=preloaded.getAttribute('src');document.querySelector('.video-load').click();return true})()`)
+	wait(`!!expandedVideoShell && !preloaded.paused`)
+	if !eval(`preloaded.getAttribute('src')===preloadedSource && !preloaded.dataset.prefetch && !timelinePreloadedVideos.has(preloaded)`) {
+		t.Fatal("playback did not claim the preloaded source")
+	}
+	eval(`(()=>{location.hash='archive';return true})()`)
+	wait(`state.view==='archive' && !expandedVideoShell && timelinePreloadedVideos.size===0 && !preloaded.getAttribute('src')`)
 }

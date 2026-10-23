@@ -59,6 +59,7 @@ function clearVideoPrefetch(keep=null,failed=false){
  if(video.dataset.prefetch){delete video.dataset.prefetch;video.pause();video.removeAttribute('src');video.preload='none';video.load();}
 }
 function claimVideoPrefetch(video){
+ if(typeof timelinePreloadedVideos!=='undefined')timelinePreloadedVideos.delete(video);
  if(prefetchedVideo===video)prefetchedVideo=null;
  delete video.dataset.prefetch;
 }

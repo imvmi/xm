@@ -491,7 +491,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "video_timeline_preload": cfg.VideoTimelinePreload, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -517,6 +517,7 @@ type settingsInput struct {
 	ArchiveTheme          *string `json:"archive_theme"`
 	MediaPreloadMode      *string `json:"media_preload_mode"`
 	VideoAutoNext         *bool   `json:"video_auto_next"`
+	VideoTimelinePreload  *bool   `json:"video_timeline_preload"`
 	VideoTimelineAutoplay *bool   `json:"video_timeline_autoplay"`
 	VideoLoop             *bool   `json:"video_loop"`
 	VideoDefaultMuted     *bool   `json:"video_default_muted"`
@@ -647,6 +648,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if v.VideoAutoNext != nil {
 		cfg.VideoAutoNext = *v.VideoAutoNext
+	}
+	if v.VideoTimelinePreload != nil {
+		cfg.VideoTimelinePreload = *v.VideoTimelinePreload
 	}
 	if v.VideoTimelineAutoplay != nil {
 		cfg.VideoTimelineAutoplay = *v.VideoTimelineAutoplay

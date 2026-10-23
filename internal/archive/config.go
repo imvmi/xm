@@ -48,6 +48,7 @@ type Config struct {
 	VideoDefaultMuted     *bool                 `json:"video_default_muted,omitempty"`
 	MediaPreloadMode      string                `json:"media_preload_mode"`
 	VideoAutoNext         bool                  `json:"video_auto_next"`
+	VideoTimelinePreload  bool                  `json:"video_timeline_preload"`
 	VideoTimelineAutoplay bool                  `json:"video_timeline_autoplay"`
 	VideoLoop             bool                  `json:"video_loop"`
 	ImageCacheSeconds     int                   `json:"image_cache_seconds"`

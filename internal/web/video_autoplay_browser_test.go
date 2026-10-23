@@ -80,13 +80,15 @@ func TestTimelineAutoplayWithoutGestureBrowser(t *testing.T) {
 	stopBrowser()
 	stopAlloc()
 	for _, scenario := range []struct {
-		muted bool
-		width int64
-	}{{true, 390}, {false, 390}, {true, 1280}, {false, 1280}} {
+		muted   bool
+		preload bool
+		width   int64
+	}{{true, false, 390}, {false, false, 390}, {true, true, 390}, {false, true, 390}, {true, false, 1280}, {false, false, 1280}, {true, true, 1280}, {false, true, 1280}} {
 		muted := scenario.muted
-		t.Logf("autoplay: muted=%v viewport=%d", muted, scenario.width)
+		t.Logf("autoplay: muted=%v preload=%v viewport=%d", muted, scenario.preload, scenario.width)
 		cfg := a.Config()
 		cfg.VideoTimelineAutoplay = true
+		cfg.VideoTimelinePreload = scenario.preload
 		cfg.VideoDefaultMuted = &muted
 		cfg.VideoLoop = true
 		cfg.MediaPreloadMode = "off"
@@ -112,6 +114,15 @@ func TestTimelineAutoplayWithoutGestureBrowser(t *testing.T) {
 		// Scroll to the next page and then to its first video without a trusted click.
 		eval(`(()=>{window.scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'});return true})()`)
 		wait(`!state.postsLoading && !!document.querySelector('video')`)
+		eval(`(()=>{const slot=document.querySelector('.video-slot');window.scrollTo({top:scrollY+slot.getBoundingClientRect().top-innerHeight-200,behavior:'instant'});return true})()`)
+		if scenario.preload {
+			wait(`document.querySelector('video').dataset.prefetch==='timeline' && document.querySelector('video').readyState>=1`)
+			if !eval(`document.querySelector('video').paused && document.querySelector('video').hidden && document.querySelectorAll('video[src]').length<=2 && document.querySelector('.video-slot').getBoundingClientRect().top>innerHeight`) {
+				t.Fatal("preload played offscreen or exceeded its limit")
+			}
+		} else if !eval(`!document.querySelector('video').getAttribute('src')`) {
+			t.Fatal("disabled preload fetched an offscreen video")
+		}
 		eval(`(()=>{document.querySelector('.video-slot').scrollIntoView({block:'center',behavior:'instant'});return true})()`)
 		wait(`document.querySelector('video').readyState>=2 && !document.querySelector('video').paused`)
 		if !eval(`!expandedVideoShell && document.querySelector('video').muted && !navigator.userActivation.hasBeenActive`) {

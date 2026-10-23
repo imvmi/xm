@@ -89,6 +89,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	cfg.VideoDefaultMuted, cfg.ImageCacheSeconds, cfg.VideoCacheSeconds = &muted, 7200, 120
 	cfg.VideoLoop = true
 	cfg.VideoAutoNext = true
+	cfg.VideoTimelinePreload = true
 	cfg.VideoTimelineAutoplay = true
 	cfg.SQLiteReadConnections = 7
 	source, e := archive.OpenStore(cfg.DataDir)
@@ -164,7 +165,7 @@ func TestMySQLMigrationAndWorkerLock(t *testing.T) {
 	if e != nil || migrated.Database.DriverName() != "mysql" || migrated.DataDir != destCfg.DataDir {
 		t.Fatal("runtime migration overrode bootstrap", e)
 	}
-	if migrated.SQLiteReadConnections != 7 || migrated.VideoMutedByDefault() || !migrated.VideoLoop || !migrated.VideoAutoNext || !migrated.VideoTimelineAutoplay || migrated.ImageCacheSeconds != 7200 || migrated.VideoCacheSeconds != 120 {
+	if migrated.SQLiteReadConnections != 7 || migrated.VideoMutedByDefault() || !migrated.VideoLoop || !migrated.VideoAutoNext || !migrated.VideoTimelinePreload || !migrated.VideoTimelineAutoplay || migrated.ImageCacheSeconds != 7200 || migrated.VideoCacheSeconds != 120 {
 		t.Fatal("SQLite to MySQL migration lost media preferences")
 	}
 	if _, e = newAuth(dest.store, false); e != nil {
