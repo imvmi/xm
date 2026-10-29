@@ -24,7 +24,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o x
 ```
 
 在 Windows 程序目录运行 `.\xm.exe serve -config config.yaml -listen 127.0.0.1:9980`，
-然后打开 http://127.0.0.1:9980。迁移已有归档时先正常停止旧服务，完整复制配置、
+然后打开 [http://127.0.0.1:9980](http://127.0.0.1:9980)。迁移已有归档时先正常停止旧服务，完整复制配置、
 SQLite 数据库、媒体和头像，将 `config.yaml` 的 `data_dir` 改为 `./data`。
 数据库继续放在本地磁盘；留空 `chrome_path` 可自动查找已安装的 Chrome。
 首次启动前核对文件大小和 SHA256，确认全部复制成功后再启动。
@@ -44,7 +44,7 @@ go build -o xm ./cmd/xm
 ./xm serve  # 无需预置配置，首次启动进入设置向导
 ```
 
-打开 http://127.0.0.1:8080，首次启动显示三步设置向导：
+打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)，首次启动显示三步设置向导：
 
 1. **数据库**：选择 SQLite、MySQL 或 MariaDB。MySQL / MariaDB 填写地址、端口、数据库名称、账号、密码；也支持密码环境变量、TLS CA 与证书主机名。点击“测试数据库并继续”会验证建表和事务读写，不保留测试记录。数据库需提前创建。
 2. **媒体存储**：选择本地文件系统、WebDAV 或 S3 / S3 兼容服务，填写对应凭据。点击“测试存储并继续”会验证存储读写与清理。WebDAV 根目录和 S3 Bucket 需提前存在。

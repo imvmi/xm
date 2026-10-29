@@ -133,7 +133,7 @@ jobs:
           - Linux x64：xm-linux-amd64.tar.gz
           - Linux ARM64：xm-linux-arm64.tar.gz
 
-          解压后运行 ./xm serve（Windows 使用 .\xm.exe serve），打开 http://127.0.0.1:8080。
+          解压后运行 ./xm serve（Windows 使用 .\xm.exe serve），打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)。
           运行仍需 Chrome / Chromium 或可连接的 CDP 浏览器。macOS 版本未签名或公证。
           校验文件：SHA256SUMS。升级前请停止旧服务并备份配置、数据库和媒体。
           EOF_NOTES
