@@ -337,8 +337,8 @@ func (a *App) submitExternalTask(w http.ResponseWriter, r *http.Request, c apiCr
 		problem(w, 400, err.Error())
 		return
 	}
-	if mode == collectionModeRescan && !c.allows("tasks:rescan") {
-		problem(w, 403, "重新扫描需要 tasks:rescan 权限")
+	if !c.allows(apiTaskScope(mode)) {
+		problem(w, 403, "凭据没有所需权限："+apiTaskScope(mode))
 		return
 	}
 	var active int
@@ -371,6 +371,13 @@ func (a *App) externalCreateTask(w http.ResponseWriter, r *http.Request, c apiCr
 	}
 	a.submitExternalTask(w, r, c, r.PathValue("account"), in.Mode)
 }
+func retryExternalTaskMode(j externalJobView) string {
+	if j.Mode == collectionModeRescan {
+		return collectionModeBackfill // Continue the checkpoint instead of resetting it again.
+	}
+	return j.Mode
+}
+
 func (a *App) externalRetryTask(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	j, err := a.externalJob(c, r.PathValue("task"))
 	if err != nil {
@@ -381,11 +388,7 @@ func (a *App) externalRetryTask(w http.ResponseWriter, r *http.Request, c apiCre
 		problem(w, 409, "只能重试已结束的失败、未完成或取消任务")
 		return
 	}
-	mode := j.Mode
-	if mode == collectionModeRescan {
-		mode = collectionModeBackfill
-	} // Continue the checkpoint instead of resetting it again.
-	a.submitExternalTask(w, r, c, j.AccountID, mode)
+	a.submitExternalTask(w, r, c, j.AccountID, retryExternalTaskMode(j))
 }
 func (a *App) externalCancelTask(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	a.changeMu.Lock()

@@ -53,6 +53,7 @@ type Config struct {
 	VideoLoop             bool                  `json:"video_loop"`
 	ImageCacheSeconds     int                   `json:"image_cache_seconds"`
 	VideoCacheSeconds     int                   `json:"video_cache_seconds"`
+	QuoteDisplayDepth     *int                  `json:"quote_display_depth,omitempty"`
 	TimelinePageSize      int                   `json:"timeline_page_size"`
 }
 
@@ -247,11 +248,22 @@ func ValidateCollectionTuning(c Config) error {
 	return nil
 }
 
+// A nil preference preserves the historical four-layer display; zero folds all quotes.
+func (c Config) QuoteDepthLimit() int {
+	if c.QuoteDisplayDepth == nil {
+		return MaxQuoteDepth
+	}
+	return *c.QuoteDisplayDepth
+}
+
 func (c Config) VideoMutedByDefault() bool {
 	return c.VideoDefaultMuted == nil || *c.VideoDefaultMuted
 }
 
 func ValidateMediaDisplay(c Config) error {
+	if c.QuoteDepthLimit() < 0 || c.QuoteDepthLimit() > MaxQuoteDepth {
+		return errors.New("引用推文显示层数必须为 0～4")
+	}
 	if c.MediaPreloadMode != "" && c.MediaPreloadMode != "off" && c.MediaPreloadMode != "standard" && c.MediaPreloadMode != "enhanced" {
 		return errors.New("媒体预加载模式无效")
 	}

@@ -1,8 +1,14 @@
 'use strict';
 let apiCredentials=[],apiCredentialEditing='',apiCredentialPending=null,apiCredentialRequest=0;
-const apiScopeLabels={'accounts:read':'读取账号','accounts:write':'添加和修改账号','accounts:delete':'取消监控','tasks:read':'读取本凭据的任务','tasks:create':'提交及重试任务','tasks:rescan':'重新扫描','tasks:cancel':'取消本凭据的任务','timeline:read':'读取归档时间线','media:read':'读取归档媒体'};
+let apiScopeLabels={};
+function renderAPIScopes(definitions){
+ apiScopeLabels=Object.fromEntries(definitions.map(s=>[s.id,s.label]));
+ if($('credential-scopes').children.length)return;
+ const groups=[...new Set(definitions.map(s=>s.group))];
+ $('credential-scopes').innerHTML=groups.map(group=>`<fieldset class="credential-scope-group"><legend>${escape(group)}</legend><div class="credential-scopes">${definitions.filter(s=>s.group===group).map(s=>`<label class="check-label"><input id="credential-scope-${escape(s.id.replaceAll(':','-'))}" type="checkbox" data-api-scope="${escape(s.id)}"><span class="option-copy"><strong>${escape(s.label)}</strong><small>${escape(s.description)}</small></span></label>`).join('')}</div></fieldset>`).join('');
+}
 function clearAPISecret(){$('credential-secret').value='';}
-function resetAPICredentials(){apiCredentialRequest++;apiCredentials=[];apiCredentialEditing='';apiCredentialPending=null;clearAPISecret();$('credential-list').replaceChildren();$('credential-audit').replaceChildren();$('credential-editor').hidden=true;$('credential-form').reset();}
+function resetAPICredentials(){apiCredentialRequest++;apiCredentials=[];apiCredentialEditing='';apiCredentialPending=null;$('credential-new').disabled=true;clearAPISecret();$('credential-list').replaceChildren();$('credential-audit').replaceChildren();$('credential-editor').hidden=true;$('credential-form').reset();}
 function credentialScopeFields(){const all=$('credential-all-accounts').checked;$('credential-accounts').disabled=all;$('credential-accounts').required=!all;$('credential-expiry').disabled=$('credential-no-expiry').checked;}
 function editAPICredential(id=''){
  const c=apiCredentials.find(c=>c.id===id);apiCredentialEditing=id;$('credential-form').reset();$('credential-editor').hidden=false;
@@ -11,12 +17,12 @@ function editAPICredential(id=''){
  const expiry=c?c.expires_at:Math.floor(Date.now()/1000)+30*86400;$('credential-no-expiry').checked=expiry===0;
  const d=new Date(expiry*1000);$('credential-expiry').value=expiry?new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16):'';
  for(const [id,key,defaultValue] of [['credential-request-limit','request_limit',60],['credential-task-limit','task_limit',5],['credential-queue-limit','queue_limit',5]])$(id).value=c?.[key]??defaultValue;
- for(const el of document.querySelectorAll('[data-api-scope]'))el.checked=(c?.scopes||['accounts:read','timeline:read','media:read']).includes(el.dataset.apiScope);
+ for(const el of document.querySelectorAll('[data-api-scope]'))el.checked=(c?.scopes||['accounts:read','timeline:list','posts:read','media:download','avatars:read']).includes(el.dataset.apiScope);
  credentialScopeFields();acceptSettingsForm('credential-form');$('credential-editor').scrollIntoView({behavior:'smooth',block:'start'});$('credential-name').focus({preventScroll:true});
 }
 async function refreshAPICredentials(){
  const request=++apiCredentialRequest;const [data,audit]=await Promise.all([api('/credentials'),api('/credentials/audit')]);if(request!==apiCredentialRequest||!state.authenticated)return;
- apiCredentials=data.items;
+ apiCredentials=data.items;renderAPIScopes(data.scope_definitions);$('credential-new').disabled=false;
  $('credential-list').innerHTML=data.items.length?data.items.map(c=>{const expired=c.expires_at&&c.expires_at<=Date.now()/1000,label=c.revoked_at?'已撤销':!c.enabled?'已停用':expired?'已过期':'有效';return `<article class="credential-card"><div><strong>${escape(c.name)}</strong> <span class="badge neutral">${label}</span><p>${escape(c.description)}</p><small>标识 ${escape(c.id)} · 密钥尾号 ${escape(c.secret_tail)}</small><p>${c.all_accounts?'全部账号':escape(c.accounts.join('、'))}</p><p>${c.scopes.map(s=>escape(apiScopeLabels[s]||s)).join(' · ')}</p><small>有效期：${c.expires_at?escape(date(c.expires_at)):'永不过期'} · 最近使用：${c.last_used_at?escape(date(c.last_used_at)):'尚未使用'}</small></div>${c.revoked_at?'':`<div class="form-actions"><button type="button" class="button secondary" data-credential-edit="${escape(c.id)}">编辑</button><button type="button" class="button secondary" data-credential-action="rotate" data-id="${escape(c.id)}">轮换密钥</button><button type="button" class="button danger" data-credential-action="revoke" data-id="${escape(c.id)}">撤销</button></div>`}</article>`;}).join(''):'<p class="muted">尚无 API 凭据。创建后将密钥交付给需要接入的调用方。</p>';
  $('credential-audit').innerHTML=audit.length?audit.map(e=>`<div class="credential-audit-row"><code>${escape(e.action)}</code><small>${escape(date(e.created_at))} · ${escape(e.credential_id)} · HTTP ${Number(e.status)}</small></div>`).join(''):'<p class="muted">暂无操作记录。</p>';
 }

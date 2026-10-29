@@ -283,7 +283,9 @@ function replyHTML(p){
 }
 function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
- if(!p.quote||depth>=4)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
+ if(!p.quote)return `<div class="quote-unavailable">${icon('lock')}<span>引用内容暂不可用或尚未归档</span><a href="https://x.com/i/status/${encodeURIComponent(p.quote_id)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></div>`;
+ const limit=state.settings?.quote_display_depth??4;
+ if(depth>=limit)return `<div class="quote-unavailable quote-collapsed"><span>引用推文已折叠</span><button type="button" class="text-button" data-open-post="${escape(p.quote_id)}">查看引用 →</button></div>`;
  const q=p.quote;
  const source=`https://x.com/i/status/${encodeURIComponent(q.id)}`;
  const text=displayPostText(q);
@@ -528,7 +530,7 @@ $('collection-settings-form').addEventListener('submit',event=>{event.preventDef
 });});
 $('archive-display-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const submitted=settingsSnapshot('archive-display-form');
-  await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value),video_default_muted:$('video-default-muted').checked,video_loop:$('video-loop').checked,video_auto_next:$('video-auto-next').checked,video_timeline_autoplay:$('video-timeline-autoplay').checked,video_timeline_preload:$('video-timeline-preload').checked,media_preload_mode:$('media-preload-mode').value,image_cache_seconds:Number($('image-cache-hours').value)*3600,video_cache_seconds:Number($('video-cache-minutes').value)*60});
+  await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value),quote_display_depth:Number($('quote-display-depth').value),video_default_muted:$('video-default-muted').checked,video_loop:$('video-loop').checked,video_auto_next:$('video-auto-next').checked,video_timeline_autoplay:$('video-timeline-autoplay').checked,video_timeline_preload:$('video-timeline-preload').checked,media_preload_mode:$('media-preload-mode').value,image_cache_seconds:Number($('image-cache-hours').value)*3600,video_cache_seconds:Number($('video-cache-minutes').value)*60});
   state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);populateArchiveDisplaySettings(state.settings);
   acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='时间线设置已保存。';toast('时间线设置已保存');
 });});
@@ -542,7 +544,7 @@ $('sqlite-performance-form').addEventListener('submit',event=>{event.preventDefa
  state.settings=await api('/settings');acceptSettingsForm('sqlite-performance-form',submitted);populateSQLiteSettings(state.settings);
  $('sqlite-performance-result').textContent='读取设置已保存并生效，无需重启。';toast('读取设置已保存');
 });});
-function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('video-auto-next').checked=s.video_auto_next===true;$('video-timeline-autoplay').checked=s.video_timeline_autoplay===true;$('video-timeline-preload').checked=s.video_timeline_preload===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
+function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('quote-display-depth').value=s.quote_display_depth??4;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('video-auto-next').checked=s.video_auto_next===true;$('video-timeline-autoplay').checked=s.video_timeline_autoplay===true;$('video-timeline-preload').checked=s.video_timeline_preload===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
 function populateCollectionSettings(s){
  renderGlobalCollection(s.polling_paused);
  hydrateSettingsForm('collection-settings-form',()=>{

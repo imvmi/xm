@@ -55,6 +55,9 @@ func TestAPICredentialsBrowser(t *testing.T) {
 		t.Fatal("docs guide missing")
 	}
 	eval(`(()=>{$('credential-new').click();$('credential-name').value='Integration';$('credential-accounts').value='alice';return true})()`)
+	if !eval(`document.querySelectorAll('[data-api-scope]').length===14 && document.querySelectorAll('.credential-scope-group').length===3 && !document.querySelector('[data-api-scope="accounts:write"]')`) {
+		t.Fatal("granular scope editor missing")
+	}
 	for _, theme := range []string{"light", "dark"} {
 		for _, width := range []int64{1280, 390} {
 			if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 900)); err != nil {
@@ -70,6 +73,23 @@ func TestAPICredentialsBrowser(t *testing.T) {
 	wait(`$('credential-secret-dialog').open && $('credential-secret').value.startsWith('xm_')`)
 	eval(`(()=>{window.testFirstSecret=$('credential-secret').value;document.querySelector('[data-close="credential-secret-dialog"]').click();return true})()`)
 	wait(`$('credential-secret').value==='' && $('credential-list').textContent.includes('Integration')`)
+	// Existing keys display expanded grants, and unchecking one must persist.
+	if _, err := a.store.DB.Exec("UPDATE api_credentials SET scopes=?", `["accounts:write","timeline:read","media:read"]`); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{$('credential-refresh').click();return true})()`)
+	wait(`apiCredentials[0].scopes.includes('accounts:update')`)
+	eval(`(()=>{document.querySelector('[data-credential-edit]').click();return true})()`)
+	if !eval(`$('credential-scope-accounts-create').checked && $('credential-scope-accounts-update').checked && $('credential-scope-posts-read').checked && $('credential-scope-avatars-read').checked`) {
+		t.Fatal("legacy grants not expanded in editor")
+	}
+	eval(`(()=>{$('credential-scope-accounts-update').click();$('credential-scope-avatars-read').click();document.querySelector('#credential-form button[type="submit"]').click();return true})()`)
+	wait(`$('credential-editor').hidden && !apiCredentials[0].scopes.includes('accounts:update') && !apiCredentials[0].scopes.includes('avatars:read')`)
+	eval(`(()=>{document.querySelector('[data-credential-edit]').click();return true})()`)
+	if !eval(`$('credential-scope-accounts-create').checked && !$('credential-scope-accounts-update').checked && $('credential-scope-media-download').checked && !$('credential-scope-avatars-read').checked`) {
+		t.Fatal("editing restored deselected permissions")
+	}
+	eval(`(()=>{$('credential-close').click();return true})()`)
 	eval(`(()=>{document.querySelector('[data-credential-action="rotate"]').click();$('credential-action-confirm').click();return true})()`)
 	wait(`$('credential-secret-dialog').open && $('credential-secret').value!==window.testFirstSecret`)
 	eval(`(()=>{document.querySelector('[data-close="credential-secret-dialog"]').click();return true})()`)
@@ -79,7 +99,7 @@ func TestAPICredentialsBrowser(t *testing.T) {
 	if err := chromedp.Do(browser, chromedp.Navigate(server.URL+"/docs/api")); err != nil {
 		t.Fatal(err)
 	}
-	wait(`document.querySelectorAll('#api-reference>details').length>10`)
+	wait(`document.querySelectorAll('#api-reference>details').length>10 && document.querySelectorAll('#api-scope-reference tr').length===14`)
 	if !eval(`document.querySelector('a[href="/#settings/credentials"]')!==null && !document.body.textContent.includes(window.testFirstSecret||'xm_secret_placeholder')`) {
 		t.Fatal("docs link or privacy issue")
 	}

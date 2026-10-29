@@ -17,8 +17,6 @@ import (
 	"xm/internal/archive"
 )
 
-var apiScopes = []string{"accounts:read", "accounts:write", "accounts:delete", "tasks:read", "tasks:create", "tasks:rescan", "tasks:cancel", "timeline:read", "media:read"}
-
 type apiCredential struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
@@ -63,6 +61,7 @@ func scanAPICredential(row scanner) (apiCredential, error) {
 	if err == nil {
 		err = json.Unmarshal([]byte(accounts), &c.Accounts)
 	}
+	c.Scopes = expandAPIScopes(c.Scopes)
 	return c, err
 }
 func (c apiCredential) allows(scope string) bool { return slices.Contains(c.Scopes, scope) }
@@ -102,13 +101,17 @@ func (a *App) validateCredential(in *apiCredentialInput) error {
 	if in.Name == "" || len([]rune(in.Name)) > 100 || len(in.Description) > 2000 {
 		return errors.New("名称不能为空且最多 100 字，备注最多 2000 字节")
 	}
-	if len(in.Scopes) == 0 || len(in.Scopes) > len(apiScopes) {
+	if len(in.Scopes) == 0 || len(in.Scopes) > len(apiScopes)+len(legacyAPIScopes) {
 		return errors.New("请选择有效权限")
 	}
 	for _, s := range in.Scopes {
-		if !slices.Contains(apiScopes, s) {
+		if _, legacy := legacyAPIScopes[s]; !legacy && !slices.Contains(apiScopes, s) {
 			return errors.New("包含未知权限")
 		}
+	}
+	in.Scopes = expandAPIScopes(in.Scopes)
+	if len(in.Scopes) == 0 {
+		return errors.New("请选择有效权限")
 	}
 	if in.RequestLimit < 1 || in.RequestLimit > 600 || in.TaskLimit < 1 || in.TaskLimit > 60 || in.QueueLimit < 1 || in.QueueLimit > 100 {
 		return errors.New("每分钟请求数为 1～600，任务提交数为 1～60，未结束任务数为 1～100")
@@ -161,7 +164,7 @@ func (a *App) listAPICredentials(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取凭据失败")
 		return
 	}
-	respond(w, 200, map[string]any{"items": items, "scopes": apiScopes})
+	respond(w, 200, map[string]any{"items": items, "scopes": apiScopes, "scope_definitions": apiScopeDefinitions})
 }
 func (a *App) saveAPICredential(w http.ResponseWriter, r *http.Request) {
 	var in apiCredentialInput

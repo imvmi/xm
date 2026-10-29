@@ -491,7 +491,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "video_timeline_preload": cfg.VideoTimelinePreload, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "video_timeline_preload": cfg.VideoTimelinePreload, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "quote_display_depth": cfg.QuoteDepthLimit(), "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
@@ -523,6 +523,7 @@ type settingsInput struct {
 	VideoDefaultMuted     *bool   `json:"video_default_muted"`
 	ImageCacheSeconds     *int    `json:"image_cache_seconds"`
 	VideoCacheSeconds     *int    `json:"video_cache_seconds"`
+	QuoteDisplayDepth     *int    `json:"quote_display_depth"`
 	TimelinePageSize      *int    `json:"timeline_page_size"`
 }
 
@@ -631,6 +632,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.SQLiteReadConnections = *v.SQLiteReadConnections
+	}
+	if v.QuoteDisplayDepth != nil {
+		cfg.QuoteDisplayDepth = v.QuoteDisplayDepth
 	}
 	if v.TimelinePageSize != nil {
 		if *v.TimelinePageSize < 10 || *v.TimelinePageSize > 1000 {

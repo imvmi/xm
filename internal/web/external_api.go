@@ -22,19 +22,30 @@ type apiRoute struct {
 var externalRoutes = []apiRoute{
 	{"GET /api/v1/me", "", "查看当前凭据权限与限额", false, (*App).externalMe},
 	{"GET /api/v1/accounts", "accounts:read", "列出授权账号", false, (*App).externalAccounts},
-	{"POST /api/v1/accounts", "accounts:write", "添加监控账号", true, (*App).externalCreateAccount},
+	{"POST /api/v1/accounts", "accounts:create", "添加监控账号", true, (*App).externalCreateAccount},
 	{"GET /api/v1/accounts/{account}", "accounts:read", "查看账号详情", false, (*App).externalAccount},
-	{"PATCH /api/v1/accounts/{account}", "accounts:write", "修改账号监控配置", false, (*App).externalEditAccount},
+	{"PATCH /api/v1/accounts/{account}", "accounts:update", "修改账号监控配置", false, (*App).externalEditAccount},
 	{"DELETE /api/v1/accounts/{account}/monitor", "accounts:delete", "取消监控并保留归档", false, (*App).externalDeleteAccount},
-	{"POST /api/v1/accounts/{account}/tasks", "tasks:create", "提交增量、补采或重新扫描任务", true, (*App).externalCreateTask},
+	{"POST /api/v1/accounts/{account}/tasks", "", "提交增量、补采或重新扫描任务", true, (*App).externalCreateTask},
 	{"GET /api/v1/tasks", "tasks:read", "列出本凭据提交的任务", false, (*App).externalTasks},
 	{"GET /api/v1/tasks/{task}", "tasks:read", "查询任务进度与结果", false, (*App).externalTask},
 	{"POST /api/v1/tasks/{task}/cancel", "tasks:cancel", "取消本次任务，保留自动监控设置", false, (*App).externalCancelTask},
-	{"POST /api/v1/tasks/{task}/retry", "tasks:create", "重试失败、未完成或取消的任务", true, (*App).externalRetryTask},
-	{"GET /api/v1/accounts/{account}/timeline", "timeline:read", "读取已归档时间线及引用", false, (*App).externalTimeline},
-	{"GET /api/v1/posts/{post}", "timeline:read", "读取授权推文及引用", false, (*App).externalPost},
-	{"GET /api/v1/posts/{post}/media/{asset}", "media:read", "读取授权媒体，支持 Range", false, (*App).externalMedia},
-	{"GET /api/v1/accounts/{account}/avatar", "media:read", "读取授权账号头像", false, (*App).externalAvatar},
+	{"POST /api/v1/tasks/{task}/retry", "tasks:retry", "重试失败、未完成或取消的任务", true, (*App).externalRetryTask},
+	{"GET /api/v1/accounts/{account}/timeline", "timeline:list", "读取已归档时间线及引用", false, (*App).externalTimeline},
+	{"GET /api/v1/posts/{post}", "posts:read", "读取授权推文及引用", false, (*App).externalPost},
+	{"GET /api/v1/posts/{post}/media/{asset}", "media:download", "读取授权媒体，支持 Range", false, (*App).externalMedia},
+	{"GET /api/v1/accounts/{account}/avatar", "avatars:read", "读取授权账号头像", false, (*App).externalAvatar},
+}
+
+func (route apiRoute) allows(c apiCredential) bool {
+	if route.Pattern == "POST /api/v1/accounts/{account}/tasks" {
+		return c.allows(apiTaskScope(collectionModeIncremental)) || c.allows(apiTaskScope(collectionModeBackfill)) || c.allows(apiTaskScope(collectionModeRescan))
+	}
+	return route.Scope == "" || c.allows(route.Scope)
+}
+
+func (route apiRoute) binary() bool {
+	return strings.HasSuffix(route.Pattern, "/avatar") || strings.HasSuffix(route.Pattern, "/media/{asset}")
 }
 
 // A small response buffer keeps legacy handlers reusable while normalizing JSON
@@ -87,7 +98,7 @@ func (a *App) externalHandler() http.Handler {
 	mux := http.NewServeMux()
 	for _, route := range externalRoutes {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.serveExternalRoute(w, r, route) })
-		if route.Scope == "timeline:read" {
+		if route.Scope == "timeline:list" || route.Scope == "posts:read" {
 			handler = readTimeout(postReadTimeout, handler)
 		}
 		mux.HandleFunc(route.Pattern, handler)
@@ -112,8 +123,12 @@ func (a *App) serveExternalRoute(w http.ResponseWriter, r *http.Request, route a
 		apiError(w, 401, "invalid_credential", "凭据无效、已过期、已停用或已撤销")
 		return
 	}
-	if route.Scope != "" && !c.allows(route.Scope) {
-		apiError(w, 403, "insufficient_scope", "凭据没有所需权限："+route.Scope)
+	if !route.allows(c) {
+		required := route.Scope
+		if required == "" {
+			required = "tasks:submit:incremental、tasks:submit:backfill 或 tasks:submit:rescan"
+		}
+		apiError(w, 403, "insufficient_scope", "凭据没有所需权限："+required)
 		return
 	}
 	taskRequest := route.Idempotent && strings.Contains(route.Pattern, "/tasks")
@@ -141,7 +156,7 @@ func (a *App) serveExternalRoute(w http.ResponseWriter, r *http.Request, route a
 			apiError(w, 401, "invalid_credential", "凭据已失效")
 			return
 		}
-		if !c.allows(route.Scope) {
+		if !route.allows(c) {
 			apiError(w, 403, "insufficient_scope", "凭据权限已变化")
 			return
 		}
@@ -169,7 +184,7 @@ func (a *App) serveExternalRoute(w http.ResponseWriter, r *http.Request, route a
 		}
 	}
 	// Binary endpoints keep streaming and byte-range behavior, but never public cacheability.
-	if route.Scope == "media:read" {
+	if route.binary() {
 		route.Handler(a, &externalMediaWriter{ResponseWriter: w}, r, c)
 		return
 	}
@@ -198,6 +213,37 @@ func (a *App) serveExternalRoute(w http.ResponseWriter, r *http.Request, route a
 					apiError(w, 404, "not_found", "账号未授权；请管理员先将账号加入凭据范围")
 					return
 				}
+			}
+		}
+		// Check mode grants before replaying a cached result, including after a
+		// credential has been narrowed since the original request.
+		if taskRequest {
+			mode := ""
+			if r.PathValue("task") != "" {
+				job, e := a.externalJob(c, r.PathValue("task"))
+				if e != nil {
+					apiError(w, 404, "not_found", "任务不存在、已清理或未授权")
+					return
+				}
+				mode = retryExternalTaskMode(job)
+			} else {
+				var in struct {
+					Mode string `json:"mode"`
+				}
+				if json.Unmarshal(raw, &in) != nil {
+					apiError(w, 400, "invalid_request", "无效任务请求")
+					return
+				}
+				mode = in.Mode
+			}
+			mode, e = normalizeCollectionMode(mode)
+			if e != nil {
+				apiError(w, 400, "invalid_request", e.Error())
+				return
+			}
+			if !c.allows(apiTaskScope(mode)) {
+				apiError(w, 403, "insufficient_scope", "凭据没有所需权限："+apiTaskScope(mode))
+				return
 			}
 		}
 		idemID = apiDigest(c.ID + "\x00" + key)

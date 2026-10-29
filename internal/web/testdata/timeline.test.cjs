@@ -269,3 +269,25 @@ test('a timed-out next page keeps the current cursor and can be retried',async()
  f.requests[2].resolve({...f.page(['7'],-1),has_more:false});await pending;
  assert.equal(f.state.postsError,false);assert.equal(f.state.postIDs.size,2);
 });
+
+test('quote display depth folds independently of stored data and keeps a detail entry',()=>{
+ const f=fixture();
+ let post={id:'5',username:'alice',text:'deepest',media:[]};
+ for(let id=4;id>=1;id--)post={id:String(id),username:'alice',text:'quote-'+id,media:[],quote_id:post.id,quote:post};
+ const original=JSON.stringify(post);
+ assert.equal((f.ctx.quoteHTML(post).match(/class="quote-card"/g)||[]).length,4);
+ for(const depth of [0,1,2,3,4]){
+  f.state.settings={quote_display_depth:depth};
+  const html=f.ctx.quoteHTML(post);
+  assert.equal((html.match(/class="quote-card"/g)||[]).length,depth);
+  if(depth<4){
+   assert.match(html,/引用推文已折叠/);
+   assert.match(html,new RegExp('data-open-post="'+(depth+2)+'"'));
+   assert.doesNotMatch(html,/暂不可用|尚未归档/);
+  }else assert.doesNotMatch(html,/已折叠/);
+  assert.equal(JSON.stringify(post),original);
+ }
+ f.state.settings={quote_display_depth:0};
+ assert.match(f.ctx.quoteHTML({quote_id:'99'}),/暂不可用或尚未归档/);
+ assert.equal(f.ctx.quoteHTML({id:'99'}),'');
+});

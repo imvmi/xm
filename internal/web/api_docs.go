@@ -116,7 +116,7 @@ func externalOpenAPI() map[string]any {
 		if strings.HasSuffix(path, "/cancel") {
 			responses["202"] = apiJSONResponse("停止请求已受理，查询任务直到结束。", map[string]string{"type": "object"})
 		}
-		if route.Scope == "media:read" {
+		if route.binary() {
 			addQuery("v", map[string]string{"type": "string"})
 			parameters = append(parameters, map[string]any{"name": "Range", "in": "header", "schema": map[string]string{"type": "string"}, "example": "bytes=0-1023"})
 			for _, code := range []string{"200", "206"} {
@@ -125,6 +125,16 @@ func externalOpenAPI() map[string]any {
 			responses["416"] = map[string]string{"description": "请求范围不可满足"}
 		}
 		op := map[string]any{"summary": route.Summary, "description": "所需权限：" + route.Scope, "x-scope": route.Scope, "parameters": parameters, "responses": responses, "security": []any{map[string]any{"BearerAuth": []string{}}}}
+		switch route.Pattern {
+		case "GET /api/v1/me":
+			op["description"] = "有效凭据即可访问，无需额外权限。"
+		case "POST /api/v1/accounts/{account}/tasks":
+			op["description"] = "按 mode 检查 tasks:submit:incremental、tasks:submit:backfill 或 tasks:submit:rescan；省略 mode 时检查增量权限。首次增量采集仍会建立历史基线。"
+			op["x-mode-scopes"] = map[string]string{"incremental": apiTaskScope(collectionModeIncremental), "backfill": apiTaskScope(collectionModeBackfill), "rescan": apiTaskScope(collectionModeRescan)}
+		case "POST /api/v1/tasks/{task}/retry":
+			op["description"] = "需要 tasks:retry 及重试实际模式的权限；重新扫描任务以 backfill 重试，需 tasks:submit:backfill。"
+			op["x-mode-scopes"] = map[string]string{"incremental": apiTaskScope(collectionModeIncremental), "backfill": apiTaskScope(collectionModeBackfill), "rescan": apiTaskScope(collectionModeBackfill)}
+		}
 		var body map[string]any
 		var example any
 		switch route.Pattern {
@@ -155,5 +165,5 @@ func externalOpenAPI() map[string]any {
 	props := post["properties"].(map[string]any)
 	props["media"] = map[string]any{"type": "array", "items": apiRef("Media")}
 	props["quote"] = apiRef("Post")
-	return map[string]any{"openapi": "3.0.3", "info": map[string]string{"title": "XM 外部 API", "version": "1.0.0", "description": "管理员签发凭据；共享授权归档。账号 id 为稳定归档键，任务 id 为不可复用的随机标识。"}, "servers": []any{map[string]string{"url": "/"}}, "paths": paths, "components": map[string]any{"securitySchemes": map[string]any{"BearerAuth": map[string]string{"type": "http", "scheme": "bearer"}}, "schemas": map[string]any{"Credential": apiSchema(apiCredential{}), "Account": apiSchema(externalAccountView{}), "Task": apiSchema(externalJobView{}), "Post": post, "Media": apiSchema(MediaView{}), "Error": map[string]any{"type": "object", "properties": map[string]any{"error": map[string]any{"type": "object", "properties": map[string]any{"code": map[string]string{"type": "string"}, "message": map[string]string{"type": "string"}, "request_id": map[string]string{"type": "string"}}}}}}}}
+	return map[string]any{"openapi": "3.0.3", "x-scopes": apiScopeDefinitions, "info": map[string]string{"title": "XM 外部 API", "version": "1.1.0", "description": "管理员签发凭据；共享授权归档。账号 id 为稳定归档键，任务 id 为不可复用的随机标识。"}, "servers": []any{map[string]string{"url": "/"}}, "paths": paths, "components": map[string]any{"securitySchemes": map[string]any{"BearerAuth": map[string]string{"type": "http", "scheme": "bearer"}}, "schemas": map[string]any{"Credential": apiSchema(apiCredential{}), "Account": apiSchema(externalAccountView{}), "Task": apiSchema(externalJobView{}), "Post": post, "Media": apiSchema(MediaView{}), "Error": map[string]any{"type": "object", "properties": map[string]any{"error": map[string]any{"type": "object", "properties": map[string]any{"code": map[string]string{"type": "string"}, "message": map[string]string{"type": "string"}, "request_id": map[string]string{"type": "string"}}}}}}}}
 }

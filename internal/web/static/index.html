@@ -193,6 +193,8 @@
               <p class="field-help">跟随系统时，页面会根据设备当前的外观偏好自动切换。</p>
               <label for="timeline-page-size">时间线每次加载推文数量</label><input id="timeline-page-size" type="number" min="10" max="1000" step="1" required value="24">
               <p class="field-help">用于首页和账号时间线的每批加载数量，范围 10～1000 条。</p>
+              <label for="quote-display-depth">引用推文显示层数</label><select id="quote-display-depth"><option value="0">0 层（全部折叠）</option><option value="1">1 层</option><option value="2">2 层</option><option value="3">3 层</option><option value="4" selected>4 层（默认）</option></select>
+              <p class="field-help">第一层指当前推文直接引用的推文。用于时间线和推文详情，超过所选层数的引用折叠为查看入口；仅调整显示，已归档内容保留。目前最多归档 4 层引用。</p>
               </section>
               <section class="display-preference-group" aria-labelledby="display-video-title"><h3 id="display-video-title">视频播放</h3>
               <label class="check-label"><input id="video-auto-next" type="checkbox"> 全屏播放结束后自动播放下一条</label>
@@ -306,13 +308,13 @@
         <section id="settings-credentials" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-credentials" hidden>
           <div class="panel"><div class="panel-heading"><div><h2>凭据</h2><p>管理外部调用方的 API 密钥，限制操作权限和账号范围。</p></div><a class="button secondary" href="/docs/api" target="_blank" rel="noopener">查看 API 文档 ↗</a></div><div class="panel-body">
             <p class="field-help">每个调用方使用独立凭据。密钥仅在创建或轮换时展示一次，请通过可信方式交付。对外访问请使用 HTTPS。</p>
-            <div class="form-actions"><button id="credential-new" type="button" class="button primary">创建凭据</button><button id="credential-refresh" type="button" class="button secondary">刷新列表</button></div><div id="credential-list"></div>
+            <div class="form-actions"><button id="credential-new" disabled type="button" class="button primary">创建凭据</button><button id="credential-refresh" type="button" class="button secondary">刷新列表</button></div><div id="credential-list"></div>
           </div></div>
           <div id="credential-editor" class="panel" hidden><div class="panel-heading"><h2 id="credential-editor-title">创建 API 凭据</h2><button id="credential-close" class="button secondary" type="button">关闭</button></div><div class="panel-body"><form id="credential-form" autocomplete="off">
             <label for="credential-name">凭据名称</label><input id="credential-name" required maxlength="100" placeholder="例如：内容同步服务">
             <label for="credential-description">调用方 / 用途备注</label><textarea id="credential-description" rows="2" maxlength="500"></textarea>
             <label class="check-label"><input id="credential-enabled" type="checkbox" checked>启用凭据</label>
-            <fieldset><legend>操作权限</legend><div class="credential-scopes"><label class="check-label"><input id="credential-scope-accounts-read" type="checkbox" data-api-scope="accounts:read">读取账号</label><label class="check-label"><input id="credential-scope-accounts-write" type="checkbox" data-api-scope="accounts:write">添加和修改账号</label><label class="check-label"><input id="credential-scope-accounts-delete" type="checkbox" data-api-scope="accounts:delete">取消监控</label><label class="check-label"><input id="credential-scope-tasks-read" type="checkbox" data-api-scope="tasks:read">读取本凭据的任务</label><label class="check-label"><input id="credential-scope-tasks-create" type="checkbox" data-api-scope="tasks:create">提交及重试任务</label><label class="check-label"><input id="credential-scope-tasks-rescan" type="checkbox" data-api-scope="tasks:rescan">重新扫描</label><label class="check-label"><input id="credential-scope-tasks-cancel" type="checkbox" data-api-scope="tasks:cancel">取消本凭据的任务</label><label class="check-label"><input id="credential-scope-timeline-read" type="checkbox" data-api-scope="timeline:read">读取归档时间线</label><label class="check-label"><input id="credential-scope-media-read" type="checkbox" data-api-scope="media:read">读取归档媒体</label></div></fieldset>
+            <fieldset><legend>操作权限</legend><p class="field-help">按操作分别授权。重试任务还需对应采集模式权限；已有凭据的合并权限会展开为下列选项，取消勾选并保存即可收紧授权。</p><div id="credential-scopes"></div></fieldset>
             <label class="check-label"><input id="credential-all-accounts" type="checkbox">允许全部账号（包括将来添加的账号）</label>
             <label for="credential-accounts">允许访问的账号</label><textarea id="credential-accounts" rows="3" placeholder="每行一个账号名，也可以用逗号分隔" required></textarea><p class="field-help">可提前授权尚未添加的账号。调用方只能添加授权范围内的账号；任务只允许查询和取消由本凭据提交的任务。账号授权包含归档中的引用内容。</p>
             <label for="credential-expiry">有效期至</label><input id="credential-expiry" type="datetime-local" required><label class="check-label"><input id="credential-no-expiry" type="checkbox">永不过期</label>
