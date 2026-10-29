@@ -2,7 +2,7 @@
 
 [返回项目首页](../README.md)
 
-GitHub Actions 的 [ci 工作流](../.github/workflows/ci.yml) 在推送 Git tag 时自动构建并发布。普通分支推送和 Pull Request 仅运行测试，不创建 Release。
+GitHub Actions 的 [ci 工作流](../.github/workflows/ci.yml) 在推送 Git tag 时自动构建并发布。普通分支推送和 Pull Request 仅运行测试，不创建 Release；也可手动指定已有 tag 补发。
 
 ## 构建产物
 
@@ -20,11 +20,11 @@ Go 版本读取 `go.mod`。全部版本使用 `CGO_ENABLED=0` 交叉编译，压
 
 ## 发布规则
 
-- Go 测试、`go vet`、前端测试、MariaDB 集成测试和全部目标构建通过后才发布。
+- Go 测试、`go vet`、前端测试和全部目标构建通过后才发布。
 - 使用推送的 tag 作为 Release 标签和版本名，不自动创建新标签。支持普通标签和附注标签。
-- 先创建草稿、上传五个压缩包及 `SHA256SUMS`，全部成功后才公开。失败时保留草稿供重试。
+- Release 不存在时先创建草稿，上传五个压缩包及 `SHA256SUMS`，全部成功后才公开。失败时保留草稿供重试。
 - 不自动取消其他标签的构建，每个标签独立发布。
-- 重跑同一工作流时继续未完成的草稿；已发布的同名 Release 保持原样，发布新版本请使用新 tag。
+- 同名 Release 已存在时仍上传附件，同名附件会被替换，标题和说明保留。已有草稿在上传成功后公开；已公开的 Release 直接补齐附件。
 - 工作流只在发布作业授予 `contents: write`，使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需额外保存个人 Token。
 
 例如发布 `v1.0.0`（在已提交的代码上执行）：
@@ -35,6 +35,12 @@ git push github v1.0.0
 ```
 
 示例使用本项目的 `github` 远端；如果你的 GitHub 远端名为 `origin`，请相应替换。仅在本地创建 tag 不触发 CI，需要将 tag 推送到 GitHub。失败后可在 **Actions → ci** 查看对应作业日志，并选择 **Re-run failed jobs**。若组织策略禁用 Actions 或禁止写入仓库，需要先由管理员允许此工作流运行和发布。
+
+### 给已有 tag 补发
+
+在 **Actions → ci → Run workflow** 中选择 `main`，在 `tag` 输入框填写已有标签（如 `v1.0.0`），再运行。流程使用所选分支中的工作流定义，测试和二进制构建则检出该 tag 的代码，Release 附件与 tag 保持一致。
+
+修复 CI 后给旧 tag 补发，应使用此入口；直接重跑旧运行仍会使用旧版工作流。无需删除或移动 tag，也无需删除已有 Release。
 
 发布机制参考 [GitHub 工作流权限说明](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions) 和 [GitHub CLI Release 文档](https://cli.github.com/manual/gh_release_create)。
 

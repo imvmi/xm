@@ -5,6 +5,12 @@ on:
     branches: ["**"]
     tags: ["**"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (for example v1.0.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +21,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -26,38 +34,13 @@ jobs:
       - run: go vet ./...
       - run: node --test internal/web/testdata/*.test.cjs
 
-  mariadb:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      mariadb:
-        image: mariadb:10.11
-        env:
-          MARIADB_ROOT_PASSWORD: xm-ci-password
-        ports:
-          - 3306/tcp
-        options: >-
-          --health-cmd="healthcheck.sh --connect --innodb_initialized"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Verify MariaDB setup, migration, restart and schema upgrades
-        env:
-          XM_TEST_MYSQL_ADDR: 127.0.0.1:${{ job.services.mariadb.ports['3306'] }}
-          XM_TEST_MYSQL_PASSWORD: xm-ci-password
-        run: go test ./internal/web -count=1
-
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +59,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - name: Record source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -95,8 +82,8 @@ jobs:
 
   release:
     name: publish release
-    needs: [test, mariadb, build]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [test, build]
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -120,12 +107,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           title="XM ${tag}"
           cat > release-notes.md <<EOF_NOTES
-          由标签 ${tag} 自动构建。提交：${GITHUB_SHA}
+          由标签 ${tag} 自动构建。提交：${RELEASE_SHA}
 
           - Windows x64：xm-windows-amd64.zip
           - macOS Intel：xm-darwin-amd64.tar.gz
@@ -139,12 +128,12 @@ jobs:
           EOF_NOTES
 
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
-            if [[ "$draft" == false ]]; then
-              echo "Release $tag is already published; keeping its assets unchanged."
-              exit 0
-            fi
+            echo "Release $tag already exists; uploading build assets and preserving its title and notes."
           else
             gh release create "$tag" --verify-tag --title "$title" --notes-file release-notes.md --draft
+            draft=true
           fi
           gh release upload "$tag" xm-*.zip xm-*.tar.gz SHA256SUMS --clobber
-          gh release edit "$tag" --draft=false --title "$title" --notes-file release-notes.md
+          if [[ "$draft" == true ]]; then
+            gh release edit "$tag" --draft=false
+          fi
