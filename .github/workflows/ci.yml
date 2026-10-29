@@ -3,6 +3,7 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,6 +48,106 @@ jobs:
           cache: true
       - name: Verify MariaDB setup, migration, restart and schema upgrades
         env:
-          XM_TEST_MYSQL_ADDR: 127.0.0.1:${{ job.services.mariadb.ports[3306] }}
+          XM_TEST_MYSQL_ADDR: 127.0.0.1:${{ job.services.mariadb.ports['3306'] }}
           XM_TEST_MYSQL_PASSWORD: xm-ci-password
         run: go test ./internal/web -count=1
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and package
+        env:
+          RELEASE_OS: ${{ matrix.goos }}
+          RELEASE_ARCH: ${{ matrix.goarch }}
+        run: bash .github/scripts/package-release.sh "$RELEASE_OS" "$RELEASE_ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xm-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/releases/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: [test, mariadb, build]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xm-*
+          merge-multiple: true
+          path: release
+      - name: Verify packages and generate checksums
+        working-directory: release
+        run: |
+          set -euo pipefail
+          packages=(xm-windows-amd64.zip xm-darwin-amd64.tar.gz xm-darwin-arm64.tar.gz xm-linux-amd64.tar.gz xm-linux-arm64.tar.gz)
+          for package in "${packages[@]}"; do test -s "$package"; done
+          sha256sum "${packages[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Publish complete release
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+          title="XM ${tag}"
+          cat > release-notes.md <<EOF_NOTES
+          由 main 分支自动构建。提交：${GITHUB_SHA}
+
+          - Windows x64：xm-windows-amd64.zip
+          - macOS Intel：xm-darwin-amd64.tar.gz
+          - macOS Apple Silicon：xm-darwin-arm64.tar.gz
+          - Linux x64：xm-linux-amd64.tar.gz
+          - Linux ARM64：xm-linux-arm64.tar.gz
+
+          解压后运行 ./xm serve（Windows 使用 .\xm.exe serve），打开 http://127.0.0.1:8080。
+          运行仍需 Chrome / Chromium 或可连接的 CDP 浏览器。macOS 版本未签名或公证。
+          校验文件：SHA256SUMS。升级前请停止旧服务并备份配置、数据库和媒体。
+          EOF_NOTES
+
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" == false ]]; then
+              echo "Release $tag is already published; keeping its assets unchanged."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file release-notes.md --draft
+          fi
+          gh release upload "$tag" xm-*.zip xm-*.tar.gz SHA256SUMS --clobber
+          # An older concurrent run must not replace a newer main build as Latest.
+          head_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          latest=false
+          if [[ "$head_sha" == "$GITHUB_SHA" ]]; then latest=true; fi
+          gh release edit "$tag" --draft=false --latest="$latest" --title "$title" --notes-file release-notes.md
