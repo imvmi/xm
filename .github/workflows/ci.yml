@@ -2,8 +2,9 @@ name: ci
 
 on:
   push:
+    branches: ["**"]
+    tags: ["**"]
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,7 +55,7 @@ jobs:
 
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -95,7 +96,7 @@ jobs:
   release:
     name: publish release
     needs: [test, mariadb, build]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -121,10 +122,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+          tag="$GITHUB_REF_NAME"
           title="XM ${tag}"
           cat > release-notes.md <<EOF_NOTES
-          由 main 分支自动构建。提交：${GITHUB_SHA}
+          由标签 ${tag} 自动构建。提交：${GITHUB_SHA}
 
           - Windows x64：xm-windows-amd64.zip
           - macOS Intel：xm-darwin-amd64.tar.gz
@@ -143,11 +144,7 @@ jobs:
               exit 0
             fi
           else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file release-notes.md --draft
+            gh release create "$tag" --verify-tag --title "$title" --notes-file release-notes.md --draft
           fi
           gh release upload "$tag" xm-*.zip xm-*.tar.gz SHA256SUMS --clobber
-          # An older concurrent run must not replace a newer main build as Latest.
-          head_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
-          latest=false
-          if [[ "$head_sha" == "$GITHUB_SHA" ]]; then latest=true; fi
-          gh release edit "$tag" --draft=false --latest="$latest" --title "$title" --notes-file release-notes.md
+          gh release edit "$tag" --draft=false --title "$title" --notes-file release-notes.md

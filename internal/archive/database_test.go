@@ -74,7 +74,7 @@ func TestDatabaseCAPathRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSQLiteDefaultFilenameAndLegacyCompatibility(t *testing.T) {
+func TestSQLiteDefaultAndExplicitFilenames(t *testing.T) {
 	for _, explicit := range []string{"", "custom.db", "archive-migrated-fixture.sqlite"} {
 		t.Run("explicit_"+explicit, func(t *testing.T) {
 			cfg := DefaultConfig()
@@ -106,29 +106,40 @@ func TestSQLiteDefaultFilenameAndLegacyCompatibility(t *testing.T) {
 			}
 		})
 	}
-	t.Run("legacy_implicit", func(t *testing.T) {
-		dir := t.TempDir()
-		s, err := OpenStoreFile(dir, "archive.sqlite")
-		if err != nil {
-			t.Fatal(err)
+	for _, configured := range []bool{false, true} {
+		name := "default_store"
+		if configured {
+			name = "configured_store"
 		}
-		if err = s.SavePosts("alice", []Post{{ID: "1"}}); err != nil {
-			t.Fatal(err)
-		}
-		s.Close()
-		s, err = OpenStore(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer s.Close()
-		var n int
-		if err = s.DB.QueryRow("SELECT COUNT(*) FROM posts").Scan(&n); err != nil || n != 1 {
-			t.Fatal("legacy data lost", err)
-		}
-		if _, err = os.Stat(filepath.Join(dir, DefaultSQLiteFile)); !os.IsNotExist(err) {
-			t.Fatal("empty default database created beside legacy archive")
-		}
-	})
+		t.Run(name+"_ignores_legacy_file", func(t *testing.T) {
+			dir := t.TempDir()
+			legacy := filepath.Join(dir, "archive.sqlite")
+			const contents = "unrelated file must not be opened or modified"
+			if err := os.WriteFile(legacy, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var s *Store
+			var err error
+			if configured {
+				cfg := DefaultConfig()
+				cfg.DataDir = dir
+				s, err = OpenConfiguredStore(cfg)
+			} else {
+				s, err = OpenStore(dir)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err := os.Stat(filepath.Join(dir, DefaultSQLiteFile)); err != nil {
+				t.Fatal("default database not created", err)
+			}
+			data, err := os.ReadFile(legacy)
+			if err != nil || string(data) != contents {
+				t.Fatal("unrelated file changed", err)
+			}
+		})
+	}
 	for _, name := range []string{"../xm.db", "/tmp/xm.db", "nested/xm.db", `nested\xm.db`, "xm.db-wal", "bad\x00.db", "xm.txt"} {
 		if err := (DatabaseConfig{SQLiteFile: name}).Validate(); err == nil {
 			t.Fatalf("unsafe filename accepted: %q", name)

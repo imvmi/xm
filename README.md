@@ -27,7 +27,7 @@ XM 使用你自己的 X 登录 Cookie 采集内容，支持公开账号，以及
 | Linux x64 | `xm-linux-amd64.tar.gz` |
 | Linux ARM64 | `xm-linux-arm64.tar.gz` |
 
-每次推送到 `main` 后，CI 会运行检查、编译上述版本，通过后发布独立 Release，并附上 `SHA256SUMS` 校验文件。Linux ARM 版本面向 64 位系统。macOS 二进制暂未签名或公证。
+推送 Git tag 后，CI 会运行检查、编译上述版本，通过后以该 tag 发布 Release，并附上 `SHA256SUMS` 校验文件。Linux ARM 版本面向 64 位系统。macOS 二进制暂未签名或公证。
 
 运行需要 **Chrome / Chromium**（也可连接 CDP 远程浏览器）、可访问 X 的网络，以及自己的 X 登录 Cookie。管理页面已内置，无需安装 Go 或 Node.js。
 
@@ -100,5 +100,4 @@ Windows 编译时改用 `go build -o xm.exe ./cmd/xm`，运行 `.\xm.exe serve`�
 
 - [详细使用指南](docs/usage-guide.md)：部署、命令行、存储配置、迁移与故障排查。
 - [数据库结构](docs/database.md)：数据组织与备份说明。
-- [Linux systemd 服务模板](deploy/xm.service)：使用前调整工作目录和程序路径。
 - [自动发布流程](docs/releases.md)：构建目标、发布规则与手动重试。

@@ -131,7 +131,7 @@ func (s *setupWizard) guardLocalArchive(c archive.Config) error {
 	if c.Database.DriverName() == "sqlite" || s.cfg.Database.DriverName() != "sqlite" {
 		return nil
 	}
-	name, err := s.cfg.Database.SQLiteFilename(c.DataDir)
+	name, err := s.cfg.Database.SQLiteFilename()
 	if err != nil {
 		return errors.New("无法检查现有本地归档")
 	}

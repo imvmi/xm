@@ -1,6 +1,0 @@
-@echo off
-setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify.ps1"
-set "xmExit=%errorlevel%"
-pause
-exit /b %xmExit%

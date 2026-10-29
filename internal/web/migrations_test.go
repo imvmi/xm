@@ -245,7 +245,7 @@ func TestMigrationMySQLCutover(t *testing.T) {
 	if err := a.store.SaveCookies(archive.Cookies{AuthToken: "fixture-auth", CSRF: "fixture-csrf"}); err != nil {
 		t.Fatal(err)
 	}
-	oldFile := filepath.Join(a.Config().DataDir, "archive.sqlite")
+	oldFile := filepath.Join(a.Config().DataDir, "existing.db")
 	if err := os.WriteFile(oldFile, []byte("untouched old archive"), 0600); err != nil {
 		t.Fatal(err)
 	}

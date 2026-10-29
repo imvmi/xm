@@ -36,22 +36,13 @@ type DatabaseConfig struct {
 
 const DefaultSQLiteFile = "xm.db"
 
-// SQLiteFilename keeps explicit filenames and older implicit archives usable.
-// Fresh installations use xm.db; upgrading never silently opens an empty DB
-// instead of a pre-existing archive.sqlite.
-func (c DatabaseConfig) SQLiteFilename(dir string) (string, error) {
+// SQLiteFilename returns the configured filename, or xm.db by default.
+func (c DatabaseConfig) SQLiteFilename() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
 	if c.SQLiteFile != "" {
 		return c.SQLiteFile, nil
-	}
-	for _, name := range []string{DefaultSQLiteFile, "archive.sqlite"} {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
-			return name, nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
 	}
 	return DefaultSQLiteFile, nil
 }
@@ -163,7 +154,7 @@ func mysqlConfig(c DatabaseConfig) (*mysql.Config, error) {
 }
 func OpenConfiguredStore(cfg Config) (*Store, error) {
 	if cfg.Database.DriverName() == "sqlite" {
-		name, err := cfg.Database.SQLiteFilename(cfg.DataDir)
+		name, err := cfg.Database.SQLiteFilename()
 		if err != nil {
 			return nil, err
 		}

@@ -4,7 +4,7 @@ SQLite 与 MySQL 使用相同的逻辑表结构。当前为开发版本，不提
 
 ## 启动与配置
 
-SQLite 默认文件名为 `xm.db`；启动 YAML 的 `database.sqlite_file` 可指定数据目录内的 `.db` 或 `.sqlite` 文件。为兼容旧部署，未指定文件名且不存在 `xm.db` 时，会继续使用已有 `archive.sqlite`，不会悄悄新建空库；明确配置的旧文件名不变。
+SQLite 默认文件名为 `xm.db`，不自动探测其他文件名。启动 YAML 的 `database.sqlite_file` 可指定数据目录内的 `.db` 或 `.sqlite` 文件；数据库迁移使用此配置记录目标文件名。
 
 设置页支持 MySQL → SQLite：默认迁移到 `xm.db`；若目标或其 WAL/SHM 已存在，则使用独立的 `xm-migrated-<id>.db`，绝不覆盖已有数据库。完整迁移包括业务配置、管理员凭据、队列和归档；迁移记录独立存放于数据目录的 `migration-state.json`，不随源数据库切换丢失。复制期间禁止应用写入，校验完成后受控重启。源 MySQL 保留但不再同步新增数据。
 

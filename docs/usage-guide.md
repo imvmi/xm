@@ -28,14 +28,6 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o x
 SQLite 数据库、媒体和头像，将 `config.yaml` 的 `data_dir` 改为 `./data`。
 数据库继续放在本地磁盘；留空 `chrome_path` 可自动查找已安装的 Chrome。
 首次启动前核对文件大小和 SHA256，确认全部复制成功后再启动。
-Linux 的 systemd 服务和反向代理配置需要在 Windows 另行配置。
-
-`deploy/windows/` 提供启动与迁移校验脚本，复制到包含 `xm.exe` 的迁移目录根部使用。
-`verify.bat` 读取同目录的 `manifest.json`，清单是包含 `path`（相对路径）、
-`bytes` 和 `sha256` 的 JSON 数组；清单应在打包时生成，首次启动前运行校验。
-校验脚本兼容 Windows PowerShell 5.1 的 JSON 数组返回行为。
-若修改了被清单覆盖的脚本，需同时更新对应的大小和哈希，不能沿用旧清单。
-空间不足时，可使用 [`deploy/transfer/`](../deploy/transfer/README.md) 中的临时下载脚本流式传输已准备好的迁移目录。
 
 **仅发布 EXE 的头像升级**：停止旧进程，替换当前项目构建的 `xm.exe`，保留原 `config.yaml` 和数据目录，再按原命令启动即可。管理页面、建表和迁移逻辑均嵌入 EXE，不需要另外部署 SQL、JS、脚本或安装运行库。本次升级不需要清空已有数据库。首次启动自动从 `data/avatars/<用户ID>.json` 导入原始 URL 到 `avatar_sources` 表，把可恢复的图片移至 `data/cache/avatars/`。设置中的头像缓存仅提供来源数量、缓存用量和清理操作。
 
@@ -122,25 +114,13 @@ go build -o xm ./cmd/xm
 
 ### 服务器部署
 
-默认仅监听本机。当前仓库附带的 systemd 单元固定监听 `127.0.0.1:9980`；可通过 SSH 转发访问，或放在 HTTPS 反向代理后面：
+默认仅监听本机。可通过 SSH 转发访问，或放在 HTTPS 反向代理后面：
 
 ```bash
 ./xm serve -config /absolute/path/config.yaml -listen 127.0.0.1:9980 -secure-cookie
 ```
 
 `-secure-cookie` 用于浏览器通过 HTTPS 访问的部署；普通本地 HTTP 访问不加此参数。反向代理须保留原始 `Host` 和 `Origin`，把整个站点根路径转发给 XM。首次设置尚未完成时，服务只允许绑定回环地址，避免远程访问者抢先创建管理员；完成初始化后才可按需监听其他接口。远程访问应使用 HTTPS 或 SSH 隧道保护 Cookie、密码和私密内容。停止时使用 SIGTERM / Ctrl+C，以便取消采集并保留已保存结果。
-
-用户级 systemd 安装示例：
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp deploy/xm.service ~/.config/systemd/user/xm.service
-systemctl --user daemon-reload
-systemctl --user enable --now xm.service
-curl --fail http://127.0.0.1:9980/healthz
-```
-
-单元使用 `Restart=on-failure` 自动恢复异常退出，配置和数据文件以 `UMask=0077` 创建。若需要注销桌面会话后仍运行，可由管理员为该用户启用 linger。
 
 仓库不提供预置配置或示例配置文件。全新部署直接运行 `./xm serve`，首次设置完成后自动生成本机 `config.yaml`（已被 Git 忽略）；设置完成前不会生成此文件。它只保留启动所需的数据库连接信息和本地数据目录，生成结果如下：
 
@@ -255,7 +235,7 @@ database:
   tls_mode: verify_identity
 ```
 
-`password_env` 指定密码环境变量名，优先于可选的 `password` 字段；指定但未设置时直接报错。可在本机终端用 `read -rs XM_MYSQL_PASSWORD; export XM_MYSQL_PASSWORD` 输入，不把密码写入命令历史。systemd 启动时需给服务单独配置 EnvironmentFile（权限 0600），终端中的 export 不会自动传给 systemd 服务。若直接填写 `password`，保持配置文件权限 0600，不要提交到 Git。
+`password_env` 指定密码环境变量名，优先于可选的 `password` 字段；指定但未设置时直接报错。可在本机终端用 `read -rs XM_MYSQL_PASSWORD; export XM_MYSQL_PASSWORD` 输入，不把密码写入命令历史。若直接填写 `password`，保持配置文件权限 0600，不要提交到 Git。
 
 连接默认要求 TLS 1.2+ 并验证证书与主机名，使用系统可信 CA。私有 CA 可通过 `ca_file` 指定 PEM 文件，相对路径以配置文件目录为基准；`server_name` 可用于通过隧道连接时验证实际数据库证书的主机名。可显式设置 `tls_mode: disabled` 禁用 TLS，本机和远程地址均支持；连接将不加密，请仅在可信网络或已加密隧道中使用。获取证书时应使用数据库服务提供的可信来源。管理 API 不回显数据库密码。
 
@@ -292,7 +272,7 @@ MySQL 使用 utf8mb4，支持中文和 emoji；采用严格 SQL 模式，超长�
 
 迁移只读源 SQLite，逐表导入并保留推文 ID、引用、媒体存储连接和路径、监控状态及通知队列。全部目标数据在一个事务中提交；失败回滚，非空目标拒绝覆盖。建表操作不属于数据事务，失败时可能留下空表。提交结果因网络中断而无法确认时，先检查目标数据，不要直接重试。大归档迁移需要足够的数据库空间、事务日志容量和维护时间。
 
-Cookie、管理员凭据、存储与通知配置会随数据库一起迁移，不会搬运媒体文件；因此应保留原媒体目录和最小启动配置。暂停轮询后迁移可便于先核对归档，但通知队列会在启动管理服务后继续发送。保留原 SQLite 作为迁移前备份；切回 SQLite 不会自动同步后来写入 MySQL 的数据。迁移验收后，可让原 systemd 服务加载新配置和密码环境，避免同时启动两个实例。
+Cookie、管理员凭据、存储与通知配置会随数据库一起迁移，不会搬运媒体文件；因此应保留原媒体目录和最小启动配置。暂停轮询后迁移可便于先核对归档，但通知队列会在启动管理服务后继续发送。保留原 SQLite 作为迁移前备份；切回 SQLite 不会自动同步后来写入 MySQL 的数据。迁移验收后，使用新配置和密码环境重新启动二进制，避免同时启动两个实例。
 
 MySQL 模式的备份需包含数据库一致性备份/云快照、本机数据目录与配置，以及远程媒体对象。单独备份本机目录不能备份远程正文数据。
 
@@ -420,7 +400,6 @@ Docker 中的 `127.0.0.1` 指容器自身；宿主机代理需使用容器可达
 |---|---|
 | 代理测试成功，但 Chrome 检查超时 | HTTP 测试使用输入框中的代理访问 robots.txt，不会保存配置；Chrome 检查使用已保存的代理与 Cookie 打开 X 主页面，请先保存。诊断在主页面就绪后验证登录，不等待图片等资源全部加载。若仍失败，检查运行 XM 的机器上代理对 X 主页面和脚本资源的连接；普通 Chrome 的扩展、登录资料和系统代理不等同于 XM 的独立浏览器配置 |
 | 无法启动 Chrome | 安装 Chrome/Chromium，设置 `chrome_path`，检查运行用户权限与沙箱 |
-| Chrome 报 SUID sandbox helper 权限错误，但文件已是 root:root / 4755 | 检查用户级 systemd 的 `PrivateTmp`：它可能创建用户命名空间，使 Chrome 看到文件所有者为 65534。使用仓库单元的 `PrivateTmp=false` 与 `RuntimeDirectory=xm-tmp`（0700），保留 `NoNewPrivileges=true` 和 Chrome 沙箱；重新加载单元并重启服务 |
 | 未检测到已登录界面 | 浏览器确认登录，重新导入两个 Cookie；有图形环境时关闭设置中的 Headless 开关查看页面 |
 | 无权查看锁推 | 确认提供 Cookie 的账号已被批准关注，且未被移除或拉黑 |
 | HTTP 429 / code 88 | 等待限流恢复，减少采集量；程序不自动换账号或高频重试 |

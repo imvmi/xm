@@ -17,11 +17,7 @@ import (
 type Store struct{ DB *database.DB }
 
 func OpenStore(dir string) (*Store, error) {
-	name, err := (DatabaseConfig{Driver: "sqlite"}).SQLiteFilename(dir)
-	if err != nil {
-		return nil, err
-	}
-	return OpenStoreFile(dir, name)
+	return OpenStoreFile(dir, DefaultSQLiteFile)
 }
 
 func OpenStoreFile(dir, filename string) (*Store, error) {

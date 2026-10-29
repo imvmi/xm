@@ -21,7 +21,7 @@ func TestLiveUserIDResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	filename, err := cfg.Database.SQLiteFilename(cfg.DataDir)
+	filename, err := cfg.Database.SQLiteFilename()
 	if err != nil {
 		t.Fatal(err)
 	}

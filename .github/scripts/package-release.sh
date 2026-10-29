@@ -24,7 +24,7 @@ if [[ "$release_os" == windows ]]; then binary=xm.exe; fi
 CGO_ENABLED=0 GOOS="$release_os" GOARCH="$release_arch" GOAMD64=v1 \
   go build -trimpath -ldflags='-s -w' -o "$staging_dir/$binary" ./cmd/xm
 cp README.md "$staging_dir/"
-cp -R docs deploy "$staging_dir/"
+cp -R docs "$staging_dir/"
 
 archive_name="xm-$release_os-$release_arch"
 if [[ "$release_os" == windows ]]; then
