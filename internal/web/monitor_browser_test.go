@@ -122,9 +122,29 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		t.Fatal("preference lost on reload")
 	}
 	openMenu("bob")
-	if !eval(`!document.querySelector('#account-menu-content [data-op=edit]') && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='true'`) {
-		t.Fatal("management must expose the saved replies switch instead of configuration editing")
+	if !eval(`!!document.querySelector('#account-menu-content [data-op=edit]') && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='true'`) {
+		t.Fatal("management must expose configuration editing and the saved replies switch")
 	}
+	// Edit the cycle, preserving replies and visibility, then restore inheritance.
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
+	wait(`$('monitor-dialog').open`)
+	if !eval(`$('monitor-dialog-title').textContent==='编辑账号配置' && $('monitor-username').disabled && $('monitor-replies').checked && !$('monitor-timeline').checked && $('monitor-enabled').checked && $('monitor-interval-mode').value==='global' && $('monitor-interval').disabled`) {
+		t.Fatal("edit form did not load saved settings")
+	}
+	eval(`(()=>{$('monitor-interval-mode').value='custom';$('monitor-interval-mode').dispatchEvent(new Event('change'));$('monitor-interval').value='5';document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
+	wait(`!$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').interval_override_seconds===300`)
+	if !eval(`state.monitors.find(m=>m.username==='bob').replies && !state.monitors.find(m=>m.username==='bob').show_in_timeline && state.monitors.find(m=>m.username==='bob').interval_seconds===300`) {
+		t.Fatal("interval edit changed other preferences")
+	}
+	openMenu("bob")
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
+	wait(`$('monitor-dialog').open`)
+	if !eval(`$('monitor-interval-mode').value==='custom' && $('monitor-interval').value==='5' && !$('monitor-interval').disabled`) {
+		t.Fatal("custom interval not restored in form")
+	}
+	eval(`(()=>{$('monitor-interval-mode').value='global';$('monitor-interval-mode').dispatchEvent(new Event('change'));document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
+	wait(`!$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').interval_override_seconds===0 && state.monitors.find(m=>m.username==='bob').interval_seconds===state.settings.default_interval_seconds`)
+	openMenu("bob")
 	// Hold the save to check duplicate prevention and preservation of other preferences.
 	eval(`(()=>{window.repliesFetch=window.fetch;window.replySaves=[];window.fetch=(url,...args)=>{if(String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'){replySaves.push(JSON.parse(args[0].body));return new Promise(resolve=>{window.finishReplySave=()=>resolve(repliesFetch(url,...args))})}return repliesFetch(url,...args)};const b=document.querySelector('#account-menu-content [data-op=replies]');b.focus();b.click();document.querySelector('#account-menu-content [data-op=replies]').click();return true})()`)
 	if !eval(`$('account-menu-dialog').open && document.querySelector('#account-menu-content [data-op=replies]').disabled && replySaves.length===1 && replySaves[0].replies===false && replySaves[0].enabled===true && !('show_in_timeline' in replySaves[0])`) {
@@ -298,4 +318,12 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		detail, _ := chromedp.Run(browser, chromedp.Evaluate[string](`JSON.stringify({saved:window.savedAccountScroll,scroll:scrollY,sort:$('monitor-sort').value,expanded:[...accountExpanded],height:innerHeight,body:document.body.scrollHeight})`))
 		t.Fatal("directory state was lost after browsing", detail)
 	}
+	eval(`(()=>{document.querySelector('[data-action="add"]').click();return true})()`)
+	wait(`$('monitor-dialog').open`)
+	if !eval(`$('monitor-interval-mode').value==='global' && !$('monitor-username').disabled && !state.editingMonitor`) {
+		t.Fatal("new account inherited stale editing state")
+	}
+	eval(`(()=>{$('monitor-username').value='carol';$('monitor-interval-mode').value='custom';$('monitor-interval-mode').dispatchEvent(new Event('change'));$('monitor-interval').value='1';document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
+	wait(`!$('monitor-dialog').open && state.monitors.some(m=>m.username==='carol' && m.interval_seconds===60 && m.interval_override_seconds===60)`)
+
 }

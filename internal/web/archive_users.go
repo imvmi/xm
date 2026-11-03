@@ -27,7 +27,7 @@ func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 	cte, args := archiveUsersCTE(target)
 	rows, err := db.Query(cte+`SELECT u.username,COALESCE(i.user_id,''),COALESCE(i.current_username,u.username),
  m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.last_finished,0),COALESCE(m.show_in_timeline,a.show_in_timeline,1),
- COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0)
+ COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0)
  FROM users u LEFT JOIN target_identities i ON i.target=u.username
  LEFT JOIN monitors m ON m.username=u.username
  LEFT JOIN account_preferences a ON a.target=u.username

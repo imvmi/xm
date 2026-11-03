@@ -204,6 +204,13 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 		a.changeMu.Unlock()
 		return false, nil
 	}
+	if failure := a.identityFailure; failure != nil {
+		if err := a.recordIdentityLookupFailure(failure.collectionErr, failure.cookieGeneration); err != nil {
+			a.changeMu.Unlock()
+			return false, err
+		}
+		a.identityFailure = nil
+	}
 	if recovery != nil {
 		if err := s.recoverAttempt(*recovery); err != nil {
 			a.changeMu.Unlock()

@@ -89,3 +89,5 @@
 .account-card:focus-visible { outline:2px solid var(--green);outline-offset:3px; }
 #account-menu-handle { display:inline-block;margin-top:4px; }
 #account-menu-handle:hover { text-decoration:underline; }
+
+#identity-dialog{max-height:calc(100dvh - 32px);overflow:auto;overflow-wrap:anywhere}#identity-result{margin:16px 0}#identity-form{margin-top:16px}#identity-form .button{margin-top:12px}#identity-dialog .dialog-actions{flex-wrap:wrap}

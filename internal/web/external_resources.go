@@ -409,7 +409,7 @@ func (a *App) externalCancelTask(w http.ResponseWriter, r *http.Request, c apiCr
 			return
 		}
 		// Leave enabled unchanged. The scheduler finishes and persists the cancellation.
-		if _, err = a.store.DB.Exec("UPDATE monitors SET requested=0,next_run=? WHERE username=?", time.Now().Unix()+int64(a.Config().DefaultInterval), j.AccountID); err != nil {
+		if _, err = a.store.DB.Exec("UPDATE monitors SET requested=0,next_run=?+COALESCE(NULLIF(interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1)) WHERE username=?", time.Now().Unix(), j.AccountID); err != nil {
 			problem(w, 500, "停止任务失败")
 			return
 		}

@@ -15,6 +15,7 @@ var userIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 
 // TargetIdentity keeps the archive key stable when the public handle changes.
 type TargetIdentity struct {
+	profileOnly         bool
 	RequestBudget       *RequestBudget                          `json:"-"`
 	UserID              string                                  `json:"user_id"`
 	CurrentUsername     string                                  `json:"current_username"`

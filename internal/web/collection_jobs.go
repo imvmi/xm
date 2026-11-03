@@ -86,6 +86,7 @@ func ensureCollectionModeSchema(db *database.DB) error {
 			{"retry_count", "INT NOT NULL DEFAULT 0"},
 		}},
 		{"monitors", []struct{ name, definition string }{
+			{"interval_override_seconds", "INT NOT NULL DEFAULT 0 CHECK(interval_override_seconds=0 OR interval_override_seconds BETWEEN 60 AND 604800)"},
 			{"show_in_timeline", "BOOLEAN NOT NULL DEFAULT 1"},
 			{"baseline_status", "VARCHAR(32) NOT NULL DEFAULT 'not_started'"},
 			{"posts_baseline_status", "VARCHAR(32) NOT NULL DEFAULT 'not_started'"},
@@ -278,7 +279,7 @@ func cancelMonitorJobs(db *database.DB, target, message string) error {
 // Preserve future plans, including interval changes saved during collection.
 // The caller commits this with completion/cancellation of the due batch slot.
 func scheduleNextMonitorRun(tx *database.Tx, target string, now int64) error {
-	_, err := tx.Exec("UPDATE monitors SET next_run=?+(SELECT default_interval_seconds FROM system_settings WHERE id=1) WHERE username=? AND enabled=1 AND next_run<=?", now, target, now)
+	_, err := tx.Exec("UPDATE monitors SET next_run=?+COALESCE(NULLIF(interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1)) WHERE username=? AND enabled=1 AND next_run<=?", now, target, now)
 	return err
 }
 

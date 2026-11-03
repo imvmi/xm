@@ -41,6 +41,7 @@ async function api(path, method='GET', data, request={}) {
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
   cancelPostReads();
+  if(typeof cancelIdentityRefresh==='function')cancelIdentityRefresh();
   cancelBrowserDiagnostic();
   if(typeof resetStorageCredentialSecrets==='function')resetStorageCredentialSecrets();
   if(typeof resetAPICredentials==='function')resetAPICredentials();
@@ -208,7 +209,7 @@ function renderProfile(){
  const u=state.users.find(u=>u.username===state.target)||{username:state.target,name:state.target,posts:0,media:0};
  $('profile-top-name').textContent=u.name;$('profile-top-count').textContent=userStat(u,'posts')+' 条已归档推文';document.title=u.name+' (@'+handle(u)+') · XM';
  $('profile-header').innerHTML=`<div class="profile-cover" aria-hidden="true"></div><div class="profile-identity"><div class="profile-actions">${avatar(handle(u),'profile-avatar',u.avatar_url)}<div class="profile-meta profile-archive-status">${icon('clock')}<span>${u.stats_pending?'正在读取归档统计…':u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</span></div></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><a href="https://x.com/${encodeURIComponent(handle(u))}" class="user-handle profile-x-link" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(handle(u))}">@${escape(handle(u))}</a>${u.bio?`<p class="profile-bio">${escape(u.bio)}</p>`:''}<div class="profile-numbers"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个已归档媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div></div>`;
- $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${userStat(u,'posts')}</dd></div><div><dt>已归档媒体（含引用）</dt><dd>${userStat(u,'media')}</dd></div><div><dt>统一轮询周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/3600)+' 小时':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
+ $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${userStat(u,'posts')}</dd></div><div><dt>已归档媒体（含引用）</dt><dd>${userStat(u,'media')}</dd></div><div><dt>自动采集周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/60)+' 分钟':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
 }
 const timelineTabs=['posts','replies','media','bookmarks'];
 const homeTimelineTabs=['','bookmarks'];
@@ -526,7 +527,7 @@ $('collection-settings-form').addEventListener('submit',event=>{event.preventDef
   if(interval!==state.settings.default_interval_seconds)input.default_interval_seconds=interval;
   await api('/settings','PUT',input);state.settings=await api('/settings');
   acceptSettingsForm('collection-settings-form',submitted);populateCollectionSettings(state.settings);
-  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'爬虫设置已保存；下次自动采集计划已重新安排。其他设置从下一个任务生效，账号间隔会更新当前等待。':'爬虫设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('爬虫设置已保存');
+  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'爬虫设置已保存；跟随全局的账号已重新安排下次采集。其他设置从下一个任务生效，账号间隔会更新当前等待。':'爬虫设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('爬虫设置已保存');
 });});
 $('archive-display-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const submitted=settingsSnapshot('archive-display-form');
@@ -560,16 +561,23 @@ function updateScrollSpacingHelp(){
   help.textContent=jitter===0?`上一轮页面请求完成后，固定等待 ${interval} 秒再滚动。`:`上一轮页面请求完成后，随机等待 ${interval-jitter}～${interval+jitter} 秒再滚动。`;
 }
 $('scroll-delay').addEventListener('input',updateScrollSpacingHelp);$('scroll-jitter').addEventListener('input',updateScrollSpacingHelp);
+function updateMonitorIntervalField(){
+ const custom=$('monitor-interval-mode').value==='custom';
+ $('monitor-interval-field').hidden=!custom;$('monitor-interval').disabled=!custom;$('monitor-interval').required=custom;
+ $('monitor-interval-help').textContent=custom?'可设置 1～10080 分钟（7 天）；实际执行仍受队列等待、全局暂停和限流冷却影响。':`使用「设置 → 爬虫」中的默认周期，当前为 ${number(state.settings.default_interval_seconds/60)} 分钟。`;
+}
+$('monitor-interval-mode').addEventListener('change',updateMonitorIntervalField);
 async function openMonitor(m=null) {
-  if(!state.settings)state.settings=await api('/settings');state.readding=m?.username||null;
-  $('monitor-dialog-title').textContent=m?'重新添加监控':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
-  $('monitor-replies').checked=!!m?.replies;$('monitor-enabled').checked=true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
+  state.settings=await api('/settings');state.readding=m?.username||null;state.editingMonitor=m?.monitored?m.username:null;
+  $('monitor-dialog-title').textContent=state.editingMonitor?'编辑账号配置':m?'重新添加监控':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
+  $('monitor-interval-mode').value=m?.interval_override_seconds?'custom':'global';$('monitor-interval').value=m?.interval_override_seconds?m.interval_override_seconds/60:15;updateMonitorIntervalField();
+  $('monitor-replies').checked=!!m?.replies;$('monitor-enabled').checked=state.editingMonitor?!!m.enabled:true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
 }
 document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>action(b,()=>openMonitor())));
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
 $('monitor-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
-  const payload={username:state.readding||$('monitor-username').value.trim(),replies:$('monitor-replies').checked,enabled:$('monitor-enabled').checked,show_in_timeline:$('monitor-timeline').checked};
-  await api('/monitors','POST',payload);$('monitor-dialog').close();toast('账号已保存');await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
+  const payload={username:state.readding||$('monitor-username').value.trim(),replies:$('monitor-replies').checked,enabled:$('monitor-enabled').checked,show_in_timeline:$('monitor-timeline').checked,interval_override_seconds:$('monitor-interval-mode').value==='custom'?Math.round(Number($('monitor-interval').value)*60):0};
+  await api(state.editingMonitor?'/monitors/'+encodeURIComponent(state.editingMonitor):'/monitors',state.editingMonitor?'PUT':'POST',payload);$('monitor-dialog').close();toast('账号已保存');await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
 });});
 $('user-list').addEventListener('click',event=>handleAccountAction(event));
 let globalCollectionPending=false;

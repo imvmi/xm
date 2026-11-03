@@ -19,6 +19,7 @@ type Monitor struct {
 	CurrentUsername  string          `json:"current_username"`
 	Username         string          `json:"username"`
 	Interval         int             `json:"interval_seconds"`
+	IntervalOverride int             `json:"interval_override_seconds"`
 	Replies          bool            `json:"replies"`
 	Enabled          bool            `json:"enabled"`
 	ShowInTimeline   bool            `json:"show_in_timeline"`
@@ -105,14 +106,14 @@ CREATE INDEX IF NOT EXISTS target_posts_post ON target_posts(post_id);`)
 	return migrateNotifications(s.DB)
 }
 
-const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE((SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,m.baseline_status,m.posts_baseline_status,m.replies_baseline_status,m.baseline_started,m.baseline_finished,m.baseline_stop_reason,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),''),m.show_in_timeline`
+const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE i.target=m.username),''),COALESCE((SELECT current_username FROM target_identities i WHERE i.target=m.username),m.username),m.username,COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0),m.interval_override_seconds,m.replies,m.enabled,m.requested,m.running,m.next_run,m.last_started,m.last_finished,m.last_success,m.last_error,m.failures,m.last_posts,m.new_posts,(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username),COALESCE((SELECT status FROM runs r WHERE r.target=m.username ORDER BY r.id DESC LIMIT 1),''),m.catchup,m.catchup_post_anchor,m.catchup_reply_anchor,m.catchup_scroll_budget,m.baseline_status,m.posts_baseline_status,m.replies_baseline_status,m.baseline_started,m.baseline_finished,m.baseline_stop_reason,COALESCE((SELECT state FROM collection_progress c WHERE c.target=m.username),''),m.show_in_timeline`
 
 type scanner interface{ Scan(...any) error }
 
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
 	var checkpoint string
-	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint, &m.ShowInTimeline)
+	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.IntervalOverride, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint, &m.ShowInTimeline)
 	if err == nil {
 		m.LastError = displayCollectionMessage(m.LastError)
 	}
@@ -156,6 +157,9 @@ func monitorList(db *database.DB, stats bool) ([]Monitor, error) {
 	return list, r.Err()
 }
 func validateMonitor(m *Monitor) error {
+	if m.IntervalOverride != 0 && (m.IntervalOverride < 60 || m.IntervalOverride > 604800) {
+		return errors.New("账号采集周期须为 60～604800 秒，或设为 0 跟随全局")
+	}
 	u, err := archive.Username(m.Username)
 	if err != nil {
 		return err

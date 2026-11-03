@@ -684,6 +684,26 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			if !relevantResponse(c.meta, target, expectedID, verifiedID, identity.CurrentUsername, identity.ReferencePostID, resolvingPost) {
 				continue
 			}
+			if identity.profileOnly && !resolvingPost && c.meta.operation != "UserByScreenName" && c.meta.operation != "UserByRestId" {
+				// Profile pages also request timelines. Ignore their content
+				// and access errors, but retain upstream global stop signals.
+				if c.meta.status == 429 {
+					return result, rateLimitFailure(c.meta)
+				}
+				if c.meta.status == 401 {
+					return result, fail("auth", "Cookie 登录态失效，请重新导入")
+				}
+				if c.meta.status == 200 {
+					_, e := ParsePage(c.data, c.meta.operation)
+					if e != nil && FailureKind(e) == "rate" {
+						return result, rateLimitFailure(c.meta)
+					}
+					if e != nil && FailureKind(e) == "auth" {
+						return result, e
+					}
+				}
+				continue
+			}
 			if c.err != nil {
 				if FailureKind(c.err) == "timeline" && !isCurrentTimeline {
 					continue
@@ -725,6 +745,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					return result, fail("identity", "归档推文的作者 ID 与绑定身份不符")
 				}
 				resolvingPost = false
+				identity.CurrentUsername = p.Username
 				replyNavigation = replies
 				pending = nil
 				next := "https://x.com/" + p.Username
@@ -778,6 +799,9 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				result.Protected = &protected
 				if err = save(page); err != nil {
 					return result, err
+				}
+				if identity.profileOnly {
+					return result, nil
 				}
 				if expectedID != "" && replies && !replyNavigation {
 					replyNavigation = true
@@ -941,6 +965,9 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			}
 		case <-scrollTimer.C:
 			resetScrollTimer()
+			if identity.profileOnly {
+				continue
+			}
 			// Wait for the previous page action's GraphQL activity to finish.
 			// A protected background request must not be mistaken for the end of
 			// a timeline or spend a scroll either.

@@ -37,9 +37,11 @@ type App struct {
 	configMu           sync.RWMutex
 	config             archive.Config
 	changeMu           sync.Mutex
+	identityFailure    *identityLookupFailure // protected by changeMu
 	auth               *auth
 	scheduler          *Scheduler
 	notifier           *Notifier
+	refreshIdentity    func(context.Context, archive.Config, archive.Cookies, archive.TargetIdentity, []string, string) (archive.Profile, error)
 	checkChrome        func(context.Context, archive.Config, *archive.Cookies) (archive.ChromeInfo, error)
 	cacheLockMu        sync.Mutex
 	cacheLocks         map[string]*cacheEntryLock
@@ -75,7 +77,7 @@ func New(path string, cfg archive.Config, s *archive.Store, secure bool) (*App, 
 	if result, migrationErr := s.MigrateLegacyAvatars(context.Background(), cfg.DataDir); migrationErr != nil || result.Failed > 0 {
 		log.Printf("旧头像兼容处理未全部完成，请检查数据目录权限后重启重试（失败 %d）", result.Failed)
 	}
-	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome, cacheDiskAvailable: availableDiskBytes}
+	a := &App{store: s, configPath: path, config: cfg, auth: auth, checkChrome: archive.CheckChrome, refreshIdentity: archive.RefreshTargetProfile, cacheDiskAvailable: availableDiskBytes}
 	if err = a.recoverRemoteMediaCache(); err != nil {
 		return nil, err
 	}
@@ -284,6 +286,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/monitors/{username}/run", a.runMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/stop", a.stopMonitor)
 	mux.HandleFunc("POST /api/monitors/{username}/reset-progress", a.resetProgress)
+	mux.HandleFunc("POST /api/monitors/{username}/identity", a.updateMonitorIdentity)
 	mux.HandleFunc("GET /api/posts", readTimeout(postReadTimeout, a.posts))
 	mux.HandleFunc("GET /api/posts/{post}", readTimeout(postReadTimeout, a.postDetail))
 	mux.HandleFunc("GET /api/posts/{post}/context", readTimeout(postReadTimeout, a.replyContext))
@@ -680,7 +683,7 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		next := time.Now().Unix() + int64(cfg.DefaultInterval)
-		_, err := tx.Exec("UPDATE monitors SET next_run=? WHERE enabled=1", next)
+		_, err := tx.Exec("UPDATE monitors SET next_run=? WHERE enabled=1 AND interval_override_seconds=0", next)
 		return err
 	}); err != nil {
 		problem(w, 500, "配置与采集计划保存失败，请检查数据库连接与写入权限后重试")
@@ -820,10 +823,11 @@ func (a *App) testChrome(w http.ResponseWriter, r *http.Request) {
 }
 
 type monitorInput struct {
-	Username       string `json:"username"`
-	Replies        bool   `json:"replies"`
-	Enabled        bool   `json:"enabled"`
-	ShowInTimeline *bool  `json:"show_in_timeline"`
+	IntervalOverride *int   `json:"interval_override_seconds"`
+	Username         string `json:"username"`
+	Replies          bool   `json:"replies"`
+	Enabled          bool   `json:"enabled"`
+	ShowInTimeline   *bool  `json:"show_in_timeline"`
 }
 
 func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
@@ -832,6 +836,9 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := Monitor{Username: input.Username, Replies: input.Replies, Enabled: input.Enabled}
+	if input.IntervalOverride != nil {
+		m.IntervalOverride = *input.IntervalOverride
+	}
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
@@ -870,7 +877,7 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	if input.ShowInTimeline != nil {
 		showInTimeline = *input.ShowInTimeline
 	}
-	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run,replies_baseline_status,show_in_timeline) VALUES(?,?,?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix(), repliesBaseline, showInTimeline)
+	_, err := a.store.DB.Exec("INSERT INTO monitors(username,replies,enabled,next_run,replies_baseline_status,show_in_timeline,interval_override_seconds) VALUES(?,?,?,?,?,?,?)", m.Username, m.Replies, m.Enabled, time.Now().Unix(), repliesBaseline, showInTimeline, m.IntervalOverride)
 	if err != nil {
 		problem(w, 409, "添加失败，此账号可能已经在监控列表中")
 		return
@@ -884,6 +891,9 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := Monitor{Username: r.PathValue("username"), Replies: input.Replies, Enabled: input.Enabled}
+	if input.IntervalOverride != nil {
+		m.IntervalOverride = *input.IntervalOverride
+	}
 	if err := validateMonitor(&m); err != nil {
 		problem(w, 400, err.Error())
 		return
@@ -897,7 +907,8 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var oldReplies, oldEnabled bool
-	if err = tx.QueryRow("SELECT replies,enabled FROM monitors WHERE username=?", m.Username).Scan(&oldReplies, &oldEnabled); err != nil {
+	var oldInterval int
+	if err = tx.QueryRow("SELECT replies,enabled,interval_override_seconds FROM monitors WHERE username=?", m.Username).Scan(&oldReplies, &oldEnabled, &oldInterval); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, 404, "监控账号不存在")
 		} else {
@@ -907,6 +918,14 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	pausing := oldEnabled && !m.Enabled
 	_, err = tx.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN 0 ELSE requested END,show_in_timeline=COALESCE(?,show_in_timeline) WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, pausing, input.ShowInTimeline, m.Username)
+	if err == nil && input.IntervalOverride != nil && oldInterval != m.IntervalOverride {
+		_, err = tx.Exec("UPDATE monitors SET interval_override_seconds=? WHERE username=?", m.IntervalOverride, m.Username)
+		if err == nil && oldEnabled && m.Enabled {
+			// Preserve a new account's first run; otherwise apply a changed cycle
+			// immediately, without disturbing queued or currently running jobs.
+			_, err = tx.Exec("UPDATE monitors SET next_run=?+COALESCE(NULLIF(interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1)) WHERE username=? AND last_finished>0", time.Now().Unix(), m.Username)
+		}
+	}
 	if err == nil && oldReplies != m.Replies {
 		err = resetMonitorBaseline(tx, m.Username)
 		if err == nil {
