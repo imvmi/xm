@@ -279,6 +279,13 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 				return err
 			}
 			added += int(n)
+			if n > 0 {
+				// Commit notification work with the archive page. A crash before
+				// outbox creation must not lose a newly archived post.
+				if _, err = tx.InsertIgnore("INSERT INTO notification_pending(target,post_id) VALUES(?,?)", "target", target, p.ID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if page.Progress != nil {

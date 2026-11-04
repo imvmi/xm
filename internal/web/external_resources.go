@@ -57,23 +57,25 @@ func apiAccountFilter(c apiCredential, column string) (string, []any) {
 }
 
 type externalAccountView struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
-	UserID      string `json:"user_id"`
-	Monitored   bool   `json:"monitored"`
-	Enabled     bool   `json:"enabled"`
-	Replies     bool   `json:"include_replies"`
-	Baseline    string `json:"baseline_status"`
-	Running     bool   `json:"running"`
-	Queued      bool   `json:"queued"`
-	NextRun     int64  `json:"next_run"`
-	LastSuccess int64  `json:"last_success"`
+	Interval         int    `json:"interval_seconds"`
+	IntervalOverride int    `json:"interval_override_seconds"`
+	ID               string `json:"id"`
+	Username         string `json:"username"`
+	UserID           string `json:"user_id"`
+	Monitored        bool   `json:"monitored"`
+	Enabled          bool   `json:"enabled"`
+	Replies          bool   `json:"include_replies"`
+	Baseline         string `json:"baseline_status"`
+	Running          bool   `json:"running"`
+	Queued           bool   `json:"queued"`
+	NextRun          int64  `json:"next_run"`
+	LastSuccess      int64  `json:"last_success"`
 }
 
 func (a *App) externalAccountRows(ctx context.Context, c apiCredential, target, cursor string, limit int) ([]externalAccountView, error) {
 	filter, args := apiAccountFilter(c, "u.username")
 	query := `WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
- SELECT u.username,COALESCE(i.current_username,u.username),COALESCE(i.user_id,''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.replies,0),COALESCE(m.baseline_status,'not_started'),COALESCE(m.running,0),EXISTS(SELECT 1 FROM collection_jobs j WHERE j.target=u.username AND j.finished_at=0 AND j.status<>'running'),COALESCE(m.next_run,0),COALESCE(m.last_success,0)
+ SELECT u.username,COALESCE(i.current_username,u.username),COALESCE(i.user_id,''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.replies,0),COALESCE(m.baseline_status,'not_started'),COALESCE(m.running,0),EXISTS(SELECT 1 FROM collection_jobs j WHERE j.target=u.username AND j.finished_at=0 AND j.status<>'running'),COALESCE(m.next_run,0),COALESCE(m.last_success,0),COALESCE(m.interval_override_seconds,0),CASE WHEN m.username IS NULL THEN 0 ELSE COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0) END
  FROM users u LEFT JOIN target_identities i ON i.target=u.username LEFT JOIN monitors m ON m.username=u.username WHERE ` + filter
 	if target != "" {
 		query += " AND u.username=?"
@@ -93,7 +95,7 @@ func (a *App) externalAccountRows(ctx context.Context, c apiCredential, target, 
 	items := []externalAccountView{}
 	for rows.Next() {
 		var v externalAccountView
-		if err = rows.Scan(&v.ID, &v.Username, &v.UserID, &v.Monitored, &v.Enabled, &v.Replies, &v.Baseline, &v.Running, &v.Queued, &v.NextRun, &v.LastSuccess); err != nil {
+		if err = rows.Scan(&v.ID, &v.Username, &v.UserID, &v.Monitored, &v.Enabled, &v.Replies, &v.Baseline, &v.Running, &v.Queued, &v.NextRun, &v.LastSuccess, &v.IntervalOverride, &v.Interval); err != nil {
 			return nil, err
 		}
 		items = append(items, v)
@@ -148,9 +150,10 @@ func copyAPIResult(w http.ResponseWriter, b *apiBuffer) {
 }
 func (a *App) externalCreateAccount(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	var in struct {
-		Username string `json:"username"`
-		Enabled  bool   `json:"enabled"`
-		Replies  bool   `json:"include_replies"`
+		IntervalOverride *int   `json:"interval_override_seconds"`
+		Username         string `json:"username"`
+		Enabled          bool   `json:"enabled"`
+		Replies          bool   `json:"include_replies"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -165,40 +168,35 @@ func (a *App) externalCreateAccount(w http.ResponseWriter, r *http.Request, c ap
 		return
 	}
 	b := newAPIBuffer()
-	a.addMonitor(b, apiJSONRequest(r, monitorInput{Username: target, Enabled: in.Enabled, Replies: in.Replies}))
+	a.addMonitor(b, apiJSONRequest(r, monitorInput{Username: target, Enabled: in.Enabled, Replies: in.Replies, IntervalOverride: in.IntervalOverride}))
 	if b.status >= 400 {
 		copyAPIResult(w, b)
 		return
 	}
-	respond(w, 201, map[string]any{"id": target, "username": in.Username, "enabled": in.Enabled, "include_replies": in.Replies})
+	override, interval := 0, a.Config().DefaultInterval
+	if in.IntervalOverride != nil {
+		override = *in.IntervalOverride
+		if override > 0 {
+			interval = override
+		}
+	}
+	respond(w, 201, map[string]any{"id": target, "username": in.Username, "enabled": in.Enabled, "include_replies": in.Replies, "interval_seconds": interval, "interval_override_seconds": override})
 }
 func (a *App) externalEditAccount(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	var in struct {
-		Enabled *bool `json:"enabled"`
-		Replies *bool `json:"include_replies"`
+		IntervalOverride *int  `json:"interval_override_seconds"`
+		Enabled          *bool `json:"enabled"`
+		Replies          *bool `json:"include_replies"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.Enabled == nil && in.Replies == nil {
-		problem(w, 400, "请提供 enabled 或 include_replies")
+	if in.Enabled == nil && in.Replies == nil && in.IntervalOverride == nil {
+		problem(w, 400, "请提供 enabled、include_replies 或 interval_override_seconds")
 		return
 	}
-	target := r.PathValue("account")
-	var enabled, replies bool
-	if err := a.store.DB.QueryRow("SELECT enabled,replies FROM monitors WHERE username=?", target).Scan(&enabled, &replies); err != nil {
-		problem(w, 404, "监控账号不存在")
-		return
-	}
-	if in.Enabled != nil {
-		enabled = *in.Enabled
-	}
-	if in.Replies != nil {
-		replies = *in.Replies
-	}
-	request := apiJSONRequest(r, monitorInput{Username: target, Enabled: enabled, Replies: replies})
-	request.SetPathValue("username", target)
-	a.editMonitor(w, request)
+	r.SetPathValue("username", r.PathValue("account"))
+	a.updateMonitor(w, r, monitorUpdate{Enabled: in.Enabled, Replies: in.Replies, IntervalOverride: in.IntervalOverride})
 }
 func (a *App) externalDeleteAccount(w http.ResponseWriter, r *http.Request, c apiCredential) {
 	r.SetPathValue("username", r.PathValue("account"))

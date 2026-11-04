@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,14 +75,85 @@ func (a *App) prepareNotifications(m Monitor) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n > 0 {
 		if _, err = tx.InsertIgnore("INSERT INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", "post_id", m.Username); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("DELETE FROM notification_pending WHERE target=?", m.Username); err != nil {
+			return err
+		}
+	}
+	// Older installations have a seen set but no pending queue. Reconcile it
+	// once per account; persist the marker with the queue so an interrupted
+	// upgrade can retry without missing posts or repeating notifications.
+	key := "notification_pending_ready:" + m.Username
+	var initialized string
+	err = tx.QueryRow("SELECT value FROM web_state WHERE `key`=?", key).Scan(&initialized)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if initialized != "1" {
+		if n == 0 {
+			if _, err = tx.InsertIgnore(`INSERT INTO notification_pending(target,post_id) SELECT target,post_id FROM target_posts t WHERE target=? AND NOT EXISTS(SELECT 1 FROM notification_seen s WHERE s.target=t.target AND s.post_id=t.post_id)`, "target", m.Username); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.Exec(database.Upsert(tx.Dialect, "INSERT INTO web_state VALUES(?,?)", []string{"key"}, []string{"value"}), key, "1"); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
+
+// Consume only the observed queue entries. A concurrent archive write may add
+// another entry before commit; deleting by these IDs leaves that work intact.
+func consumePendingNotifications(tx *database.Tx, target string) (int, error) {
+	rows, err := tx.Query("SELECT post_id FROM notification_pending WHERE target=? ORDER BY post_id", target)
+	if err != nil {
+		return 0, err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := []any{target}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		where := "target=? AND post_id IN (" + strings.TrimRight(strings.Repeat("?,", len(chunk)), ",") + ")"
+		res, err := tx.InsertIgnore("INSERT INTO notification_seen(target,post_id) SELECT target,post_id FROM notification_pending WHERE "+where, "target", args...)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		count += int(n)
+		if _, err = tx.Exec("DELETE FROM notification_pending WHERE "+where, args...); err != nil {
+			return 0, err
+		}
+	}
+	return count, nil
+}
+
 func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancelled bool, kind string, failures int) error {
 	tx, err := a.store.DB.Begin()
 	if err != nil {
@@ -94,20 +166,18 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		return eName
 	}
 
-	var ready, count int
+	var ready int
 	if err = tx.QueryRow("SELECT ready FROM notification_targets WHERE target=?", m.Username).Scan(&ready); err != nil {
 		return err
 	}
-	if err = tx.QueryRow(`SELECT COUNT(*) FROM target_posts t WHERE target=? AND NOT EXISTS(SELECT 1 FROM notification_seen s WHERE s.target=t.target AND s.post_id=t.post_id)`, m.Username).Scan(&count); err != nil {
+	count, err := consumePendingNotifications(tx, m.Username)
+	if err != nil {
 		return err
 	}
 	if ready != 0 && count > 0 {
 		if err = enqueueNotification(tx, cfg.NotificationChannels, NotificationEvent{Type: "new_posts", Target: displayName, Title: "XM · @" + displayName + " 有新动态", Message: fmt.Sprintf("本轮新增归档 %d 条动态，请登录 XM 查看正文和媒体。", count), Count: count}); err != nil {
 			return err
 		}
-	}
-	if _, err = tx.InsertIgnore("INSERT INTO notification_seen SELECT target,post_id FROM target_posts WHERE target=?", "post_id", m.Username); err != nil {
-		return err
 	}
 	var current string
 	if e := tx.QueryRow("SELECT current_username FROM target_identities WHERE target=?", m.Username).Scan(&current); e == nil && current != "" {

@@ -23,6 +23,82 @@ func cacheRequest(method, body string) *http.Request {
 	return r
 }
 
+func waitForCacheRefs(t *testing.T, a *App, path string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		a.cacheLockMu.Lock()
+		entry := a.cacheLocks[path]
+		ready := entry != nil && entry.refs == want
+		a.cacheLockMu.Unlock()
+		if ready {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("request did not wait on the existing fill")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRemoteCacheWaitCancellation(t *testing.T) {
+	a := testApp(t)
+	path := remoteMediaCachePath(a.Config().DataDir, "remote", "media/test.jpg", "", ".jpg", 10)
+	unlock, err := a.lockCacheEntry(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	for _, alreadyCancelled := range []bool{true, false} {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if alreadyCancelled {
+			cancel()
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := a.ensureRemoteMediaCached(ctx, "remote", "media/test.jpg", 10, "", ".jpg", 1024)
+			done <- err
+		}()
+		if !alreadyCancelled {
+			waitForCacheRefs(t, a, path, 2)
+			cancel()
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("cancelled waiter did not return cancellation", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("cancelled request remained blocked behind cache fill")
+		}
+		cancel()
+		a.cacheLockMu.Lock()
+		refs := a.cacheLocks[path].refs
+		a.cacheLockMu.Unlock()
+		if refs != 1 {
+			t.Fatal("cancelled waiter leaked a reference", refs)
+		}
+	}
+	unlock()
+	unlock = nil
+	a.cacheLockMu.Lock()
+	entries := len(a.cacheLocks)
+	a.cacheLockMu.Unlock()
+	if entries != 0 {
+		t.Fatal("idle cache entry retained", entries)
+	}
+	// Cancellation must not strand the entry for later requests.
+	unlock, err = a.lockCacheEntry(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemoteCacheReservesSpaceAndSerializesFills(t *testing.T) {
 	a := testApp(t)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -102,10 +178,22 @@ func TestRemoteCacheReservesSpaceAndSerializesFills(t *testing.T) {
 	if !a.remoteMediaCacheSettings().Enabled {
 		t.Fatal("busy update persisted")
 	}
+	// A live waiter for the same image reuses the first fill without a second
+	// download, even though unrelated images fall back to streaming.
+	waiter := make(chan outcome, 1)
+	go func() {
+		path, err := a.ensureRemoteMediaCached(ctx, p.ID, "one.jpg", 8, hex.EncodeToString(sum[:]), ".jpg", 10)
+		waiter <- outcome{path, err}
+	}()
+	waitForCacheRefs(t, a, remoteMediaCachePath(cfg.DataDir, p.ID, "one.jpg", hex.EncodeToString(sum[:]), ".jpg", 8), 2)
 	close(release)
 	result := <-done
 	if result.err != nil {
 		t.Fatal(result.err)
+	}
+	shared := <-waiter
+	if shared.err != nil || shared.path != result.path || gets.Load() != 1 {
+		t.Fatal("waiter did not reuse completed fill", shared, gets.Load())
 	}
 	if b, err := os.ReadFile(result.path); err != nil || string(b) != "12345678" {
 		t.Fatal(string(b), err)

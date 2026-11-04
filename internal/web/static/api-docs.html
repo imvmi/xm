@@ -12,8 +12,12 @@
   -H 'Authorization: Bearer YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: create-example-001' \
-  -d '{"username":"example","enabled":false,"include_replies":false}'</code></pre>
-<p><code>enabled</code> 控制自动采集，默认 false。启用后遵守系统统一采集计划。<code>include_replies</code> 默认 false，修改后会更新历史基线。PATCH 未提供的字段保持不变；暂停自动采集会取消该账号排队任务并请求停止当前采集。</p><p><code>DELETE /accounts/{account}/monitor</code> 取消监控，保留推文与媒体；正在采集时返回 409，应先停止任务。取消监控后仍可读取已归档内容。</p></section>
+  -d '{"username":"example","enabled":false,"include_replies":false,"interval_override_seconds":300}'</code></pre>
+<pre><code>curl -X PATCH 'https://xm.example.com/api/v1/accounts/example' \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"interval_override_seconds":0}'</code></pre>
+<p><code>enabled</code> 控制自动采集，默认 false。启用后按账号采集周期运行。<code>include_replies</code> 默认 false，修改后会更新历史基线。<code>interval_override_seconds</code> 可在 POST / PATCH 中设置：0 表示跟随全局，或填写 60～604800 秒（如 300 表示每 5 分钟）。创建时省略为 0；PATCH 省略保持不变，传 0 恢复全局周期。账号列表、详情和创建响应返回该字段及实际生效的 <code>interval_seconds</code>；未监控的归档账号两者均为 0。PATCH 未提供的字段保持不变；暂停自动采集会取消该账号排队任务并请求停止当前采集。</p><p><code>DELETE /accounts/{account}/monitor</code> 取消监控，保留推文与媒体；正在采集时返回 409，应先停止任务。取消监控后仍可读取已归档内容。</p></section>
 <section id="tasks"><h2>任务模式与状态</h2><div class="table-wrap"><table><thead><tr><th>mode</th><th>行为</th></tr></thead><tbody><tr><td>incremental</td><td>默认模式，检查新增内容；基线未完成时实际执行 backfill。</td></tr><tr><td>backfill</td><td>沿已有进度继续补采可访问的历史内容。</td></tr><tr><td>rescan</td><td>重置采集进度，重新建立历史基线；保留已有归档并去重。</td></tr></tbody></table></div>
 <pre><code>curl -X POST 'https://xm.example.com/api/v1/accounts/example/tasks' \
   -H 'Authorization: Bearer YOUR_API_KEY' \

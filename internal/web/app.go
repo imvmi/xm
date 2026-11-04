@@ -890,7 +890,18 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	m := Monitor{Username: r.PathValue("username"), Replies: input.Replies, Enabled: input.Enabled}
+	a.updateMonitor(w, r, monitorUpdate{Enabled: &input.Enabled, Replies: &input.Replies, IntervalOverride: input.IntervalOverride, ShowInTimeline: input.ShowInTimeline})
+}
+
+type monitorUpdate struct {
+	Enabled, Replies, ShowInTimeline *bool
+	IntervalOverride                 *int
+}
+
+// Merge omitted fields with current values inside the same lock and transaction
+// used by UI edits, so a partial API update cannot undo a concurrent change.
+func (a *App) updateMonitor(w http.ResponseWriter, r *http.Request, input monitorUpdate) {
+	m := Monitor{Username: r.PathValue("username")}
 	if input.IntervalOverride != nil {
 		m.IntervalOverride = *input.IntervalOverride
 	}
@@ -915,6 +926,13 @@ func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, "读取监控配置失败")
 		}
 		return
+	}
+	m.Enabled, m.Replies = oldEnabled, oldReplies
+	if input.Enabled != nil {
+		m.Enabled = *input.Enabled
+	}
+	if input.Replies != nil {
+		m.Replies = *input.Replies
 	}
 	pausing := oldEnabled && !m.Enabled
 	_, err = tx.Exec(`UPDATE monitors SET replies=?,next_run=CASE WHEN enabled=0 AND ? THEN ? ELSE next_run END,enabled=?,requested=CASE WHEN ? THEN 0 ELSE requested END,show_in_timeline=COALESCE(?,show_in_timeline) WHERE username=?`, m.Replies, m.Enabled, time.Now().Unix(), m.Enabled, pausing, input.ShowInTimeline, m.Username)

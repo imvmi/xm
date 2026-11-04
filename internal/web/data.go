@@ -110,6 +110,9 @@ const monitorColumns = `COALESCE((SELECT user_id FROM target_identities i WHERE 
 
 type scanner interface{ Scan(...any) error }
 
+// Scheduling and runtime polling do not need a full archive count.
+var monitorRuntimeColumns = strings.Replace(monitorColumns, "(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)", "-1", 1)
+
 func scanMonitor(row scanner) (Monitor, error) {
 	var m Monitor
 	var checkpoint string
@@ -139,7 +142,7 @@ func monitorList(db *database.DB, stats bool) ([]Monitor, error) {
 	columns := monitorColumns
 	if !stats {
 		// Runtime polling must not count an account's full archive every six seconds.
-		columns = strings.Replace(columns, "(SELECT COUNT(*) FROM target_posts t WHERE t.target=m.username)", "-1", 1)
+		columns = monitorRuntimeColumns
 	}
 	r, err := db.Query("SELECT " + columns + " FROM monitors m ORDER BY m.username")
 	if err != nil {

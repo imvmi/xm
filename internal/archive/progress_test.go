@@ -67,6 +67,10 @@ func TestCollectionPageCommitsPostsCursorAndCounters(t *testing.T) {
 	if err = s.DB.QueryRow("SELECT new_posts,posts_read FROM run_metrics WHERE run_id=?", id).Scan(&added, &read); err != nil || added != 1 || read != 2 {
 		t.Fatal("metrics advanced after failed save", added, read, err)
 	}
+	var pending int
+	if err = s.DB.QueryRow("SELECT COUNT(*) FROM notification_pending WHERE target='alice'").Scan(&pending); err != nil || pending != 1 {
+		t.Fatal("pending notifications lost, duplicated or committed after failed save", pending, err)
+	}
 }
 
 func TestParsePaginationCursor(t *testing.T) {

@@ -279,7 +279,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 			}
 		}
 	}
-	rows, err := a.store.DB.Query("SELECT "+monitorColumns+" FROM monitors m WHERE m.running=0 AND ("+condition+") ORDER BY m.last_started,m.requested DESC,m.username", jobArgs...)
+	rows, err := a.store.DB.Query("SELECT "+monitorRuntimeColumns+" FROM monitors m WHERE m.running=0 AND ("+condition+") ORDER BY m.last_started,m.requested DESC,m.username", jobArgs...)
 	if err != nil {
 		a.changeMu.Unlock()
 		return false, err
@@ -406,7 +406,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 			interrupted = true
 			continue
 		}
-		m, loadErr := scanMonitor(a.store.DB.QueryRow("SELECT "+monitorColumns+" FROM monitors m WHERE m.username=?", queued.Username))
+		m, loadErr := scanMonitor(a.store.DB.QueryRow("SELECT "+monitorRuntimeColumns+" FROM monitors m WHERE m.username=?", queued.Username))
 		if errors.Is(loadErr, sql.ErrNoRows) || loadErr == nil && (!m.Enabled && !m.Requested && queueJob.Source != "manual" && queueJob.Source != "api") {
 			if jobErr = cancelMonitorJobs(a.store.DB, queued.Username, "监控已暂停或移除"); jobErr != nil {
 				a.changeMu.Unlock()
@@ -612,7 +612,7 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 	return len(processed) > 0, nil
 }
 
-func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, jobID int64, mode string, collect collector) (string, int64, error) {
+func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, jobID int64, mode string, collect collector) (resultKind string, resultRunID int64, resultErr error) {
 	defer s.app.invalidateStats()
 	a := s.app
 	// Browser lifetime is also the task budget for collection, avatars and media together.
@@ -793,6 +793,14 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	if failure != nil {
 		failures = m.Failures + 1
 	}
+	// Preserve upstream stop conditions through every completion read/write
+	// failure. Recovery must restore those gates before admitting another task.
+	completionSaved := false
+	defer func() {
+		if resultErr != nil && !completionSaved {
+			resultErr = &completionStateError{err: resultErr, collectionErr: collectErr, cookieGeneration: cookieGeneration, message: message}
+		}
+	}()
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	var currentReplies bool
@@ -816,7 +824,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	}
 	gates, err := loadSchedulerState(a.store.DB)
 	if err != nil {
-		return "", id, &completionStateError{err: err, collectionErr: collectErr, cookieGeneration: cookieGeneration, message: message}
+		return "", id, err
 	}
 	if collectErr == nil && jobCtx.Err() == nil && gates.CookieGeneration == cookieGeneration {
 		if err = setState(a.store.DB, "cookie_api_attempted", ""); err != nil {
@@ -839,8 +847,6 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		latest := a.Config()
 		rateUntil, rateFailures = rateLimitDeadline(ended, latest.DefaultInterval, previous, collectErr, latest.RateLimitMode)
 	}
-	var count int
-	_ = a.store.DB.QueryRow("SELECT COUNT(*) FROM target_posts WHERE target=?", m.Username).Scan(&count)
 	lastError := ""
 	if failure != nil {
 		lastError = message
@@ -860,6 +866,10 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		return "", id, err
 	}
 	defer tx.Rollback()
+	var newPosts int
+	if err = tx.QueryRow("SELECT new_posts FROM run_metrics WHERE run_id=?", id).Scan(&newPosts); err != nil {
+		return "", id, err
+	}
 	if scopeChanged || (complete || refreshHead) && jobCtx.Err() == nil {
 		if _, err = tx.Exec("DELETE FROM collection_progress WHERE target=?", m.Username); err != nil {
 			return "", id, err
@@ -890,7 +900,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		return "", id, err
 	}
 	archiveComplete := complete && failure == nil && remainingMedia == 0 && jobCtx.Err() == nil
-	_, err = tx.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=?,catchup=?,catchup_post_anchor=?,catchup_reply_anchor=?,catchup_scroll_budget=?,baseline_status=?,posts_baseline_status=?,replies_baseline_status=?,baseline_finished=?,baseline_stop_reason=? WHERE username=?`, ended, archiveComplete, ended, lastError, failures, result.Posts, max(count-m.Posts, 0), catchup, postAnchor, replyAnchor, catchupScrolls, baselineStatus, postsBaseline, repliesBaseline, baselineFinished, baselineStop, m.Username)
+	_, err = tx.Exec(`UPDATE monitors SET running=0,last_finished=?,last_success=CASE WHEN ? THEN ? ELSE last_success END,last_error=?,failures=?,last_posts=?,new_posts=?,catchup=?,catchup_post_anchor=?,catchup_reply_anchor=?,catchup_scroll_budget=?,baseline_status=?,posts_baseline_status=?,replies_baseline_status=?,baseline_finished=?,baseline_stop_reason=? WHERE username=?`, ended, archiveComplete, ended, lastError, failures, result.Posts, newPosts, catchup, postAnchor, replyAnchor, catchupScrolls, baselineStatus, postsBaseline, repliesBaseline, baselineFinished, baselineStop, m.Username)
 
 	if err != nil {
 		return "", id, err
@@ -898,6 +908,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	if err = tx.Commit(); err != nil {
 		return "", id, err
 	}
+	completionSaved = true
 	if rateUntil > 0 {
 		log.Printf("collection rate limit target=%s failures=%d retry_at=%s detail=%s", m.Username, rateFailures, time.Unix(rateUntil, 0).UTC().Format(time.RFC3339), message)
 	}

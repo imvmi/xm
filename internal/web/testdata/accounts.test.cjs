@@ -10,8 +10,8 @@ function fixture(ready=true){
   {username:'alice',current_username:'alice_new',name:'Alice Name',monitored:true,posts:12,media:4,stats_pending:false},
   {username:'bob',name:'Bob',monitored:false,show_in_timeline:false,posts:5,media:2,stats_pending:false}
  ],monitors:[
-  {username:'alice',current_username:'alice_new',enabled:true,show_in_timeline:true,posts:-1,last_finished:100},
-  {username:'newbie',enabled:false,posts:-1,last_error:'failed',last_finished:200}
+  {username:'alice',current_username:'alice_new',enabled:true,show_in_timeline:true,interval_seconds:3600,interval_override_seconds:0,posts:-1,last_finished:100},
+  {username:'newbie',enabled:false,interval_seconds:300,interval_override_seconds:300,posts:-1,last_error:'failed',last_finished:200}
  ]};
  const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const ctx=vm.createContext({state,monitorListReady:ready,document:{addEventListener(){}},window:{addEventListener(){}},$:id=>controls[id],handle:u=>u.current_username||u.username,visibleInTimeline:u=>u.show_in_timeline!==false,escape,number:String,date:String,avatar:()=>'',icon:()=>'',userURL:name=>'#user/'+name,userStat:(u,k)=>u[k]||0,monitorStatus:()=>['已暂停','neutral'],baselineHTML:()=>'<p>历史基线</p>',checkpointHTML:()=>'<p>断点</p>',monitorNextStep:()=>'',collectionActions:()=>'<button data-op="run">动态更新</button>'});
@@ -70,7 +70,9 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.match(menu,/采集详情/);
  assert.match(menu,/error &lt;img&gt;/);
  assert.match(menu,/role="switch" aria-checked="false"[^>]*data-op="replies"/);
- assert.doesNotMatch(menu,/data-op="edit"|data-op="toggle"|data-op="delete"|查看归档|取消监控/);
+ assert.match(menu,/data-monitor="alice" data-op="edit">编辑账号配置/);
+ assert.match(menu,/data-monitor="alice" data-op="identity">更新账号身份/);
+ assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|取消监控|NaN/);
 });
 test('archive-only and unresolved runtime accounts cannot toggle collection',()=>{
  const f=fixture();

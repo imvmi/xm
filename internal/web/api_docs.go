@@ -99,7 +99,7 @@ func externalOpenAPI() map[string]any {
 			responseSchema = apiRef("Account")
 		case "POST /api/v1/accounts":
 			success = "201"
-			responseSchema = map[string]any{"type": "object", "properties": map[string]any{"id": map[string]string{"type": "string"}, "username": map[string]string{"type": "string"}, "enabled": map[string]string{"type": "boolean"}, "include_replies": map[string]string{"type": "boolean"}}}
+			responseSchema = map[string]any{"type": "object", "properties": map[string]any{"id": map[string]string{"type": "string"}, "username": map[string]string{"type": "string"}, "enabled": map[string]string{"type": "boolean"}, "include_replies": map[string]string{"type": "boolean"}, "interval_seconds": map[string]string{"type": "integer"}, "interval_override_seconds": map[string]string{"type": "integer"}}}
 		case "GET /api/v1/tasks":
 			responseSchema = apiPageSchema("Task")
 		case "GET /api/v1/tasks/{task}":
@@ -140,14 +140,15 @@ func externalOpenAPI() map[string]any {
 		switch route.Pattern {
 		case "POST /api/v1/accounts", "PATCH /api/v1/accounts/{account}":
 			props := map[string]any{"enabled": map[string]string{"type": "boolean"}, "include_replies": map[string]string{"type": "boolean"}}
+			props["interval_override_seconds"] = map[string]any{"description": "0 跟随全局，或设置 60～604800 秒；创建时省略为 0，PATCH 省略保持不变。", "oneOf": []any{map[string]any{"type": "integer", "enum": []int{0}}, map[string]any{"type": "integer", "minimum": 60, "maximum": 604800}}}
 			body = map[string]any{"type": "object", "additionalProperties": false, "properties": props}
 			if method == "POST" {
 				props["username"] = map[string]string{"type": "string"}
 				body["required"] = []string{"username"}
-				example = map[string]any{"username": "example", "enabled": false, "include_replies": false}
+				example = map[string]any{"username": "example", "enabled": false, "include_replies": false, "interval_override_seconds": 300}
 			} else {
 				body["minProperties"] = 1
-				example = map[string]any{"enabled": true}
+				example = map[string]any{"interval_override_seconds": 300}
 			}
 		case "POST /api/v1/accounts/{account}/tasks":
 			body = map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"mode": map[string]any{"type": "string", "enum": []string{"incremental", "backfill", "rescan"}, "default": "incremental"}}}

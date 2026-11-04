@@ -13,7 +13,7 @@ type apiScopeDefinition struct {
 var apiScopeDefinitions = []apiScopeDefinition{
 	{"accounts:read", "读取账号", "账号", "查询授权账号列表和详情"},
 	{"accounts:create", "添加账号", "账号", "添加监控账号，并指定初始采集设置"},
-	{"accounts:update", "修改账号", "账号", "修改已有账号的自动采集和包含回复设置"},
+	{"accounts:update", "修改账号", "账号", "修改已有账号的自动采集、包含回复和独立采集周期"},
 	{"accounts:delete", "取消监控", "账号", "取消监控并保留归档"},
 	{"tasks:read", "读取任务", "采集任务", "查询本凭据提交的任务列表和进度"},
 	{"tasks:submit:incremental", "增量采集", "采集任务", "提交增量任务；首次采集仍会建立历史基线"},

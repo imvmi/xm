@@ -103,13 +103,16 @@ func (a *App) openAvatar(r *http.Request, id string) (*os.File, error) {
 	if a.maintenance.Load() {
 		return legacy()
 	}
-	unlock := a.lockCacheEntry(filepath.Join(cacheDir, id))
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	unlock, err := a.lockCacheEntry(ctx, filepath.Join(cacheDir, id))
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	if f, err := openAvatarFile(cacheDir, id); err == nil {
 		return f, nil
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
 	if err := a.scheduler.avatar(ctx, cfg, archive.Profile{ID: id, AvatarURL: source}); err != nil {
 		return legacy()
 	}

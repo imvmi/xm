@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"xm/internal/archive"
@@ -35,7 +34,7 @@ type remoteMediaCacheSettings struct {
 }
 
 type cacheEntryLock struct {
-	mu   sync.Mutex
+	held chan struct{}
 	refs int
 }
 
@@ -114,21 +113,22 @@ func validRemoteMediaCache(path string, size int64) bool {
 	return true
 }
 
-func (a *App) lockCacheEntry(path string) func() {
+func (a *App) lockCacheEntry(ctx context.Context, path string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.cacheLockMu.Lock()
 	if a.cacheLocks == nil {
 		a.cacheLocks = map[string]*cacheEntryLock{}
 	}
 	entry := a.cacheLocks[path]
 	if entry == nil {
-		entry = &cacheEntryLock{}
+		entry = &cacheEntryLock{held: make(chan struct{}, 1)}
 		a.cacheLocks[path] = entry
 	}
 	entry.refs++
 	a.cacheLockMu.Unlock()
-	entry.mu.Lock()
-	return func() {
-		entry.mu.Unlock()
+	releaseRef := func() {
 		a.cacheLockMu.Lock()
 		entry.refs--
 		if entry.refs == 0 {
@@ -136,21 +136,39 @@ func (a *App) lockCacheEntry(path string) func() {
 		}
 		a.cacheLockMu.Unlock()
 	}
+	select {
+	case entry.held <- struct{}{}:
+		unlock := func() { <-entry.held; releaseRef() }
+		if err := ctx.Err(); err != nil {
+			unlock()
+			return nil, err
+		}
+		return unlock, nil
+	case <-ctx.Done():
+		releaseRef()
+		return nil, ctx.Err()
+	}
 }
 
 func (a *App) ensureRemoteMediaCached(ctx context.Context, id, key string, size int64, expectedHash, ext string, maxBytes int64) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	path := remoteMediaCachePath(a.Config().DataDir, id, key, expectedHash, ext, size)
 	if validRemoteMediaCache(path, size) {
 		return path, nil
 	}
-	unlock := a.lockCacheEntry(path)
+	unlock, err := a.lockCacheEntry(ctx, path)
+	if err != nil {
+		return "", err
+	}
 	defer unlock()
 	if validRemoteMediaCache(path, size) {
 		return path, nil
 	}
 
-	// Only one cache fill is admitted at a time. Other media requests fall back
-	// to streaming immediately, rather than queueing whole files on disk.
+	// Only one cache fill is admitted at a time. Requests for other entries
+	// fall back to streaming; same-entry waiters reuse the completed file.
 	if !a.cachePruneMu.TryLock() {
 		return "", errors.New("缓存正在填充")
 	}
@@ -180,6 +198,9 @@ func (a *App) ensureRemoteMediaCached(ctx context.Context, id, key string, size 
 	free, err := a.cacheDiskAvailable(root)
 	if err != nil || free < remoteCacheDiskReserve || uint64(size) > free-remoteCacheDiskReserve {
 		return "", errors.New("缓存磁盘空间不足，改为直接读取")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	remote, err := archive.NewRemote(a.Config(), id)
 	if err != nil {
@@ -292,6 +313,9 @@ func (a *App) remoteMedia(w http.ResponseWriter, r *http.Request, id, key string
 }
 
 func (a *App) streamRemoteMedia(w http.ResponseWriter, r *http.Request, id, key string, size int64, ext string) {
+	if r.Context().Err() != nil {
+		return
+	}
 	remote, err := archive.NewRemote(a.Config(), id)
 	if err != nil {
 		problem(w, 502, err.Error())
