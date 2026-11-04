@@ -265,6 +265,13 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		return nil
 	}
 	added := 0
+	if target != "" && len(posts) > 0 {
+		// The directory is committed with the first archive page, including CLI
+		// writes. Empty monitors remain represented by the monitors table.
+		if _, err := tx.InsertIgnore("INSERT INTO archive_accounts(target) VALUES(?)", "target", target); err != nil {
+			return err
+		}
+	}
 	for _, p := range posts {
 		if err := save(p, 0); err != nil {
 			return err

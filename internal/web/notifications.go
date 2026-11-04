@@ -341,7 +341,8 @@ func (n *Notifier) step(ctx context.Context) (bool, error) {
 	}
 	var event NotificationEvent
 	if err = json.Unmarshal([]byte(raw), &event); err != nil {
-		return false, err
+		_, err = n.app.store.DB.Exec("UPDATE notification_deliveries SET status='failed',last_error='通知内容无法解析，请检查历史数据',finished_at=? WHERE id=?", time.Now().Unix(), id)
+		return true, err
 	}
 	cfg := n.app.Config()
 	var channel *archive.NotificationChannel

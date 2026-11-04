@@ -74,7 +74,7 @@ type externalAccountView struct {
 
 func (a *App) externalAccountRows(ctx context.Context, c apiCredential, target, cursor string, limit int) ([]externalAccountView, error) {
 	filter, args := apiAccountFilter(c, "u.username")
-	query := `WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors)
+	query := `WITH users(username) AS (SELECT target FROM archive_accounts UNION SELECT username FROM monitors)
  SELECT u.username,COALESCE(i.current_username,u.username),COALESCE(i.user_id,''),m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.replies,0),COALESCE(m.baseline_status,'not_started'),COALESCE(m.running,0),EXISTS(SELECT 1 FROM collection_jobs j WHERE j.target=u.username AND j.finished_at=0 AND j.status<>'running'),COALESCE(m.next_run,0),COALESCE(m.last_success,0),COALESCE(m.interval_override_seconds,0),CASE WHEN m.username IS NULL THEN 0 ELSE COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0) END
  FROM users u LEFT JOIN target_identities i ON i.target=u.username LEFT JOIN monitors m ON m.username=u.username WHERE ` + filter
 	if target != "" {

@@ -387,6 +387,10 @@ func recentRuns(db *database.DB) ([]map[string]any, error) {
 }
 
 func counts(db *database.DB) (map[string]int64, error) {
+	return countsContext(context.Background(), db)
+}
+
+func countsContext(ctx context.Context, db *database.DB) (map[string]int64, error) {
 	result := map[string]int64{}
 	queries := map[string]string{"posts": "SELECT COUNT(*) FROM posts p WHERE EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)", "media": "SELECT COUNT(*) FROM media WHERE status='done'", "media_failed": "SELECT COUNT(*) FROM media WHERE status IN ('failed','permanent')", "media_bytes": "SELECT COALESCE(SUM(bytes),0) FROM media WHERE status='done'", "monitors": "SELECT COUNT(*) FROM monitors", "active": "SELECT COUNT(*) FROM monitors WHERE enabled=1", "today": "SELECT COUNT(*) FROM posts p WHERE first_seen>=? AND EXISTS (SELECT 1 FROM target_posts t WHERE t.post_id=p.id)"}
 	for key, q := range queries {
@@ -395,7 +399,7 @@ func counts(db *database.DB) (map[string]int64, error) {
 		if key == "today" {
 			args = append(args, time.Now().UTC().Format("2006-01-02"))
 		}
-		if err := db.QueryRow(q, args...).Scan(&n); err != nil {
+		if err := db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 			return nil, err
 		}
 		result[key] = n

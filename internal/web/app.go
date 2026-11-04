@@ -52,6 +52,8 @@ type App struct {
 	migrations         *migrationManager
 	restart            chan struct{}
 	userStatsCache     statsCache[[]ArchiveUserStats]
+	statsMu            sync.Mutex
+	accountStatsCaches map[string]*statsCache[[]ArchiveUserStats]
 	overviewStatsCache statsCache[map[string]int64]
 }
 
@@ -221,7 +223,7 @@ func (a *App) Handler() http.Handler {
 		respond(w, 200, map[string]string{"csrf": s.CSRF})
 	})
 	mux.HandleFunc("POST /api/logout", a.auth.logout)
-	mux.HandleFunc("GET /api/overview", a.overview)
+	mux.HandleFunc("GET /api/overview", readTimeout(postReadTimeout, a.overview))
 	mux.HandleFunc("PUT /api/posts/{id}/bookmark", a.setBookmark)
 	mux.HandleFunc("GET /api/credentials", a.listAPICredentials)
 	mux.HandleFunc("POST /api/credentials", a.saveAPICredential)
@@ -292,7 +294,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/posts/{post}/context", readTimeout(postReadTimeout, a.replyContext))
 	mux.HandleFunc("GET /api/posts/{post}/replies", readTimeout(postReadTimeout, a.postReplies))
 	mux.HandleFunc("GET /api/targets", a.targets)
-	mux.HandleFunc("GET /api/users/stats", a.userStats)
+	mux.HandleFunc("GET /api/users/stats", readTimeout(postReadTimeout, a.userStats))
 	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
 	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
 		load := archiveUsersFor
@@ -393,7 +395,7 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) overview(w http.ResponseWriter, r *http.Request) {
-	c, err := a.overviewStatsCache.get(r.URL.Query().Get("refresh") == "1", func() (map[string]int64, error) { return counts(a.store.DB) })
+	c, err := a.overviewStatsCache.get(r.Context(), r.URL.Query().Get("refresh") == "1", func() (map[string]int64, error) { return countsContext(r.Context(), a.store.DB) })
 	if err != nil {
 		problem(w, 500, "读取统计失败")
 		return

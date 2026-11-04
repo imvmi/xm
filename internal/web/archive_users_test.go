@@ -122,6 +122,9 @@ func TestArchiveStatsAPIRefreshAndInvalidation(t *testing.T) {
 	if got := read("/api/users/stats?target=alice&refresh=1"); len(got) != 1 || got[0].Posts != 1 {
 		t.Fatal("forced refresh", got)
 	}
+	if got := read("/api/users/stats"); len(got) != 1 || got[0].Posts != 1 {
+		t.Fatal("account refresh left aggregate stale", got)
+	}
 	if got := read("/api/users/stats?target=absent"); len(got) != 0 {
 		t.Fatal("scope leak", got)
 	}
@@ -142,19 +145,19 @@ func TestStatsCacheLifecycle(t *testing.T) {
 	calls := 0
 	load := func() (int, error) { calls++; return calls, nil }
 	for i := 0; i < 3; i++ {
-		if v, err := c.get(false, load); err != nil || v != 1 {
+		if v, err := c.get(context.Background(), false, load); err != nil || v != 1 {
 			t.Fatal(v, err)
 		}
 	}
-	if v, _ := c.get(true, load); v != 2 {
+	if v, _ := c.get(context.Background(), true, load); v != 2 {
 		t.Fatal("force refresh", v)
 	}
 	c.expires = time.Now().Add(-time.Second)
-	if v, _ := c.get(false, load); v != 3 {
+	if v, _ := c.get(context.Background(), false, load); v != 3 {
 		t.Fatal("expiration", v)
 	}
 	c.invalidate()
-	if v, _ := c.get(false, load); v != 4 {
+	if v, _ := c.get(context.Background(), false, load); v != 4 {
 		t.Fatal("invalidation", v)
 	}
 }
@@ -165,7 +168,7 @@ func TestStatsCacheCoalescesMissesAndRetriesErrors(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 32 {
 		wg.Go(func() {
-			v, err := c.get(false, func() (int, error) { calls.Add(1); return 42, nil })
+			v, err := c.get(context.Background(), false, func() (int, error) { calls.Add(1); return 42, nil })
 			if err != nil || v != 42 {
 				t.Errorf("cache: %d %v", v, err)
 			}
@@ -176,10 +179,10 @@ func TestStatsCacheCoalescesMissesAndRetriesErrors(t *testing.T) {
 		t.Fatal("duplicate loads", calls.Load())
 	}
 	c.invalidate()
-	if _, err := c.get(false, func() (int, error) { return 0, errors.New("offline") }); err == nil {
+	if _, err := c.get(context.Background(), false, func() (int, error) { return 0, errors.New("offline") }); err == nil {
 		t.Fatal("missing load error")
 	}
-	if v, _ := c.get(false, func() (int, error) { return 43, nil }); v != 43 {
+	if v, _ := c.get(context.Background(), false, func() (int, error) { return 43, nil }); v != 43 {
 		t.Fatal("failed refresh was cached", v)
 	}
 }
@@ -187,11 +190,11 @@ func TestStatsCacheCoalescesMissesAndRetriesErrors(t *testing.T) {
 func TestCollectionInvalidatesArchiveAndOverviewStats(t *testing.T) {
 	a := testApp(t)
 	seedMonitor(t, a, "alice")
-	_, err := a.userStatsCache.get(false, func() ([]ArchiveUserStats, error) { return archiveUserStats(a.store.DB, "") })
+	_, err := a.userStatsCache.get(context.Background(), false, func() ([]ArchiveUserStats, error) { return archiveUserStats(a.store.DB, "") })
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.overviewStatsCache.get(false, func() (map[string]int64, error) { return counts(a.store.DB) })
+	_, err = a.overviewStatsCache.get(context.Background(), false, func() (map[string]int64, error) { return counts(a.store.DB) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +205,11 @@ func TestCollectionInvalidatesArchiveAndOverviewStats(t *testing.T) {
 	if worked, err := a.scheduler.step(context.Background()); !worked || err != nil {
 		t.Fatal(worked, err)
 	}
-	stats, err := a.userStatsCache.get(false, func() ([]ArchiveUserStats, error) { return archiveUserStats(a.store.DB, "") })
+	stats, err := a.userStatsCache.get(context.Background(), false, func() ([]ArchiveUserStats, error) { return archiveUserStats(a.store.DB, "") })
 	if err != nil || len(stats) != 1 || stats[0].Posts != 1 {
 		t.Fatal("collection left stale archive statistics", stats, err)
 	}
-	overview, err := a.overviewStatsCache.get(false, func() (map[string]int64, error) { return counts(a.store.DB) })
+	overview, err := a.overviewStatsCache.get(context.Background(), false, func() (map[string]int64, error) { return counts(a.store.DB) })
 	if err != nil || overview["posts"] != 1 {
 		t.Fatal("collection left stale overview statistics", overview, err)
 	}

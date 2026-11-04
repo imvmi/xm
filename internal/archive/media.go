@@ -129,7 +129,10 @@ func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max i
 	return filepath.ToSlash(rel), n, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type DownloadSummary struct{ Downloaded, Skipped, Failed int }
+type DownloadSummary struct {
+	Downloaded, Skipped, Failed int
+	ChangedPostIDs              []string `json:"-"`
+}
 
 func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, verify bool) (DownloadSummary, error) {
 	var summary DownloadSummary
@@ -186,6 +189,7 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		if err = s.MediaResult(j, savedPath, size, hash, downloadErr); err != nil {
 			return summary, err
 		}
+		summary.ChangedPostIDs = append(summary.ChangedPostIDs, j.PostID)
 		if downloadErr == nil && savedPath == "" && localPath != "" {
 			// Remove staging only after both upload verification and DB commit.
 			_ = os.Remove(filepath.Join(cfg.DataDir, filepath.FromSlash(localPath)))

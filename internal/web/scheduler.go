@@ -613,7 +613,8 @@ func (s *Scheduler) step(ctx context.Context) (bool, error) {
 }
 
 func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cookies archive.Cookies, cookieGeneration string, m Monitor, jobID int64, mode string, collect collector) (resultKind string, resultRunID int64, resultErr error) {
-	defer s.app.invalidateStats()
+	changedPosts := map[string]bool{}
+	defer s.app.invalidateCollectionStats(m.Username, changedPosts)
 	a := s.app
 	// Browser lifetime is also the task budget for collection, avatars and media together.
 	// Keep the parent separate so exhausting this budget is not a user stop.
@@ -681,6 +682,21 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 				latestProfile = &profile
 			}
 			err := a.store.SaveCollectionPage(m.Username, id, p)
+			if err == nil {
+				var remember func(archive.Post, int)
+				remember = func(post archive.Post, depth int) {
+					if post.ID == "" || depth > archive.MaxQuoteDepth {
+						return
+					}
+					changedPosts[post.ID] = true
+					if post.Quote != nil {
+						remember(*post.Quote, depth+1)
+					}
+				}
+				for _, post := range p.Posts {
+					remember(post, 0)
+				}
+			}
 			saveFailed = saveFailed || err != nil
 			return err
 		})
@@ -698,7 +714,11 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	var mediaErr error
 	if workCtx.Err() == nil {
 		s.setPhase("media")
-		_, mediaErr = s.download(workCtx, a.store, cfg, m.Username, false)
+		var summary archive.DownloadSummary
+		summary, mediaErr = s.download(workCtx, a.store, cfg, m.Username, false)
+		for _, id := range summary.ChangedPostIDs {
+			changedPosts[id] = true
+		}
 	}
 	s.setPhase("finishing")
 	remainingMedia, remainingErr := a.store.OutstandingMedia(m.Username)

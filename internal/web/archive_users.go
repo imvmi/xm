@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 
 	"xm/internal/archive"
@@ -16,9 +17,9 @@ type ArchiveUserStats struct {
 
 func archiveUsersCTE(target string) (string, []any) {
 	if target != "" {
-		return `WITH users(username) AS (SELECT target FROM target_posts WHERE target=? UNION SELECT username FROM monitors WHERE username=?) `, []any{target, target}
+		return `WITH users(username) AS (SELECT target FROM archive_accounts WHERE target=? UNION SELECT username FROM monitors WHERE username=?) `, []any{target, target}
 	}
-	return `WITH users(username) AS (SELECT target FROM target_posts UNION SELECT username FROM monitors) `, nil
+	return `WITH users(username) AS (SELECT target FROM archive_accounts UNION SELECT username FROM monitors) `, nil
 }
 
 // The directory never aggregates historical posts or media. Identity and the
@@ -63,8 +64,12 @@ const archiveMediaCountSQL = `WITH RECURSIVE related(id) AS (
 ) SELECT COALESCE(SUM((SELECT COUNT(*) FROM media a WHERE a.post_id=r.id AND a.status='done')),0) FROM related r`
 
 func archiveUserStats(db *database.DB, target string) ([]ArchiveUserStats, error) {
+	return archiveUserStatsContext(context.Background(), db, target)
+}
+
+func archiveUserStatsContext(ctx context.Context, db *database.DB, target string) ([]ArchiveUserStats, error) {
 	cte, args := archiveUsersCTE(target)
-	rows, err := db.Query(cte+`SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),'')
+	rows, err := db.QueryContext(ctx, cte+`SELECT u.username,COUNT(t.post_id),COALESCE(MAX(p.first_seen),'')
  FROM users u LEFT JOIN target_posts t ON t.target=u.username LEFT JOIN posts p ON p.id=t.post_id
  GROUP BY u.username ORDER BY u.username`, args...)
 	if err != nil {
@@ -85,7 +90,7 @@ func archiveUserStats(db *database.DB, target string) ([]ArchiveUserStats, error
 		return nil, err
 	}
 	for i := range stats {
-		if err = db.QueryRow(archiveMediaCountSQL, stats[i].Username).Scan(&stats[i].Media); err != nil {
+		if err = db.QueryRowContext(ctx, archiveMediaCountSQL, stats[i].Username).Scan(&stats[i].Media); err != nil {
 			return nil, err
 		}
 	}
@@ -93,21 +98,54 @@ func archiveUserStats(db *database.DB, target string) ([]ArchiveUserStats, error
 }
 
 func (a *App) userStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := a.userStatsCache.get(r.URL.Query().Get("refresh") == "1", func() ([]ArchiveUserStats, error) {
-		return archiveUserStats(a.store.DB, "")
-	})
+	ctx := r.Context()
+	target := r.URL.Query().Get("target")
+	force := r.URL.Query().Get("refresh") == "1"
+	if target != "" && force {
+		defer a.userStatsCache.invalidate()
+	}
+	load := func() ([]ArchiveUserStats, error) { return a.loadAccountStats(ctx, target, force) }
+	var stats []ArchiveUserStats
+	var err error
+	if target != "" {
+		stats, err = load()
+	} else {
+		stats, err = a.userStatsCache.get(ctx, force, load)
+	}
 	if err != nil {
 		problem(w, 500, "读取归档统计失败")
 		return
 	}
-	if target := r.URL.Query().Get("target"); target != "" {
-		filtered := []ArchiveUserStats{}
-		for _, s := range stats {
-			if s.Username == target {
-				filtered = append(filtered, s)
-			}
-		}
-		stats = filtered
-	}
 	respond(w, 200, stats)
+}
+
+func (a *App) loadAccountStats(ctx context.Context, target string, force bool) ([]ArchiveUserStats, error) {
+	cte, args := archiveUsersCTE(target)
+	rows, err := a.store.DB.QueryContext(ctx, cte+"SELECT username FROM users ORDER BY username", args...)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	stats := []ArchiveUserStats{}
+	for _, name := range names {
+		items, err := a.accountStatsCache(name).get(ctx, force, func() ([]ArchiveUserStats, error) { return archiveUserStatsContext(ctx, a.store.DB, name) })
+		if err != nil {
+			return nil, err
+		}
+		stats = append(stats, items...)
+	}
+	return stats, nil
 }
