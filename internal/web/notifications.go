@@ -272,7 +272,7 @@ func notificationRecovery(tx *database.Tx, cfg archive.Config, key, target strin
 	if _, err = tx.Exec("DELETE FROM notification_incidents WHERE `key`=?", key); err != nil {
 		return err
 	}
-	message := "@" + target + " 已恢复正常采集和媒体保存。"
+	message := "@" + target + " 已恢复正常采集，当前无待处理的媒体错误。"
 	if key == "cookie" {
 		message = "更新 Cookie 后已成功采集，登录状态恢复正常。"
 	} else if key == "rate" {

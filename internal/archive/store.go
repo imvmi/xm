@@ -243,7 +243,7 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		}
 		if !unchanged {
 			for _, a := range p.Assets {
-				result, updateErr := tx.Exec(`UPDATE media SET kind=?,status=CASE WHEN source_url<>? THEN 'pending' ELSE status END,attempts=CASE WHEN source_url<>? THEN 0 ELSE attempts END,next_attempt=CASE WHEN source_url<>? THEN 0 ELSE next_attempt END,last_error=CASE WHEN source_url<>? THEN '' ELSE last_error END,source_url=?,updated_at=? WHERE post_id=? AND media_id=?`, a.Kind, a.URL, a.URL, a.URL, a.URL, a.URL, t, p.ID, a.ID)
+				result, updateErr := tx.Exec(`UPDATE media SET kind=?,status=CASE WHEN status<>'ignored' AND source_url<>? THEN 'pending' ELSE status END,attempts=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE attempts END,next_attempt=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE next_attempt END,last_error=CASE WHEN status<>'ignored' AND source_url<>? THEN '' ELSE last_error END,source_url=?,updated_at=? WHERE post_id=? AND media_id=?`, a.Kind, a.URL, a.URL, a.URL, a.URL, a.URL, t, p.ID, a.ID)
 				if updateErr != nil {
 					return updateErr
 				}
@@ -334,9 +334,9 @@ const targetMediaFilter = ` AND post_id IN (WITH RECURSIVE wanted(id) AS (
  ) SELECT id FROM wanted)`
 
 // OutstandingMedia includes deferred retries and permanent failures, including
-// quoted media. An empty runnable download queue does not imply a full archive.
+// quoted media, but excludes media explicitly ignored by the administrator. An empty runnable download queue does not imply a full archive.
 func (s *Store) OutstandingMedia(target string) (int, error) {
-	query := "SELECT COUNT(*) FROM media WHERE status<>'done'"
+	query := "SELECT COUNT(*) FROM media WHERE status NOT IN ('done','ignored')"
 	var args []any
 	if target != "" {
 		query += targetMediaFilter
@@ -347,6 +347,29 @@ func (s *Store) OutstandingMedia(target string) (int, error) {
 	return count, err
 }
 
+type MediaIssue struct {
+	PostID, Kind, Status, Error string
+	NextAttempt                 int64
+}
+
+// OutstandingMediaExample uses the same account and quote scope as the count.
+// Prefer failures that require intervention over media still awaiting download.
+func (s *Store) OutstandingMediaExample(target string) (*MediaIssue, error) {
+	query := "SELECT post_id,kind,status,last_error,next_attempt FROM media WHERE status NOT IN ('done','ignored')"
+	var args []any
+	if target != "" {
+		query += targetMediaFilter
+		args = append(args, target)
+	}
+	query += " ORDER BY CASE status WHEN 'permanent' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END,post_id,media_id LIMIT 1"
+	var issue MediaIssue
+	err := s.DB.QueryRow(query, args...).Scan(&issue.PostID, &issue.Kind, &issue.Status, &issue.Error, &issue.NextAttempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &issue, err
+}
+
 // TargetMediaCounts includes quoted assets and deferred or permanently failed media.
 func (s *Store) TargetMediaCounts(target string) (done, total int, err error) {
 	err = s.DB.QueryRow("SELECT COALESCE(SUM(CASE WHEN status='done' THEN 1 ELSE 0 END),0),COUNT(*) FROM media WHERE 1=1"+targetMediaFilter, target).Scan(&done, &total)
@@ -354,7 +377,7 @@ func (s *Store) TargetMediaCounts(target string) (done, total int, err error) {
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
-	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt FROM media JOIN posts ON posts.id=media.post_id WHERE 1=1`
+	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt FROM media JOIN posts ON posts.id=media.post_id WHERE status<>'ignored'`
 	var args []any
 	if !includeDone {
 		query += " AND (status='pending' OR (status='failed' AND next_attempt<=?))"

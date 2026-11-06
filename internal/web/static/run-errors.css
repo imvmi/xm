@@ -1,0 +1,13 @@
+#run-errors-dialog { width:min(760px,calc(100vw - 32px)); background:var(--paper); color:var(--ink); }
+#run-errors-dialog h3 { font-size:16px; margin:20px 0 8px; }
+#run-errors-dialog h4 { margin:0 0 8px; font-size:14px; overflow-wrap:anywhere; }
+#run-errors-dialog p { font-size:13px; line-height:1.8; overflow-wrap:anywhere; }
+#run-errors-dialog .run-error-message { white-space:pre-wrap; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-raised); margin:12px 0; }
+#run-errors-status { color:var(--muted); }
+#run-errors-dialog .media-issue { border:1px solid var(--line); border-radius:12px; padding:16px; margin:16px 0; }
+#run-errors-dialog .media-issue-status { color:var(--muted); }
+.media-issue-links,.media-issue-actions,.run-detail-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-top:12px; }
+.media-issue-links a { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
+.run-detail-actions { font-size:12px; }
+#run-errors-dialog .media-issue-actions .button { white-space:normal; }
+@media(max-width:600px) { #run-errors-dialog { padding:20px; } #run-errors-dialog .media-issue { padding:12px; } }

@@ -105,6 +105,27 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	if a.Config().QueueInterval != 0 {
 		t.Fatal("switch submitted an unrelated draft")
 	}
+	if !eval(`$('reset-rate-limit').closest('[data-settings-group]')?.dataset.settingsGroup==='network' && $('reset-media-retry').closest('[data-settings-group]')?.dataset.settingsGroup==='media' && $('reset-media-retry').type==='button' && $('reset-rate-limit').type==='button'`) {
+		t.Fatal("recovery actions are in the wrong settings group or submit the form")
+	}
+	seedMediaRetryState(t, a)
+	a.scheduler.mu.Lock()
+	a.scheduler.active = true
+	a.scheduler.mu.Unlock()
+	eval(`(()=>{document.querySelector('[data-settings-group="media"]').open=true;$('reset-media-retry').click();return true})()`)
+	wait(`!$('reset-media-retry').disabled && $('media-retry-reset-result').textContent.includes('当前采集批次尚未结束')`)
+	a.scheduler.mu.Lock()
+	a.scheduler.active = false
+	a.scheduler.mu.Unlock()
+	eval(`(()=>{$('reset-media-retry').click();return true})()`)
+	wait(`!$('reset-media-retry').disabled && $('media-retry-reset-result').textContent.includes('已清除 3 个媒体')`)
+	eval(`(()=>{document.querySelector('[data-settings-group="network"]').open=true;$('reset-rate-limit').click();return true})()`)
+	wait(`!$('reset-rate-limit').disabled && $('rate-limit-reset-result').textContent.includes('429 本地冷却已清空')`)
+	if !eval(`$('queue-interval').value==='17' && settingsFormDirty('collection-settings-form')`) || a.Config().QueueInterval != 0 {
+		t.Fatal("recovery action submitted or erased the collection draft")
+	}
+	eval(`(()=>{$('reset-media-retry').click();return true})()`)
+	wait(`!$('reset-media-retry').disabled && $('media-retry-reset-result').textContent==='没有正在等待重试的媒体。'`)
 	eval(`(()=>{$('global-auto-collection').click();return true})()`)
 	wait(`!globalCollectionPending && !$('global-auto-collection').disabled && state.overview.paused===window.initialPollingPaused`)
 	// A failed save must keep the last confirmed switch state and allow retry.
@@ -168,6 +189,9 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 		if !eval(`document.documentElement.scrollWidth<=window.innerWidth && (()=>{const r=document.querySelector('.collection-save-bar').getBoundingClientRect();return r.top>=0 && r.bottom<=window.innerHeight && r.width>0})()`) {
 			t.Fatal("settings overflow or save action outside viewport", width)
 		}
+		if !eval(`['reset-media-retry','reset-rate-limit'].every(id=>{const r=$(id).getBoundingClientRect();return r.width>0 && r.left>=0 && r.right<=innerWidth})`) {
+			t.Fatal("recovery action overflows", width)
+		}
 		if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
 			image, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
 			if err != nil {
@@ -189,6 +213,14 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err = os.WriteFile(filepath.Join(dir, "chrome-"+name), image, 0600); err != nil {
+				t.Fatal(err)
+			}
+			eval(`(()=>{$('reset-media-retry').scrollIntoView({behavior:'instant',block:'center'});return true})()`)
+			image, err = chromedp.Run(browser, chromedp.CaptureScreenshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(dir, "media-"+name), image, 0600); err != nil {
 				t.Fatal(err)
 			}
 		}

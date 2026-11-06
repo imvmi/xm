@@ -385,10 +385,10 @@ func TestMediaRecoveryWaitsForDeferredAndPermanentQuotedMedia(t *testing.T) {
 	if err := a.store.SavePosts("alice", []archive.Post{post}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.store.DB.Exec("UPDATE media SET status='permanent' WHERE post_id='100'"); err != nil {
+	if _, err := a.store.DB.Exec("UPDATE media SET status='permanent',last_error='媒体超过配置的大小上限' WHERE post_id='100'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.store.DB.Exec("UPDATE media SET status='failed',next_attempt=? WHERE post_id='200'", time.Now().Add(24*time.Hour).Unix()); err != nil {
+	if _, err := a.store.DB.Exec("UPDATE media SET status='failed',last_error='媒体下载返回 HTTP 404',next_attempt=? WHERE post_id='200'", time.Now().Add(24*time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
 	// Unrelated unfinished media must not block this target's recovery.
@@ -399,18 +399,33 @@ func TestMediaRecoveryWaitsForDeferredAndPermanentQuotedMedia(t *testing.T) {
 	a.scheduler.collect = recordTargets(&targets)
 	a.scheduler.download = archive.DownloadPending
 	for _, expected := range []int{2, 1, 0} {
+		if expected == 2 {
+			// A failure in this run must carry the same actionable detail as
+			// an otherwise successful run that only finds deferred retries.
+			a.scheduler.download = func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error) {
+				return archive.DownloadSummary{Failed: 1}, errors.New("1 个媒体下载失败")
+			}
+		} else {
+			a.scheduler.download = archive.DownloadPending
+		}
 		if remaining, err := a.store.OutstandingMedia("alice"); err != nil || remaining != expected {
 			t.Fatal(remaining, err)
 		}
 		runCollection(t, a)
-		var status string
-		if err := a.store.DB.QueryRow("SELECT status FROM runs ORDER BY id DESC LIMIT 1").Scan(&status); err != nil {
+		var status, message string
+		if err := a.store.DB.QueryRow("SELECT status,message FROM runs ORDER BY id DESC LIMIT 1").Scan(&status, &message); err != nil {
 			t.Fatal(err)
 		}
 		all := events(t, a)
 		if expected > 0 {
 			if status != "media_failed" || len(all) != 1 || all[0].Type != "media_failed" {
 				t.Fatal("unresolved media reported recovered", status, all)
+			}
+			if expected == 2 && (!strings.Contains(message, "推文 100") || !strings.Contains(message, "永久失败，不会自动重试") || !strings.Contains(message, "媒体超过配置的大小上限")) {
+				t.Fatal("missing actionable permanent media diagnostic", message)
+			}
+			if expected == 1 && (!strings.Contains(message, "推文 200") || !strings.Contains(message, "等待重试，最早") || !strings.Contains(message, "HTTP 404")) {
+				t.Fatal("missing quoted media retry diagnostic", message)
 			}
 			id := "100"
 			if expected == 1 {
@@ -421,6 +436,11 @@ func TestMediaRecoveryWaitsForDeferredAndPermanentQuotedMedia(t *testing.T) {
 			}
 		} else if status != "bounded_complete" || len(all) != 2 || all[1].Type != "recovered" {
 			t.Fatal("complete archive did not recover", status, all)
+		}
+		if expected == 0 {
+			if issue, err := a.store.OutstandingMediaExample("alice"); err != nil || issue != nil {
+				t.Fatal("unrelated media leaked into account diagnostic", issue, err)
+			}
 		}
 	}
 }

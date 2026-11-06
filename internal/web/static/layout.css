@@ -29,7 +29,7 @@ body {
   top:8px;
   left:12px;
   padding:12px;
-  background:var(--green);
+  background:var(--accent);
   color:white;
   border-radius:8px;
   transform:translateY(-150%);
@@ -110,7 +110,7 @@ body {
   padding:0;
   border:1px solid #ffffff50;
   border-radius:50%;
-  background:#101813b8;
+  background:#0f1419b8;
   color:#fff;
   font-size:34px;
   line-height:1;
@@ -126,7 +126,7 @@ body {
   z-index:2;
   padding:5px 11px;
   border-radius:20px;
-  background:#101813b8;
+  background:#0f1419b8;
   color:#fff;
   font-size:12px;
   font-variant-numeric:tabular-nums;
@@ -156,7 +156,7 @@ dialog form {
   display:flex;
   gap:6px;
   padding:5px;
-  background:#edf1e9;
+  background:var(--surface-raised);
   border:1px solid var(--line);
   border-radius:10px;
   max-width:600px;
@@ -168,15 +168,15 @@ dialog form {
   border:0;
   padding:11px 16px;
   border-radius:7px;
-  color:#6b786c;
+  color:var(--muted);
   font-size:13px;
   font-weight:550;
   min-height:44px;
 }
 .settings-tabs button[aria-selected=true] {
-  background:white;
-  color:var(--green);
-  box-shadow:0 2px 8px #223e2310;
+  background:var(--paper);
+  color:var(--accent);
+  box-shadow:0 2px 8px #00000008;
 }
 .settings-section {
   max-width:1040px;
@@ -200,7 +200,7 @@ dialog form {
   line-height:1.9;
 }
 .settings-caption a {
-  color:var(--green);
+  color:var(--accent);
   white-space:nowrap;
 }
 .settings-section .panel-heading .badge {
@@ -215,15 +215,15 @@ dialog form {
   gap:12px;
   padding:18px 20px;
   margin-bottom:20px;
-  border:1px solid #dfe7d8;
+  border:1px solid var(--line);
   border-radius:10px;
-  background:#eff4ea;
-  color:#486044;
+  background:var(--surface-raised);
+  color:var(--ink);
 }
 .storage-lock-note p {
   margin-top:4px;
   font-size:12px;
-  color:#6e8068;
+  color:var(--muted);
 }
 .storage-summary-grid {
   display:grid;
@@ -248,9 +248,9 @@ dialog form {
 .monitor-preferences {
   border:1px solid var(--line);
   border-radius:9px;
-  background:#fff;
+  background:var(--paper);
   margin:20px 0;
-  color:#5d715f;
+  color:var(--ink);
 }
 .monitor-preferences summary {
   padding:14px 18px;
@@ -306,7 +306,7 @@ dialog form {
   padding:30px;
 }
 .monitor-identity a:hover {
-  color:var(--green);
+  color:var(--accent);
   text-decoration:underline;
 }
 .monitor-table .row-actions {
@@ -342,7 +342,7 @@ dialog form {
 }
 .notification-empty {
   grid-column:1/-1;
-  background:#fff;
+  background:var(--paper);
   border:1px dashed var(--line);
   border-radius:10px;
 }
@@ -443,7 +443,7 @@ dialog form {
     gap:14px 20px;
     border:1px solid var(--line);
     border-radius:12px;
-    background:#fff;
+    background:var(--paper);
     padding:20px;
     margin-bottom:14px;
   }
@@ -486,7 +486,7 @@ dialog form {
     gap:10px;
   }
   .monitor-table .text-button {
-    background:#f4f6f1;
+    background:var(--surface-raised);
     min-height:42px;
     padding:9px 12px;
     border-radius:6px;
@@ -499,7 +499,7 @@ dialog form {
     border-bottom:0;
   }
   .monitor-table .empty-state {
-    background:#fff;
+    background:var(--paper);
   }
   .notification-layout:has(#notification-editor:not([hidden])) {
     grid-template-columns:1fr;
@@ -555,7 +555,7 @@ dialog form {
     min-height:40px;
     min-width:40px;
     margin:0;
-    color:#e2e9df;
+    color:var(--paper);
     justify-content:center;
   }
   .sidebar .logout>span {
@@ -575,8 +575,8 @@ dialog form {
     gap:0;
     padding:7px 8px calc(7px + env(safe-area-inset-bottom,0px));
     background:#fffffffa;
-    border-top:1px solid #e0e6dc;
-    box-shadow:0 -5px 20px #223b2b07;
+    border-top:1px solid var(--line);
+    box-shadow:0 -5px 20px #00000008;
     backdrop-filter:blur(12px);
     margin:0;
     z-index:30;
@@ -591,15 +591,15 @@ dialog form {
     padding:6px 2px;
     border-radius:8px;
     white-space:nowrap;
-    color:#7a8579;
+    color:var(--muted);
     font-size:10px;
   }
   .sidebar nav a.active {
-    background:#edf3e8;
-    color:var(--green);
+    background:var(--surface-raised);
+    color:var(--accent);
   }
   .sidebar nav a:hover {
-    background:#f2f5ee;
+    background:var(--hover);
   }
   .sidebar nav svg {
     width:20px;
@@ -823,7 +823,7 @@ dialog form {
   .stats>div {
     padding:15px 14px!important;
     border:1px solid var(--line)!important;
-    background:#fff;
+    background:var(--paper);
     border-radius:10px;
     min-width:0;
   }
@@ -1057,7 +1057,7 @@ dialog form {
   .dialog-actions {
     position:sticky;
     bottom:-24px;
-    background:#fff;
+    background:var(--paper);
     padding:16px 0 4px;
     margin-top:20px;
     border-top:1px solid var(--line);

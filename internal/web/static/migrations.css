@@ -2,7 +2,7 @@
 #settings-data .panel-body{overflow-wrap:anywhere}
 #settings-data progress{display:block;width:100%;height:12px;accent-color:var(--accent,#1d9bf0);margin:16px 0}
 #settings-data progress[data-status=failed]{accent-color:#c99043}
-.migration-preview{border:1px solid var(--line,#ccd2d7);border-radius:12px;margin:18px 0}
+.migration-preview{border:1px solid var(--line,var(--line));border-radius:12px;margin:18px 0}
 .migration-route{display:flex;align-items:center;gap:16px;padding:12px 0;font-size:16px;flex-wrap:wrap}
 .migration-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin-bottom:14px}
 .migration-fields>div{min-width:0}
@@ -12,7 +12,7 @@
 #settings-data details{margin:14px 0}
 #settings-data summary{cursor:pointer}
 .migration-config .panel-body>.button{margin-top:16px}
-#migration-remote-fields{border-top:1px solid var(--line,#ccd2d7);padding-top:16px;margin-top:16px}
+#migration-remote-fields{border-top:1px solid var(--line,var(--line));padding-top:16px;margin-top:16px}
 @media(max-width:600px){.migration-fields{grid-template-columns:minmax(0,1fr)}.migration-field-wide{grid-column:auto}}
 #migration-confirm-panel{margin-top:18px}
 #migration-confirm-panel .button{margin-top:12px}
@@ -25,7 +25,7 @@
 .data-group-heading{display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}
 .data-group-heading h2{margin:0;font-size:21px}
 .data-group-heading p{margin:6px 0 0;color:var(--muted);font-size:13px;line-height:1.7}
-.data-group-number{display:grid;place-items:center;flex-shrink:0;width:38px;height:38px;border-radius:10px;background:var(--surface-raised,#f3f5f0);color:var(--accent);font-weight:700;font-size:14px}
+.data-group-number{display:grid;place-items:center;flex-shrink:0;width:38px;height:38px;border-radius:10px;background:var(--surface-raised,var(--surface-raised));color:var(--accent);font-weight:700;font-size:14px}
 .data-panel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
 #settings-data .data-panel-grid>.panel{margin:0;min-width:0}
 #settings-data .data-group>.panel{margin-top:16px}

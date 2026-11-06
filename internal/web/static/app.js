@@ -53,7 +53,7 @@ function showLogin() {
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
-  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('rate-limit-reset-result').textContent='';$('cookie-api-token-help').textContent='';
+  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('rate-limit-reset-result').textContent='';$('media-retry-reset-result').textContent='';$('cookie-api-token-help').textContent='';
   document.querySelectorAll('dialog[open]').forEach(d=>d.close());
   $('notification-editor').hidden=true;state.monitors=[];monitorListReady=false;monitorRequest++;accountPending.clear();accountExpanded.clear();accountScroll=0;accountRestoring=false;state.users=[];state.settings=null;state.overview=null;state.navRequest++;
 }
@@ -234,7 +234,7 @@ function defaultVideoMuted(){return state.settings?.video_default_muted!==false;
 function mediaHTML(post) {
   const done=post.media.filter(m=>m.status==='done');let html='';
   if(done.length){const photosOnly=done.every(m=>m.kind==='photo');html+=`<div class="media-grid ${done.length===1?'single':''}${photosOnly?' photo-grid':''}"${photosOnly?` data-photo-count="${done.length}"`:''}>`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`+(m.version?'?v='+encodeURIComponent(m.version):'');if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=videoHTML(post,src);}html+='</div>';}
-  for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='failed'?'下载失败':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
+  for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='ignored'?'已忽略（未下载，可在任务详情恢复重试）':m.status==='permanent'?'永久失败（不会自动重试）':m.status==='failed'?'下载失败（等待重试）':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
   return html;
 }
 function displayPostText(post){
@@ -704,6 +704,13 @@ $('cookie-api-form').addEventListener('submit',event=>{
   });
 });
 $('proxy-mode').addEventListener('change',()=>$('proxy-fields').hidden=$('proxy-mode').value==='direct');
+$('reset-media-retry').addEventListener('click',()=>action($('reset-media-retry'),async()=>{
+  $('media-retry-reset-result').textContent='正在清除媒体重试等待…';
+  try {
+    const r=await api('/media/retry/reset','POST');
+    $('media-retry-reset-result').textContent=r.message;toast(r.message);
+  } catch(err) { $('media-retry-reset-result').textContent=err.message;throw err; }
+}));
 $('reset-rate-limit').addEventListener('click',()=>action($('reset-rate-limit'),async()=>{
   $('rate-limit-reset-result').textContent='正在清除 XM 采集冷却…';
   try {
@@ -765,10 +772,20 @@ function jobHTML(job,current=false){
  const controls=current?`<button class="text-button delete" type="button" data-stop-target="${escape(job.target)}">停止并暂停监控</button>`:`<button class="text-button delete" type="button" data-cancel-job="${Number(job.id)}">取消本次排队</button>`;
  return `<article class="job-row ${current?'current':''}"><div class="job-position">${current?icon('clock'):number(job.position)}</div><div class="run-main">${taskProfileHTML(job)}<p>${escape(detail)}</p>${progress}<div class="run-time">${current?'开始于 '+escape(date(job.started_at,true)):'入队于 '+escape(date(job.queued_at,true))}${!current&&job.retry_at?' · 最早 '+escape(date(job.retry_at,true))+' 重试':''}</div></div><div class="job-actions"><span class="badge ${cls}">${escape(label)}</span>${controls}</div></article>`;
 }
+function runHistoryHTML(r){
+ const [label,cls]=runLabels[r.status]||[r.status,'neutral'];
+ const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';
+ const mode=` · ${modeLabels[r.mode]||r.mode||'动态更新'}`;
+ const problem=['incomplete','media_failed','failed','interrupted'].includes(r.status);
+ const ignored=String(r.message||'').includes('手动忽略');
+ const summary=problem?({media_failed:'有媒体尚未归档，请查看错误详情',failed:'采集遇到错误，请查看错误详情',interrupted:'任务已中断，请查看错误详情',incomplete:'本轮尚未完成，请查看详情'}[r.status]):(stopLabels[r.message]||r.message||'本轮采集完成');
+ const details=problem||ignored?`<div class="run-detail-actions"><button type="button" class="button secondary" data-run-errors="${Number(r.id)||0}">${problem?'错误详情':'媒体详情'}</button>${problem?'<a href="#accounts">查看计划或继续采集 →</a>':''}</div>`:'';
+ return `<article class="run-row"><div class="run-main">${taskProfileHTML(r)}<p>本轮读取 ${escape(String(r.posts??0))} 条 · ${r.new_posts==null?'新增未记录':`新增 ${escape(String(r.new_posts))} 条`} · ${escape(summary)}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${details}</div><span class="badge ${cls}">${escape(label)}</span></article>`;
+}
 async function refreshRuns() {
   const payload=await api('/activity'),legacy=Array.isArray(payload),runs=legacy?payload:payload.runs;
   if(!legacy){const current=payload.current,queue=payload.queue||[];$('current-job-count').textContent=current?'1':'0';$('queue-count').textContent=number(queue.length);$('current-job').innerHTML=current?jobHTML(current,true):'<div class="activity-empty">当前没有正在执行的任务</div>';$('job-queue').innerHTML=queue.length?queue.map(j=>jobHTML(j)).join(''):'<div class="activity-empty">等待队列为空</div>';const wait=$('queue-wait');wait.hidden=!payload.wait_reason;wait.textContent=payload.wait_reason+(payload.wait_until?' · 预计 '+date(payload.wait_until,true)+' 后继续':'');}
-  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'动态更新'}`;return `<article class="run-row"><div class="run-main">${taskProfileHTML(r)}<p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${['incomplete','media_failed','failed','interrupted'].includes(r.status)?'<p><a href="#accounts">查看计划或继续采集 →</a></p>':''}</div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
+  $('runs').innerHTML=runs.length?runs.map(runHistoryHTML).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
 $('current-job').addEventListener('click',event=>{const button=event.target.closest('[data-stop-target]');if(!button)return;action(button,async()=>{await api('/monitors/'+encodeURIComponent(button.dataset.stopTarget)+'/stop','POST');toast('已请求停止并暂停此账号；已保存内容保留');await refreshRuns();await refreshOverview();});});

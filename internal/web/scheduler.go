@@ -738,11 +738,22 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		// Pending media stays durable and will be retried by a later task. Budget
 		// exhaustion is incomplete work, not an authentication or media incident.
 		mediaErr = nil
-	} else if mediaErr == nil && remainingMedia > 0 {
-		mediaErr = fmt.Errorf("仍有 %d 个媒体未完成归档（含等待重试或永久失败），请检查媒体状态", remainingMedia)
+	} else if remainingMedia > 0 {
+		issue, issueErr := a.store.OutstandingMediaExample(m.Username)
+		if issueErr != nil {
+			mediaErr = issueErr
+		} else if mediaErr != nil {
+			mediaErr = fmt.Errorf("%s；本轮下载：%w", outstandingMediaMessage(remainingMedia, issue), mediaErr)
+		} else {
+			mediaErr = errors.New(outstandingMediaMessage(remainingMedia, issue))
+		}
 	}
 	if remainingErr != nil {
 		mediaErr = remainingErr
+	}
+	ignoredMedia, ignoredErr := a.store.IgnoredMedia(m.Username)
+	if ignoredErr != nil && mediaErr == nil {
+		mediaErr = ignoredErr
 	}
 	ended := time.Now().Unix()
 	status, message := "bounded_complete", result.Stop
@@ -814,6 +825,9 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	if collectErr == nil && mediaErr == nil && mediaBudgetReached {
 		status = "incomplete"
 		message = fmt.Sprintf("本轮任务时间已用完，已保存正文与断点；还有 %d 个媒体将在后续任务继续处理", remainingMedia)
+	}
+	if status == "bounded_complete" && ignoredMedia > 0 {
+		message = fmt.Sprintf("本轮采集完成；另有 %d 个媒体已手动忽略（未下载）", ignoredMedia)
 	}
 	if jobCtx.Err() != nil {
 		status = "cancelled"

@@ -161,6 +161,31 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 	if !eval(`getComputedStyle(document.querySelector('#posts .post')).backgroundColor==='rgb(255, 255, 255)'`) {
 		t.Fatal("light mode not restored")
 	}
+	// Management pages and mobile navigation use the same neutral light palette.
+	for _, width := range []int64{1280, 390} {
+		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 844)); err != nil {
+			t.Fatal(err)
+		}
+		for _, view := range []string{"home", "archive", "activity", "notifications", "settings"} {
+			eval(`(()=>{location.hash=` + fmt.Sprintf("%q", view) + `;return true})()`)
+			wait(fmt.Sprintf(`state.view===%q && !$('view-'+state.view).hidden`, view))
+			if !eval(`getComputedStyle(document.body).backgroundColor==='rgb(255, 255, 255)' && getComputedStyle(document.body).color==='rgb(15, 20, 25)' && getComputedStyle(document.querySelector('.sidebar nav a.active')).color==='rgb(15, 20, 25)' && document.documentElement.scrollWidth<=innerWidth`) {
+				t.Fatalf("light palette or overflow in %s at %d", view, width)
+			}
+			if !eval(`(()=>{const buttons=[...$('view-'+state.view).querySelectorAll('.primary')].filter(el=>el.getBoundingClientRect().width);return buttons.every(el=>getComputedStyle(el).backgroundColor==='rgb(15, 20, 25)' && getComputedStyle(el).color==='rgb(255, 255, 255)')})()`) {
+				t.Fatalf("primary button contrast in %s at %d", view, width)
+			}
+			if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+				image, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-light-%d.png", view, width)), image, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.view==='settings' && $('archive-theme').value==='light'`)
 	eval(`(()=>{$('settings-tab-display').click();$('archive-theme').value='system';$('archive-display-form').requestSubmit();return true})()`)

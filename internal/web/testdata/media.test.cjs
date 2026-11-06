@@ -207,3 +207,18 @@ test('failed or disabled timeline preloading does not retry or start playing',()
  f.ctx.releaseTimelinePreload(f.video,true);f.ctx.syncTimelinePreload();assert.equal(f.video.src,'');assert.equal(f.plays.length,0);
  f.state.settings.video_timeline_preload=false;f.ctx.syncTimelinePreload();assert.equal(f.video.src,'');
 });
+
+test('unfinished media distinguishes permanent failures and escapes the diagnostic',()=>{
+ const ctx=vm.createContext({icon:()=>'',escape:value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')});
+ vm.runInContext(source.slice(source.indexOf('function mediaHTML('),source.indexOf('function displayPostText(')),ctx);
+ const html=ctx.mediaHTML({media:[
+  {kind:'photo',status:'permanent',error:'媒体超过配置的大小上限 <error>'},
+  {kind:'video',status:'failed',error:'HTTP 404'},
+  {kind:'photo',status:'pending',error:''}
+ ]});
+ assert.match(html,/图片永久失败（不会自动重试）/);
+ assert.match(html,/视频下载失败（等待重试）/);
+ assert.match(html,/图片等待下载/);
+ assert.match(html,/&lt;error&gt;/);
+ assert.doesNotMatch(html,/<error>/);
+});

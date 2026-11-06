@@ -5,11 +5,11 @@
 .reply-thread-rail::after{content:'';width:2px;flex:1;min-height:12px;background:var(--line);border-radius:2px;margin-top:6px;margin-bottom:-10px}
 .reply-thread-rail .post-avatar{flex-shrink:0}
 .reply-parent-source{font-size:12px;color:var(--muted);text-decoration:none}
-.reply-parent-source:hover{color:var(--green);text-decoration:underline}
+.reply-parent-source:hover{color:var(--accent);text-decoration:underline}
 .reply-preview-missing .reply-preview-text{color:var(--muted);font-size:13px}
 .reply-thread .reply-preview-text{font-size:15px;line-height:1.45;margin:3px 0 7px;-webkit-line-clamp:4}
 .reply-preview-actions{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:12px}
-.reply-preview-actions a,.reply-preview-actions button{color:var(--green)}
+.reply-preview-actions a,.reply-preview-actions button{color:var(--accent)}
 .reply-thread .reply-preview-actions button{min-height:36px;text-align:left;padding:3px 0}
 .reply-preview-author{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;font-size:12px;overflow-wrap:anywhere}
 .reply-preview-author span{color:var(--muted);font-size:11px}
@@ -17,14 +17,14 @@
 
 .timeline-posts .post[data-open-post]{cursor:pointer}
 .timeline-posts .post[data-open-post] :is(a,button,input,select,video,audio){cursor:auto}
-.timeline-posts .post[data-open-post]:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.timeline-posts .post[data-open-post]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .post-detail-active .profile-feed{touch-action:pan-y;will-change:transform,opacity}
 .post-detail-active .profile-feed.swiping{transition:none}
 .post-detail-active .profile-feed.swipe-returning{transition:transform .18s ease-out,opacity .18s ease-out}
 .thread-post{position:relative}
 .thread-post .post-body{position:relative}
 .thread-ancestor .post-body::after{content:'';position:absolute;z-index:1;left:35px;top:58px;bottom:-1px;width:2px;border-radius:2px;background:var(--line)}
-.thread-current{border-top:0!important;border-bottom:8px solid var(--surface-muted,#f7f9f9)!important}
+.thread-current{border-top:0!important;border-bottom:8px solid var(--surface-raised)!important}
 .thread-current .post-body{padding-top:18px!important;padding-bottom:20px!important}
 .thread-current .post-text{font-size:18px!important;line-height:1.5!important}
 .thread-reply.has-replies .post-body::after{content:'';position:absolute;z-index:1;left:35px;top:58px;bottom:-1px;width:2px;border-radius:2px;background:var(--line)}
@@ -32,8 +32,8 @@
 .thread-replies-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid var(--line);background:var(--paper)}
 .thread-replies-heading h2{font-size:17px;margin:0}.thread-replies-heading span{font-size:11px;color:var(--muted)}
 .thread-status{padding:18px 16px;margin:0;color:var(--muted);font-size:12px;text-align:center;border-bottom:1px solid var(--line);background:var(--paper)}
-.thread-load-more{display:block;width:100%;min-height:46px;border:0;border-bottom:1px solid var(--line);background:var(--paper);color:var(--green);font-size:13px;text-align:center}
-.thread-load-more:hover{background:var(--surface-muted,#f7f9f9)}
+.thread-load-more{display:block;width:100%;min-height:46px;border:0;border-bottom:1px solid var(--line);background:var(--paper);color:var(--accent);font-size:13px;text-align:center}
+.thread-load-more:hover{background:var(--surface-raised)}
 .thread-load-more[hidden]{display:none}
 @media(prefers-reduced-motion:reduce){.post-detail-active .profile-feed.swipe-returning{transition:none}}
 @media(max-width:600px){

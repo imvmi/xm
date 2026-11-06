@@ -49,7 +49,7 @@
 .account-details>summary { padding:10px 0;cursor:pointer;min-height:40px; }
 .account-details>div { padding:0 0 6px;line-height:1.7; }
 .account-error { color:#c45445; }
-.account-task-link { display:inline-block;padding:8px 0;color:var(--green); }
+.account-task-link { display:inline-block;padding:8px 0;color:var(--accent); }
 .display-preference-group { margin-bottom:22px; }
 .display-preference-group+.display-preference-group { padding-top:20px;border-top:1px solid var(--line); }
 .display-preference-group>h3 { font-size:15px;margin-bottom:12px;color:var(--ink); }
@@ -86,7 +86,7 @@
 
 #chrome-mode { flex-shrink:0;margin-left:auto;white-space:nowrap; }
 
-.account-card:focus-visible { outline:2px solid var(--green);outline-offset:3px; }
+.account-card:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
 #account-menu-handle { display:inline-block;margin-top:4px; }
 #account-menu-handle:hover { text-decoration:underline; }
 
