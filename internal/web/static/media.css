@@ -49,3 +49,42 @@
 #image-dialog .image-slide img:not([src]) { visibility:hidden; }
 #image-dialog .image-count { bottom:calc(20px + env(safe-area-inset-bottom,0px)); }
 @media(prefers-reduced-motion:reduce) { #image-track.animating,#image-viewport.animating { transition:none; } }
+
+/* Shared photo layouts for home/user timelines, quotes and reply threads. */
+.media-grid.photo-grid {
+ --photo-max-height:520px;
+ gap:2px;
+ grid-template-columns:repeat(2,minmax(0,1fr));
+}
+.media-grid.photo-grid .media-button { position:relative;min-width:0;min-height:0;overflow:hidden; }
+.media-grid.photo-grid.single { grid-template-columns:1fr; }
+.media-grid.photo-grid.single > .media-button {
+ display:flex;align-items:center;justify-content:center;
+ max-height:var(--photo-max-height);
+}
+.media-grid.photo-grid.single > .media-button > img {
+ width:100%;height:auto;max-height:var(--photo-max-height);object-fit:contain;
+}
+.media-grid.photo-grid.single > :is(.photo-preview-long,.photo-preview-wide) {
+ display:block;aspect-ratio:3/4;
+}
+.media-grid.photo-grid.single > .photo-preview-wide { aspect-ratio:2/1; }
+.media-grid.photo-grid.single > :is(.photo-preview-long,.photo-preview-wide) > img {
+ height:100%;object-fit:cover;
+}
+.media-grid.photo-grid.single > .photo-preview-long > img { object-position:center top; }
+.photo-preview-hint {
+ position:absolute;bottom:10px;right:10px;left:auto;max-width:calc(100% - 20px);
+ padding:4px 9px;border-radius:14px;background:#000b;color:#fff;
+ font-size:12px;line-height:1.5;pointer-events:none;
+}
+.media-grid.photo-grid:is([data-photo-count="2"],[data-photo-count="3"],[data-photo-count="4"]) {
+ aspect-ratio:16/9;grid-template-rows:minmax(0,1fr);
+}
+.media-grid.photo-grid:is([data-photo-count="3"],[data-photo-count="4"]) { grid-template-rows:repeat(2,minmax(0,1fr)); }
+.media-grid.photo-grid[data-photo-count="3"] > :first-child { grid-row:span 2; }
+.media-grid.photo-grid:not(.single) > .media-button > img {
+ position:absolute;inset:0;width:100%;height:100%;max-height:none;object-fit:cover;
+}
+/* Archives from other sources may contain more than four images. */
+.media-grid.photo-grid:not(.single):not([data-photo-count="2"]):not([data-photo-count="3"]):not([data-photo-count="4"]) > .media-button { aspect-ratio:1; }

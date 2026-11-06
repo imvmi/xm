@@ -54,3 +54,26 @@ test('task center renders current work, FIFO positions, wait reason, and run his
  assert.equal(nodes['queue-wait'].hidden,false);
  assert.match(nodes['queue-wait'].textContent,/请求限流/);
 });
+
+
+test('task identities use current handles and nicknames while controls keep archive keys',async()=>{
+ const nodes=Object.fromEntries(['current-job-count','queue-count','current-job','job-queue','queue-wait','runs'].map(id=>[id,{innerHTML:'',textContent:'',hidden:true}]));
+ const escape=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+ const task={target:'oldalice',current_username:'newalice',name:'昵称 <script> "测试"',status:'running'};
+ const ctx=vm.createContext({$:id=>nodes[id],escape,date:String,number:String,icon:()=>'',api:async()=>({current:task,queue:[{...task,id:17,status:'queued'}],runs:[{...task,status:'bounded_complete'}]})});
+ vm.runInContext(source.slice(source.indexOf('const runLabels='),source.indexOf("$('refresh-runs').addEventListener")),ctx);
+ await ctx.refreshRuns();
+ for(const id of ['current-job','job-queue','runs']){
+  const html=nodes[id].innerHTML;
+  assert.match(html,/class="task-archive-link" href="#user\/oldalice"/);
+  assert.match(html,/昵称 &lt;script&gt; &quot;测试&quot;/);
+  assert.match(html,/href="https:\/\/x.com\/newalice"/);
+  assert.match(html,/@newalice/);
+  assert.doesNotMatch(html,/@oldalice|<script>/);
+ }
+ assert.match(nodes['current-job'].innerHTML,/data-stop-target="oldalice"/);
+ assert.match(nodes['job-queue'].innerHTML,/data-cancel-job="17"/);
+ const fallback=ctx.taskProfileHTML({target:'unknown'});
+ assert.match(fallback,/>unknown<\/a>/);
+ assert.match(fallback,/@unknown/);
+});

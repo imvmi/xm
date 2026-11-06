@@ -441,20 +441,6 @@
     gap:2px;
     border-radius:14px;
   }
-  :is(#view-user,#view-home) .media-grid:not(.single):not(:has(video)) {
-    aspect-ratio:16 / 9;
-    grid-auto-rows:1fr;
-  }
-  :is(#view-user,#view-home) .media-grid:not(.single):not(:has(video)) .media-button {
-    min-height:0;
-  }
-  :is(#view-user,#view-home) .media-grid:not(.single):not(:has(video)) img {
-    height:100%;
-    min-height:0;
-  }
-  :is(#view-user,#view-home) .media-grid:not(:has(video)):has(>:nth-child(3):last-child)>:first-child {
-    grid-row:span 2;
-  }
   :is(#view-user,#view-home) .post-footer {
     margin-left:62px;
     padding-right:12px;

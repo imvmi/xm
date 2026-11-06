@@ -34,7 +34,7 @@ function accountRows(){
    monitored:monitorListReady?!!m:!!u.monitored,runtime_pending:!monitorListReady&&u.monitored};
  });
 }
-function accountNeedsAttention(u){return !!(u.monitored&&(u.last_error||['incomplete','media_failed','failed','interrupted'].includes(u.last_status)||u.baseline_status==='blocked'));}
+function accountNeedsAttention(u){return !!(u.monitored&&(Object.hasOwn(u,'attention')?u.attention:u.last_status==='cancelled'&&u.last_error==='任务已停止；已入库内容保留'?false:u.last_error||['incomplete','media_failed','failed','interrupted'].includes(u.last_status)||u.baseline_status==='blocked'));}
 function filteredAccounts(rows){
  const q=$('user-search').value.trim().toLowerCase(),filter=$('monitor-filter').value,sort=$('monitor-sort').value;
  const list=rows.filter(u=>(u.username+' '+handle(u)+' '+(u.name||'')).toLowerCase().includes(q)&&(
@@ -60,6 +60,7 @@ function accountCard(u){
  const lastSaved=u.stats_pending?'统计加载中…':u.last_saved?'最近归档 '+date(u.last_saved,true):'等待第一次采集';
  return `<div class="account-card-top"><div class="account-identity"><a class="account-avatar-link" href="${userURL(u.username)}" aria-label="查看 ${escape(u.name||handle(u))} 的归档">${avatar(handle(u),'user-avatar',u.avatar_url)}</a><span><strong><a class="account-name" href="${userURL(u.username)}" title="${escape(u.name||handle(u))}">${escape(u.name||handle(u))}</a>${u.protected?icon('lock'):''}</strong><a class="user-handle" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer" title="@${escape(handle(u))}">@${escape(handle(u))}</a>${u.current_username&&u.current_username!==u.username?`<small class="muted" title="原 @${key} · 归档已延续">原 @${key} · 归档已延续</small>`:''}</span></div><span class="badge ${cls}">${label}${accountNeedsAttention(u)&&label!=='需关注'?' · 需关注':''}</span></div>
  <div class="account-stats"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个媒体</span><span class="account-last-saved"><span title="${escape(lastSaved)}">${escape(lastSaved)}</span></span></div>
+ ${accountNeedsAttention(u)&&u.attention?`<p class="account-attention" title="${escape(u.attention.suggestion)}">上次采集：${escape(u.attention.label)}</p>`:''}
  <div class="account-controls"><button type="button" class="timeline-switch" role="switch" aria-checked="${shown}" aria-label="@${escape(handle(u))} 在主时间线显示" data-monitor="${key}" data-op="timeline"${disabled}><span class="switch-track" aria-hidden="true"></span><span>首页显示</span></button><button type="button" class="timeline-switch" role="switch" aria-checked="${enabled}" aria-label="@${escape(handle(u))} 自动采集" title="${escape(autoHelp)}" data-monitor="${key}" data-op="toggle"${pending||!u.monitored||u.runtime_pending?' disabled':''}><span class="switch-track" aria-hidden="true"></span><span>自动采集</span></button></div>`;
 }
 function accountManagementHTML(u){
@@ -68,7 +69,7 @@ function accountManagementHTML(u){
  if(accountPending.has(u.username))operations=operations.replace(/<button\b([^>]*)>/g,(tag,attrs)=>attrs.includes('disabled')?tag:`<button disabled${attrs}>`);
  const detail=u.monitored&&!u.runtime_pending?`<details class="account-details" data-detail="${key}:status"${accountExpanded.has(u.username+':status')?' open':''}><summary>采集详情${accountNeedsAttention(u)?' · 需关注':''}</summary><div>${baselineHTML(u)}${checkpointHTML(u)}${u.last_error?`<p class="account-error">${escape(u.last_error)}</p>`:''}${monitorNextStep(u)}<p>最近结束：${u.last_finished?escape(date(u.last_finished,true)):'尚未采集'}</p><p>${!u.enabled||state.overview?.paused?'自动采集已暂停':u.next_run>state.overview?.server_time?'下次：'+escape(date(u.next_run,true)):'等待调度'} · 每 ${number(u.interval_seconds/60)} 分钟（${u.interval_override_seconds?'自定义':'跟随全局'}）</p><p>上轮新增 ${number(u.new_posts)} 条</p><a class="account-task-link" href="#activity">查看任务 →</a></div></details>`:'';
  const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往爬虫设置恢复。':'自动采集按账号周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
- return `<p class="account-menu-help">${escape(help)}</p><div class="account-action-list">${operations}</div>${detail}`;
+ return `${accountNeedsAttention(u)&&u.attention?`<div class="account-attention"><strong>上次采集：${escape(u.attention.label)}</strong><p>${escape(u.attention.suggestion)}</p>${u.last_finished?`<small>记录于 ${escape(date(u.last_finished,true))}</small>`:''}</div>`:''}<p class="account-menu-help">${escape(help)}</p><div class="account-action-list">${operations}</div>${detail}`;
 }
 function renderAccountMenu(){
  const dialog=$('account-menu-dialog');if(!dialog.open)return;

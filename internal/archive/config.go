@@ -11,6 +11,8 @@ import (
 )
 
 type Config struct {
+	SessionTTLSeconds int `json:"session_ttl_seconds"`
+
 	SQLiteReadConnections int `json:"sqlite_read_connections"`
 
 	Database              DatabaseConfig        `json:"database,omitempty"`
@@ -65,7 +67,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{BrowserMode: "local", CDPHost: "127.0.0.1", CDPPort: 9222, SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
+	return Config{SessionTTLSeconds: 43200, BrowserMode: "local", CDPHost: "127.0.0.1", CDPPort: 9222, SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()
@@ -102,6 +104,12 @@ func LoadConfig(path string) (Config, error) {
 func normalizeConfig(path string, c Config) (Config, error) {
 	var err error
 	defaults := DefaultConfig()
+	if c.SessionTTLSeconds == 0 {
+		c.SessionTTLSeconds = defaults.SessionTTLSeconds
+	}
+	if err := ValidateSessionTTL(c.SessionTTLSeconds); err != nil {
+		return c, err
+	}
 	if c.BrowserMode == "" {
 		c.BrowserMode = defaults.BrowserMode
 	}
@@ -379,4 +387,14 @@ func AtomicWrite(path string, data []byte) error {
 		return fmt.Errorf("保存文件: %w", err)
 	}
 	return nil
+}
+
+// ValidateSessionTTL accepts the login durations offered by the settings page.
+func ValidateSessionTTL(seconds int) error {
+	switch seconds {
+	case 3600, 43200, 86400, 604800, 2592000:
+		return nil
+	default:
+		return errors.New("系统登录有效期必须为 1 小时、12 小时、1 天、7 天或 30 天")
+	}
 }

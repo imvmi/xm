@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"xm/internal/archive"
 	"xm/internal/database"
@@ -26,6 +27,10 @@ func archiveUsersCTE(target string) (string, []any) {
 // latest profile are fetched in one round trip, including archived-only users.
 func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 	cte, args := archiveUsersCTE(target)
+	return archiveUserDirectoryQuery(db, cte, args)
+}
+
+func archiveUserDirectoryQuery(db *database.DB, cte string, args []any) ([]UserView, error) {
 	rows, err := db.Query(cte+`SELECT u.username,COALESCE(i.user_id,''),COALESCE(i.current_username,u.username),
  m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.last_finished,0),COALESCE(m.show_in_timeline,a.show_in_timeline,1),
  COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0)
@@ -52,6 +57,37 @@ func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// Task records keep their archive keys, even after monitoring is removed. Resolve
+// their current labels in batches using the same profile source as the directory.
+func taskProfiles(db *database.DB, targets []string) (map[string]UserView, error) {
+	profiles := make(map[string]UserView)
+	seen := make(map[string]bool)
+	unique := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if !seen[target] {
+			seen[target] = true
+			unique = append(unique, target)
+		}
+	}
+	for start := 0; start < len(unique); start += 500 {
+		chunk := unique[start:min(start+500, len(unique))]
+		args := make([]any, len(chunk))
+		selects := make([]string, len(chunk))
+		for i, target := range chunk {
+			args[i] = target
+			selects[i] = "SELECT ?"
+		}
+		users, err := archiveUserDirectoryQuery(db, "WITH users(username) AS ("+strings.Join(selects, " UNION ALL ")+") ", args)
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			profiles[u.Username] = u
+		}
+	}
+	return profiles, nil
 }
 
 // A correlated count drives the lookup from the account's distinct related

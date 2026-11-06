@@ -121,7 +121,7 @@ func (a *auth) session(r *http.Request) (session, bool) {
 	}
 	return s, true
 }
-func (a *auth) login(w http.ResponseWriter, r *http.Request) {
+func (a *auth) login(w http.ResponseWriter, r *http.Request, ttlSeconds int) {
 	var input struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -154,7 +154,7 @@ func (a *auth) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := randomToken()
-	s := session{CSRF: randomToken(), Expires: time.Now().Add(12 * time.Hour)}
+	s := session{CSRF: randomToken(), Expires: time.Now().Add(time.Duration(ttlSeconds) * time.Second)}
 	a.mu.Lock()
 	delete(a.attempts, ip)
 	for k, v := range a.sessions {
@@ -167,7 +167,7 @@ func (a *auth) login(w http.ResponseWriter, r *http.Request) {
 	}
 	a.sessions[sha256.Sum256([]byte(token))] = s
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "xm_session", Value: token, Path: "/", HttpOnly: true, Secure: a.secure || r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	http.SetCookie(w, &http.Cookie{Name: "xm_session", Value: token, Path: "/", HttpOnly: true, Secure: a.secure || r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: ttlSeconds})
 	respond(w, 200, map[string]string{"csrf": s.CSRF})
 }
 func (a *auth) logout(w http.ResponseWriter, r *http.Request) {

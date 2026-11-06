@@ -85,7 +85,11 @@ func ParsePage(data []byte, operation string) (Page, error) {
 		case 88:
 			return page, fail("rate", "X 请求限流，请等待后重试")
 		case 179:
-			return page, fail("access", "当前账号无权查看该锁推账号的内容")
+			return page, accountFailure("protected", AccountProtectedMessage)
+		case 63:
+			return page, accountFailure("suspended", AccountSuspendedMessage)
+		case 50:
+			return page, accountFailure("not_found", AccountNotFoundMessage)
 		case 64, 326:
 			return page, fail("auth", "采集账号受限或需要人工验证，请在浏览器处理")
 		default:
@@ -94,10 +98,25 @@ func ParsePage(data []byte, operation string) (Page, error) {
 	}
 	u := at(root, "data", "user", "result")
 	if u == nil {
+		if operation == "UserByScreenName" || operation == "UserByRestId" {
+			// An explicit empty user is distinct from a changed/malformed envelope.
+			if user, exists := obj(root["data"])["user"]; exists {
+				if result, exists := obj(user)["result"]; user == nil || exists && result == nil {
+					return page, accountFailure("username_missing", AccountLookupMissingMessage)
+				}
+			}
+		}
 		return page, errors.New("未找到 X 用户数据，可能无权访问或页面响应结构已变化")
 	}
 	if str(at(u, "__typename")) == "UserUnavailable" {
-		return page, fail("access", "目标账号不可用或当前账号无权访问")
+		switch strings.ToLower(str(at(u, "reason"))) {
+		case "suspended":
+			return page, accountFailure("suspended", AccountSuspendedMessage)
+		case "notfound", "not_found":
+			return page, accountFailure("not_found", AccountNotFoundMessage)
+		default:
+			return page, accountFailure("unavailable", AccountUnavailableMessage)
+		}
 	}
 	if operation == "UserByScreenName" || operation == "UserByRestId" {
 		p := &Profile{

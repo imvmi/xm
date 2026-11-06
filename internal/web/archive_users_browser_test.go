@@ -24,6 +24,10 @@ func TestArchiveDirectoryLoadsBeforeStatisticsBrowser(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	seedMonitor(t, a, "alice")
+	if _, err := a.store.DB.Exec("UPDATE monitors SET enabled=0,last_error=?,last_finished=123 WHERE username='alice'", archive.AccountSuspendedMessage); err != nil {
+		t.Fatal(err)
+	}
 	handler := a.Handler()
 	release := make(chan struct{})
 	var once sync.Once
@@ -74,6 +78,16 @@ func TestArchiveDirectoryLoadsBeforeStatisticsBrowser(t *testing.T) {
 	if !eval(`state.users.every(u=>u.stats_pending) && $('user-list').textContent.includes('—') && $('user-empty').hidden && !$('user-status').hidden`) {
 		t.Fatal("directory must be usable before any statistics response")
 	}
+	wait(`document.querySelector('[data-account="alice"]').textContent.includes('上次采集：账号已被冻结')`)
+	eval(`(()=>{document.querySelector('[data-account="alice"]').click();return true})()`)
+	wait(`$('account-menu-dialog').open && $('account-menu-content').textContent.includes('待账号解冻后')`)
+	if !eval(`$('account-menu-content').textContent.includes('记录于') && $('account-menu-content').querySelector('[data-op="identity"]')!==null`) {
+		t.Fatal("missing attention details/actions")
+	}
+	eval(`(()=>{$('account-menu-dialog').close();$('monitor-filter').value='attention';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
+	wait(`document.querySelectorAll('#user-list .user-card').length===1`)
+	eval(`(()=>{$('monitor-filter').value='all';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
+	wait(`document.querySelectorAll('#user-list .user-card').length===2`)
 	// Account timelines must also be usable while statistics remain blocked.
 	eval(`(()=>{location.hash='user/alice';return true})()`)
 	wait(`state.view==='user' && state.postIDs.size===1 && !state.postsLoading`)

@@ -291,3 +291,21 @@ test('quote display depth folds independently of stored data and keeps a detail 
  assert.match(f.ctx.quoteHTML({quote_id:'99'}),/暂不可用或尚未归档/);
  assert.equal(f.ctx.quoteHTML({id:'99'}),'');
 });
+
+
+test('missing reply preview is one external link without a separate source label',()=>{
+ const ctx=vm.createContext({escape:String,avatar:()=>'<span class="avatar"></span>',userAvatar:()=>'',date:String,userURL:u=>'#user/'+u});
+ vm.runInContext(source.slice(source.indexOf('function replyHTML('),source.indexOf('function quoteHTML(')),ctx);
+ for(const self_reply of [true,false]){
+  const html=ctx.replyHTML({reply_to:'999',username:'alice',self_reply,archive_target:'alice'});
+  assert.match(html,/^<a class="post-body reply-preview reply-preview-missing"/);
+  assert.match(html,/href="https:\/\/x.com\/i\/status\/999" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html,/<p class="reply-preview-text">回复的推文尚未归档或关系无法确认<\/p>/);
+  assert.equal((html.match(/<a /g)||[]).length,1);
+  assert.doesNotMatch(html,/reply-parent-source|在 X 查看原文 ↗/);
+ }
+ const archived=ctx.replyHTML({reply_to:'100',username:'alice',self_reply:true,archive_target:'alice',reply_preview:{username:'alice',name:'昵称',text:'原帖内容'}});
+ assert.match(archived,/<section class="post-body reply-preview"/);
+ assert.match(archived,/原帖内容/);
+ assert.match(archived,/class="reply-parent-source"/);
+});

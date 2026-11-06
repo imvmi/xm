@@ -15,38 +15,39 @@ import (
 )
 
 type Monitor struct {
-	UserID           string          `json:"user_id"`
-	CurrentUsername  string          `json:"current_username"`
-	Username         string          `json:"username"`
-	Interval         int             `json:"interval_seconds"`
-	IntervalOverride int             `json:"interval_override_seconds"`
-	Replies          bool            `json:"replies"`
-	Enabled          bool            `json:"enabled"`
-	ShowInTimeline   bool            `json:"show_in_timeline"`
-	Requested        bool            `json:"requested"`
-	Running          bool            `json:"running"`
-	NextRun          int64           `json:"next_run"`
-	LastStarted      int64           `json:"last_started"`
-	LastFinished     int64           `json:"last_finished"`
-	LastSuccess      int64           `json:"last_success"`
-	LastError        string          `json:"last_error"`
-	Failures         int             `json:"failures"`
-	Posts            int             `json:"posts"`
-	LastPosts        int             `json:"last_posts"`
-	NewPosts         int             `json:"new_posts"`
-	LastStatus       string          `json:"last_status"`
-	Catchup          bool            `json:"catchup"`
-	CatchupPost      string          `json:"-"`
-	CatchupReply     string          `json:"-"`
-	CatchupScrolls   int             `json:"-"`
-	BaselineStatus   string          `json:"baseline_status"`
-	PostsBaseline    string          `json:"posts_baseline_status"`
-	RepliesBaseline  string          `json:"replies_baseline_status"`
-	BaselineStarted  int64           `json:"baseline_started"`
-	BaselineFinished int64           `json:"baseline_finished"`
-	BaselineStop     string          `json:"baseline_stop_reason,omitempty"`
-	Checkpoint       *CheckpointView `json:"checkpoint,omitempty"`
-	QueuedJob        *CollectionJob  `json:"queued_job,omitempty"`
+	UserID           string            `json:"user_id"`
+	CurrentUsername  string            `json:"current_username"`
+	Username         string            `json:"username"`
+	Interval         int               `json:"interval_seconds"`
+	IntervalOverride int               `json:"interval_override_seconds"`
+	Replies          bool              `json:"replies"`
+	Enabled          bool              `json:"enabled"`
+	ShowInTimeline   bool              `json:"show_in_timeline"`
+	Requested        bool              `json:"requested"`
+	Running          bool              `json:"running"`
+	NextRun          int64             `json:"next_run"`
+	LastStarted      int64             `json:"last_started"`
+	LastFinished     int64             `json:"last_finished"`
+	LastSuccess      int64             `json:"last_success"`
+	LastError        string            `json:"last_error"`
+	Attention        *MonitorAttention `json:"attention"`
+	Failures         int               `json:"failures"`
+	Posts            int               `json:"posts"`
+	LastPosts        int               `json:"last_posts"`
+	NewPosts         int               `json:"new_posts"`
+	LastStatus       string            `json:"last_status"`
+	Catchup          bool              `json:"catchup"`
+	CatchupPost      string            `json:"-"`
+	CatchupReply     string            `json:"-"`
+	CatchupScrolls   int               `json:"-"`
+	BaselineStatus   string            `json:"baseline_status"`
+	PostsBaseline    string            `json:"posts_baseline_status"`
+	RepliesBaseline  string            `json:"replies_baseline_status"`
+	BaselineStarted  int64             `json:"baseline_started"`
+	BaselineFinished int64             `json:"baseline_finished"`
+	BaselineStop     string            `json:"baseline_stop_reason,omitempty"`
+	Checkpoint       *CheckpointView   `json:"checkpoint,omitempty"`
+	QueuedJob        *CollectionJob    `json:"queued_job,omitempty"`
 }
 
 type CheckpointView struct {
@@ -119,6 +120,7 @@ func scanMonitor(row scanner) (Monitor, error) {
 	err := row.Scan(&m.UserID, &m.CurrentUsername, &m.Username, &m.Interval, &m.IntervalOverride, &m.Replies, &m.Enabled, &m.Requested, &m.Running, &m.NextRun, &m.LastStarted, &m.LastFinished, &m.LastSuccess, &m.LastError, &m.Failures, &m.LastPosts, &m.NewPosts, &m.Posts, &m.LastStatus, &m.Catchup, &m.CatchupPost, &m.CatchupReply, &m.CatchupScrolls, &m.BaselineStatus, &m.PostsBaseline, &m.RepliesBaseline, &m.BaselineStarted, &m.BaselineFinished, &m.BaselineStop, &checkpoint, &m.ShowInTimeline)
 	if err == nil {
 		m.LastError = displayCollectionMessage(m.LastError)
+		m.Attention = monitorAttention(m)
 	}
 	if err == nil && checkpoint != "" {
 		var progress archive.CollectionProgress
@@ -383,7 +385,24 @@ func recentRuns(db *database.DB) ([]map[string]any, error) {
 		message = displayCollectionMessage(message)
 		result = append(result, map[string]any{"id": id, "target": target, "started_at": start, "finished_at": end, "status": status, "posts": posts, "message": message, "new_posts": nullableCount(added), "job_id": jobID, "source": source, "queued_at": queuedAt, "mode": mode})
 	}
-	return result, r.Err()
+	if err := r.Err(); err != nil {
+		return nil, err
+	}
+	r.Close()
+	targets := make([]string, 0, len(result))
+	for _, run := range result {
+		targets = append(targets, run["target"].(string))
+	}
+	profiles, err := taskProfiles(db, targets)
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range result {
+		profile := profiles[run["target"].(string)]
+		run["current_username"] = profile.CurrentUsername
+		run["name"] = profile.Name
+	}
+	return result, nil
 }
 
 func counts(db *database.DB) (map[string]int64, error) {

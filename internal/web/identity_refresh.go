@@ -16,6 +16,58 @@ type identityLookupFailure struct {
 	cookieGeneration string
 }
 
+// The running job owns the serial scheduler. Recover once before any timeline
+// data is saved, and retry only when the numeric ID proves an actual rename.
+func (s *Scheduler) recoverRenamedAccount(ctx context.Context, cfg archive.Config, cookies archive.Cookies, generation, target string, identity archive.TargetIdentity, original error) (archive.TargetIdentity, bool, error) {
+	a := s.app
+	gates, err := loadSchedulerState(a.store.DB)
+	if err != nil {
+		return identity, false, err
+	}
+	if gates.CookieGeneration != generation || gates.CookieBlocked != "" || gates.CooldownUntil > time.Now().Unix() {
+		return identity, false, original
+	}
+	refs, err := a.store.IdentityReferencePosts(target, identity.UserID)
+	if err != nil {
+		return identity, false, err
+	}
+	s.setPhase("identity")
+	// A separate identity lookup must not share the collector's live CDP tab.
+	s.closeSession()
+	lookupCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	profile, err := a.refreshIdentity(lookupCtx, cfg, cookies, identity, refs, "")
+	if ctx.Err() != nil {
+		return identity, false, ctx.Err()
+	}
+	if err != nil {
+		// Preserve global stop signals and newly discovered explicit diagnoses.
+		if archive.FailureKind(err) == "auth" || archive.FailureKind(err) == "rate" || archive.FailureKind(err) == "identity" || archive.FailureReason(err) == "suspended" || archive.FailureReason(err) == "protected" {
+			return identity, false, err
+		}
+		return identity, false, &archive.Failure{Kind: "access", Reason: archive.FailureReason(original), Message: original.Error() + "；自动更新账号身份未成功：" + safeMessage(err)}
+	}
+	if lookupCtx.Err() != nil {
+		return identity, false, &archive.Failure{Kind: "access", Message: original.Error() + "；自动更新账号身份超时"}
+	}
+	if profile.ID != identity.UserID {
+		return identity, false, &archive.Failure{Kind: "identity", Message: "账号身份不一致：数字用户 ID 与原账号不符，未更新"}
+	}
+	if strings.EqualFold(profile.Username, identity.CurrentUsername) {
+		return identity, false, &archive.Failure{Kind: "access", Message: original.Error() + "；自动核对后用户名未变化，未确认改名"}
+	}
+	a.changeMu.Lock()
+	defer a.changeMu.Unlock()
+	if ctx.Err() != nil {
+		return identity, false, ctx.Err()
+	}
+	if err = a.store.SaveTargetProfile(target, profile); err != nil {
+		return identity, false, err
+	}
+	identity.CurrentUsername = strings.ToLower(profile.Username)
+	return identity, true, nil
+}
+
 // Reserve the serial collector while resolving identity. Never share its live
 // browser session with an HTTP handler, or let two lookups bypass pacing.
 func (a *App) reserveIdentityRefresh() bool {

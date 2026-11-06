@@ -217,7 +217,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]bool{"needed": false})
 	})
-	mux.HandleFunc("POST /api/login", a.auth.login)
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		a.auth.login(w, r, a.Config().SessionTTLSeconds)
+	})
 	mux.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
 		s, _ := a.auth.session(r)
 		respond(w, 200, map[string]string{"csrf": s.CSRF})
@@ -496,10 +498,11 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		proxyLabel = u.Redacted()
 	}
 	_, err := a.store.LoadCookies()
-	respond(w, 200, map[string]any{"configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "video_timeline_preload": cfg.VideoTimelinePreload, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "quote_display_depth": cfg.QuoteDepthLimit(), "timeline_page_size": cfg.TimelinePageSize})
+	respond(w, 200, map[string]any{"session_ttl_seconds": cfg.SessionTTLSeconds, "configuration_locked": true, "database_driver": cfg.Database.DriverName(), "sqlite_read_connections": cfg.SQLiteReadConnections, "database_name": cfg.Database.Name, "proxy_configured": cfg.Proxy != "", "proxy_label": proxyLabel, "cookie_ready": err == nil, "cookie_blocked": state(a.store.DB, "cookie_blocked"), "cookie_imported": state(a.store.DB, "cookie_imported"), "browser_mode": cfg.BrowserMode, "cdp_host": cfg.CDPHost, "cdp_port": cfg.CDPPort, "chrome_headless": cfg.Headless, "default_interval_seconds": cfg.DefaultInterval, "queue_interval_seconds": cfg.QueueInterval, "rate_limit_mode": cfg.RateLimitMode, "polling_paused": cfg.PollingPaused, "request_timeout_seconds": cfg.RequestTimeout, "scroll_delay_seconds": cfg.ScrollDelay, "scroll_jitter_seconds": cfg.ScrollJitter, "timeline_idle_seconds": cfg.TimelineIdleSeconds, "known_boundary_posts": cfg.KnownBoundaryPosts, "max_media_bytes": cfg.MaxMediaBytes, "browser_max_age_seconds": cfg.BrowserMaxAge, "browser_max_tasks": cfg.BrowserMaxTasks, "media_retry_initial_seconds": cfg.MediaRetryInitial, "media_retry_max_seconds": cfg.MediaRetryMax, "archive_theme": cfg.ArchiveTheme, "video_default_muted": cfg.VideoMutedByDefault(), "video_loop": cfg.VideoLoop, "video_auto_next": cfg.VideoAutoNext, "video_timeline_autoplay": cfg.VideoTimelineAutoplay, "video_timeline_preload": cfg.VideoTimelinePreload, "media_preload_mode": cfg.MediaPreloadMode, "image_cache_seconds": cfg.ImageCacheSeconds, "video_cache_seconds": cfg.VideoCacheSeconds, "quote_display_depth": cfg.QuoteDepthLimit(), "timeline_page_size": cfg.TimelinePageSize})
 }
 
 type settingsInput struct {
+	SessionTTLSeconds *int `json:"session_ttl_seconds"`
 	browserSettingsInput
 	SQLiteReadConnections *int `json:"sqlite_read_connections"`
 
@@ -540,6 +543,13 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 	a.changeMu.Lock()
 	defer a.changeMu.Unlock()
 	cfg := a.Config()
+	if v.SessionTTLSeconds != nil {
+		if err := archive.ValidateSessionTTL(*v.SessionTTLSeconds); err != nil {
+			problem(w, 400, err.Error())
+			return
+		}
+		cfg.SessionTTLSeconds = *v.SessionTTLSeconds
+	}
 	if err := v.browserSettingsInput.apply(&cfg); err != nil {
 		problem(w, 400, err.Error())
 		return

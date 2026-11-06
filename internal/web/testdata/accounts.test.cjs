@@ -90,3 +90,22 @@ test('global pause remains distinct from an enabled per-account switch',()=>{
  assert.match(f.ctx.accountCard(u),/aria-checked="true"[^>]*data-op="toggle"/);
  assert.match(f.ctx.accountManagementHTML(u),/全局自动采集已暂停/);
 });
+
+test('attention reasons are visible on cards and actionable in the management dialog',()=>{
+ const f=fixture(),u={...f.rows()[0],enabled:false,last_finished:100,attention:{code:'suspended',label:'账号已被冻结',suggestion:'待解冻后再开启自动采集。'}};
+ assert.match(f.ctx.accountCard(u),/上次采集：账号已被冻结/);
+ assert.match(f.ctx.accountManagementHTML(u),/待解冻后再开启自动采集/);
+ assert.match(f.ctx.accountManagementHTML(u),/记录于 100/);
+ u.attention={code:'username_unavailable',label:'账号未找到，可能已改名',suggestion:'使用“更新账号身份”核对。'};
+ assert.match(f.ctx.accountCard(u),/可能已改名/);
+ u.attention.label='<img src=x>';u.attention.suggestion='" onclick="alert(1)';
+ assert.doesNotMatch(f.ctx.accountCard(u),/<img src=x>| onclick="alert/);
+ assert.match(f.ctx.accountManagementHTML(u),/&lt;img src=x&gt;/);
+});
+test('authoritative null attention excludes intentional stops and cleared diagnostics',()=>{
+ const f=fixture();Object.assign(f.state.monitors[1],{last_error:'任务已停止；已入库内容保留',last_status:'cancelled',attention:null});
+ f.controls['monitor-filter'].value='attention';assert.deepEqual(f.names(),[]);
+ assert.doesNotMatch(f.ctx.accountCard(f.rows()[2]),/需关注|account-attention/);
+ const old={monitored:true,last_error:'任务已停止；已入库内容保留',last_status:'cancelled'};
+ assert.equal(f.ctx.accountNeedsAttention(old),false);
+});

@@ -1133,6 +1133,18 @@ dialog form {
   .sidebar .private-note { display:flex; }
 }
 
+.task-identity {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:4px 8px;
+  overflow-wrap:anywhere;
+}
+.task-identity strong,
+.task-identity a { max-width:100%; }
+.task-profile-link { color:var(--muted); font-size:13px; }
+.task-archive-link:hover,
+.task-archive-link:focus-visible,
 .task-profile-link:hover,
 .task-profile-link:focus-visible {
   text-decoration:underline;

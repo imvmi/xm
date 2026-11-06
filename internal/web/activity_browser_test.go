@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"xm/internal/archive"
 )
 
 func TestTaskCenterBrowser(t *testing.T) {
@@ -86,6 +87,42 @@ func TestTaskCenterBrowser(t *testing.T) {
 	if !eval(`!document.getElementById('runs').textContent.includes('@alice') && document.getElementById('runs').textContent.includes('还没有已结束的执行')`) {
 		t.Fatal("current task duplicated in recent history")
 	}
+	// Simulate identity refresh while task records retain their original keys.
+	for i, target := range []string{"alice", "bob"} {
+		id := []string{"42", "43"}[i]
+		if err = a.store.SaveTargetProfile(target, archive.Profile{ID: id, Username: target}); err != nil {
+			t.Fatal(err)
+		}
+		if err = a.store.SaveTargetProfile(target, archive.Profile{ID: id, Username: "new" + target}); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(map[string]any{"core": map[string]any{"user_results": map[string]any{"result": map[string]any{"core": map[string]string{"name": "昵称 " + target}}}}})
+		if err = a.store.SavePosts(target, []archive.Post{{ID: id, AuthorID: id, Username: target, Raw: raw}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	historyID, err := a.store.StartRun("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.store.EndRun(historyID, "bounded_complete", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{$('refresh-runs').click();return true})()`)
+	wait(`$('current-job').textContent.includes('@newalice') && $('job-queue').textContent.includes('@newbob') && $('runs').textContent.includes('@newbob')`)
+	if !eval(`[['current-job','alice'],['job-queue','bob'],['runs','bob']].every(([id,key])=>{const root=$(id),name=root.querySelector('.task-archive-link'),handle=root.querySelector('.task-profile-link');return name.textContent==='昵称 '+key && name.getAttribute('href')==='#user/'+key && handle.textContent==='@new'+key && handle.href==='https://x.com/new'+key && handle.target==='_blank';}) && document.querySelector('#current-job [data-stop-target]').dataset.stopTarget==='alice'`) {
+		t.Fatal("task nickname, current handle, or stable action key is incorrect")
+	}
+	if err = chromedp.Do(browser, chromedp.EmulateViewport(390, 844)); err != nil {
+		t.Fatal(err)
+	}
+	if !eval(`document.documentElement.scrollWidth<=innerWidth`) {
+		t.Fatal("task identity overflows mobile viewport")
+	}
+	eval(`(()=>{document.querySelector('#job-queue .task-archive-link').click();return true})()`)
+	wait(`state.view==='user' && state.target==='bob' && $('profile-header').textContent.includes('@newbob')`)
+	eval(`(()=>{location.hash='activity';return true})()`)
+	wait(`state.view==='activity' && document.querySelector('#job-queue .task-profile-link')?.textContent==='@newbob'`)
 	eval(`(()=>{document.querySelector('#job-queue [data-cancel-job]').click();return true})()`)
 	wait(`document.getElementById('queue-count').textContent==='0' && !document.getElementById('job-queue').textContent.includes('@bob')`)
 	var enabled bool

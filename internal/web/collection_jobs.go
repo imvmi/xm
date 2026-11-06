@@ -11,28 +11,31 @@ import (
 )
 
 type CollectionJob struct {
-	ID         int64  `json:"id"`
-	Target     string `json:"target"`
-	Source     string `json:"source"`
-	Status     string `json:"status"`
-	QueuedAt   int64  `json:"queued_at"`
-	QueueOrder int64  `json:"-"`
-	StartedAt  int64  `json:"started_at"`
-	FinishedAt int64  `json:"finished_at"`
-	RunID      int64  `json:"run_id"`
-	Attempts   int    `json:"attempts"`
-	RetryAt    int64  `json:"retry_at,omitempty"`
-	RetryCount int    `json:"retry_count,omitempty"`
-	Message    string `json:"message"`
-	Mode       string `json:"mode"`
-	Position   int    `json:"position,omitempty"`
-	PostsRead  int    `json:"posts_read,omitempty"`
-	NewPosts   int    `json:"new_posts,omitempty"`
-	Phase      string `json:"phase,omitempty"`
-	Elapsed    int64  `json:"elapsed_seconds,omitempty"`
-	Remaining  *int64 `json:"remaining_seconds,omitempty"`
-	MediaDone  *int   `json:"media_done,omitempty"`
-	MediaTotal *int   `json:"media_total,omitempty"`
+	// Target is the stable archive key; CurrentUsername is resolved when read.
+	CurrentUsername string `json:"current_username"`
+	Name            string `json:"name"`
+	ID              int64  `json:"id"`
+	Target          string `json:"target"`
+	Source          string `json:"source"`
+	Status          string `json:"status"`
+	QueuedAt        int64  `json:"queued_at"`
+	QueueOrder      int64  `json:"-"`
+	StartedAt       int64  `json:"started_at"`
+	FinishedAt      int64  `json:"finished_at"`
+	RunID           int64  `json:"run_id"`
+	Attempts        int    `json:"attempts"`
+	RetryAt         int64  `json:"retry_at,omitempty"`
+	RetryCount      int    `json:"retry_count,omitempty"`
+	Message         string `json:"message"`
+	Mode            string `json:"mode"`
+	Position        int    `json:"position,omitempty"`
+	PostsRead       int    `json:"posts_read,omitempty"`
+	NewPosts        int    `json:"new_posts,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	Elapsed         int64  `json:"elapsed_seconds,omitempty"`
+	Remaining       *int64 `json:"remaining_seconds,omitempty"`
+	MediaDone       *int   `json:"media_done,omitempty"`
+	MediaTotal      *int   `json:"media_total,omitempty"`
 }
 
 const (
@@ -376,6 +379,29 @@ func activityJobs(db *database.DB) (*CollectionJob, []CollectionJob, error) {
 		position++
 		job.Position = position
 		queue = append(queue, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rows.Close() // Release the reader before loading profile labels and metrics.
+	targets := make([]string, 0, len(queue)+1)
+	if current != nil {
+		targets = append(targets, current.Target)
+	}
+	for _, job := range queue {
+		targets = append(targets, job.Target)
+	}
+	profiles, err := taskProfiles(db, targets)
+	if err != nil {
+		return nil, nil, err
+	}
+	if current != nil {
+		current.CurrentUsername = profiles[current.Target].CurrentUsername
+		current.Name = profiles[current.Target].Name
+	}
+	for i := range queue {
+		queue[i].CurrentUsername = profiles[queue[i].Target].CurrentUsername
+		queue[i].Name = profiles[queue[i].Target].Name
 	}
 	if current != nil && current.RunID > 0 {
 		_ = db.QueryRow("SELECT posts_read,new_posts FROM run_metrics WHERE run_id=?", current.RunID).Scan(&current.PostsRead, &current.NewPosts)

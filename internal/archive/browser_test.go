@@ -31,6 +31,9 @@ func TestBrowserCollectionOffline(t *testing.T) {
 		{"authorized", string(fixture(t, "timeline.json")), "UserTweets", false, 200, ""},
 		{"originals_timeline", string(fixture(t, "timeline.json")), "UserOriginalsTimeline", false, 200, ""},
 		{"replies_timeline", string(fixture(t, "timeline.json")), "UserRepliesTimeline", false, 200, ""},
+		{"suspended", `{"data":{"user":{"result":{"__typename":"UserUnavailable","reason":"Suspended"}}}}`, "UserOriginalsTimeline", true, 200, ""},
+		{"suspended_http403", `{"errors":[{"code":63}]}`, "UserOriginalsTimeline", true, 403, ""},
+		{"not_found_http404", `{"errors":[{"code":50}]}`, "UserOriginalsTimeline", true, 404, ""},
 		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true, 200, ""},
 		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true, 200, ""},
 		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true, 200, "x-rate-limit-reset"},
@@ -95,7 +98,7 @@ func TestBrowserCollectionOffline(t *testing.T) {
 				return nil
 			}
 			identity := TargetIdentity{}
-			if !test.wantErr {
+			if !test.wantErr || strings.HasPrefix(test.name, "suspended") || test.name == "not_found_http404" {
 				identity = TargetIdentity{UserID: "42", CurrentUsername: "alice"}
 			}
 			result, err := collectIdentity(context.Background(), cfg, Cookies{AuthToken: "synthetic", CSRF: "synthetic"}, "alice", identity, 2, test.operation == "UserRepliesTimeline", func(p Page) error {
@@ -109,6 +112,12 @@ func TestBrowserCollectionOffline(t *testing.T) {
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("expected explicit failure")
+				}
+				if strings.HasPrefix(test.name, "suspended") && FailureReason(err) != "suspended" {
+					t.Fatal("lost suspension diagnosis", err)
+				}
+				if test.name == "not_found_http404" && FailureReason(err) != "not_found" {
+					t.Fatal("lost missing-account diagnosis", err)
 				}
 				if test.name == "http_503" && FailureKind(err) != "timeline" {
 					t.Fatalf("temporary upstream failure was not retryable: %v", err)

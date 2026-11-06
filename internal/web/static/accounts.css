@@ -91,3 +91,7 @@
 #account-menu-handle:hover { text-decoration:underline; }
 
 #identity-dialog{max-height:calc(100dvh - 32px);overflow:auto;overflow-wrap:anywhere}#identity-result{margin:16px 0}#identity-form{margin-top:16px}#identity-form .button{margin-top:12px}#identity-dialog .dialog-actions{flex-wrap:wrap}
+
+.account-attention { margin:8px 0 12px;padding:8px 10px;border-left:3px solid #bb894a;border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px;line-height:1.6;overflow-wrap:anywhere; }
+.account-attention p { margin:4px 0; }
+.account-attention small { color:var(--muted); }

@@ -48,7 +48,7 @@ function showLogin() {
   releaseTimelineMedia();
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
-  settingsBaselines.clear();$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
+  settingsBaselines.clear();$('session-settings-form').reset();$('session-settings-result').textContent='';$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
   state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
@@ -233,7 +233,7 @@ for(const home of [false,true])for(const name of home?homeTimelineTabs:timelineT
 function defaultVideoMuted(){return state.settings?.video_default_muted!==false;}
 function mediaHTML(post) {
   const done=post.media.filter(m=>m.status==='done');let html='';
-  if(done.length){html+=`<div class="media-grid ${done.length===1?'single':''}">`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`+(m.version?'?v='+encodeURIComponent(m.version):'');if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=videoHTML(post,src);}html+='</div>';}
+  if(done.length){const photosOnly=done.every(m=>m.kind==='photo');html+=`<div class="media-grid ${done.length===1?'single':''}${photosOnly?' photo-grid':''}"${photosOnly?` data-photo-count="${done.length}"`:''}>`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`+(m.version?'?v='+encodeURIComponent(m.version):'');if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=videoHTML(post,src);}html+='</div>';}
   for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='failed'?'下载失败':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
   return html;
 }
@@ -279,8 +279,10 @@ function replyHTML(p){
  if(!p.reply_to)return '';
  const q=p.reply_preview,source=`https://x.com/i/status/${encodeURIComponent(p.reply_to)}`;
  const username=q?.username||(p.self_reply?p.username:'?'),name=escape(q?.name||username);
+ const rail=`<div class="reply-thread-rail">${avatar(username,'post-avatar',q?.avatar_url||(p.self_reply?p.avatar_url||userAvatar(p.username):''))}</div>`;
+ if(!q)return `<a class="post-body reply-preview reply-preview-missing" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="回复的推文尚未归档或关系无法确认，在 X 查看原文（新标签页）">${rail}<div class="post-content"><div class="reply-preview-label">回复的推文</div><p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p></div></a>`;
  const author=p.self_reply&&p.archive_target?`<a href="${userURL(p.archive_target)}">${name}</a>`:name;
- return `<section class="post-body reply-preview${q?'':' reply-preview-missing'}" aria-label="回复的推文"><div class="reply-thread-rail">${avatar(username,'post-avatar',q?.avatar_url||(p.self_reply?p.avatar_url||userAvatar(p.username):''))}</div><div class="post-content"><div class="reply-preview-label">${q?'原帖摘要':'回复的推文'}</div>${q?`<div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer">@${escape(username)}</a><span class="timeline-date"> · ${escape(date(q.created_at))}</span></span></div></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p>`:'<p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p>'}<a class="reply-parent-source" href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
+ return `<section class="post-body reply-preview" aria-label="回复的推文">${rail}<div class="post-content"><div class="reply-preview-label">原帖摘要</div><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer">@${escape(username)}</a><span class="timeline-date"> · ${escape(date(q.created_at))}</span></span></div></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p><a class="reply-parent-source" href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
 }
 function quoteHTML(p,depth=0){
  if(!p.quote_id)return '';
@@ -440,7 +442,7 @@ for(const header of document.querySelectorAll('[data-timeline-top]')){
 }
 
 
-function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested||m.queued_job)return ['已排队','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='budget_wait')return ['等待下次采集','neutral'];if(m.last_status==='incomplete')return ['任务未完成','warn'];if(m.last_error)return ['需关注','error'];return ['监控中','']; }
+function monitorStatus(m) { if(m.running)return ['采集中','running'];if(m.requested||m.queued_job)return ['已排队','warn'];if(!m.enabled)return ['已暂停','neutral'];if(state.overview?.cookie_blocked)return ['需更新 Cookie','warn'];if(!state.overview?.cookie_ready)return ['等待 Cookie','warn'];if(Number(state.overview?.cooldown_until)>state.overview?.server_time)return ['限流冷却','warn'];if(state.overview?.paused)return ['全局已暂停','neutral'];if(m.last_status==='budget_wait')return ['等待下次采集','neutral'];if(m.last_status==='incomplete')return ['任务未完成','warn'];if(Object.hasOwn(m,'attention')?m.attention:m.last_error)return ['需关注','error'];return ['监控中','']; }
 function checkpointHTML(m) {
   if(!m.catchup)return '';
   const checkpoint=m.checkpoint;
@@ -534,6 +536,13 @@ $('archive-display-form').addEventListener('submit',event=>{event.preventDefault
   await api('/settings','PUT',{archive_theme:$('archive-theme').value,timeline_page_size:Number($('timeline-page-size').value),quote_display_depth:Number($('quote-display-depth').value),video_default_muted:$('video-default-muted').checked,video_loop:$('video-loop').checked,video_auto_next:$('video-auto-next').checked,video_timeline_autoplay:$('video-timeline-autoplay').checked,video_timeline_preload:$('video-timeline-preload').checked,media_preload_mode:$('media-preload-mode').value,image_cache_seconds:Number($('image-cache-hours').value)*3600,video_cache_seconds:Number($('video-cache-minutes').value)*60});
   state.settings=await api('/settings');applyArchiveTheme(state.settings.archive_theme);populateArchiveDisplaySettings(state.settings);
   acceptSettingsForm('archive-display-form',submitted);$('archive-display-result').textContent='时间线设置已保存。';toast('时间线设置已保存');
+});});
+function populateSessionSettings(s){hydrateSettingsForm('session-settings-form',()=>{$('session-ttl-seconds').value=String(s.session_ttl_seconds??43200);});}
+$('session-settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+ const submitted=settingsSnapshot('session-settings-form');
+ await api('/settings','PUT',{session_ttl_seconds:Number($('session-ttl-seconds').value)});
+ state.settings=await api('/settings');acceptSettingsForm('session-settings-form',submitted);populateSessionSettings(state.settings);
+ $('session-settings-result').textContent='已保存，下次登录生效；当前登录保持原到期时间。';toast('登录设置已保存');
 });});
 function populateSQLiteSettings(s){
  $('sqlite-performance-panel').hidden=s.database_driver!=='sqlite';
@@ -661,7 +670,7 @@ for(const button of document.querySelectorAll('[data-settings-tab]')){
 }
 async function refreshSettings() {
   const s=await api('/settings');state.settings=s;populateArchiveDisplaySettings(s);
-  populateSQLiteSettings(s);populateBrowserSettings(s);
+  populateSessionSettings(s);populateSQLiteSettings(s);populateBrowserSettings(s);
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='sqlite'?'SQLite · 本地数据库':(s.database_driver==='mariadb'?'MariaDB':'MySQL')+' · '+s.database_name;
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
@@ -742,20 +751,24 @@ const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追�
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};
 const sourceLabels={api:'外部 API',manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
 const modeLabels={incremental:'动态更新',backfill:'历史补采',rescan:'重新扫描'};
-const phaseLabels={preparing:'准备任务',timeline:'读取时间线',avatar:'保存头像',media:'下载与归档媒体',finishing:'保存执行结果'};
+const phaseLabels={preparing:'准备任务',identity:'核对账号是否改名',timeline:'读取时间线',avatar:'保存头像',media:'下载与归档媒体',finishing:'保存执行结果'};
 function durationLabel(seconds){const n=Math.max(0,Math.floor(Number(seconds)||0));return n>=3600?`${Math.floor(n/3600)} 小时 ${Math.floor(n%3600/60)} 分钟`:n>=60?`${Math.floor(n/60)} 分 ${n%60} 秒`:`${n} 秒`;}
+function taskProfileHTML(task){
+ const username=task.current_username||task.target;
+ return `<div class="task-identity"><strong><a class="task-archive-link" href="#user/${encodeURIComponent(task.target)}" title="查看 ${escape(task.name||username)} 的归档">${escape(task.name||username)}</a></strong><a class="task-profile-link" href="https://x.com/${encodeURIComponent(username)}" target="_blank" rel="noopener noreferrer" title="在 X 查看 @${escape(username)}">@${escape(username)}</a></div>`;
+}
 function jobHTML(job,current=false){
  const [label,cls]=jobLabels[job.status]||[job.status,'neutral'];
  const mode=modeLabels[job.mode]||job.mode||'动态更新';
  const detail=current?`${mode} · 已读取 ${number(job.posts_read)} 条 · 新增 ${number(job.new_posts)} 条 · 第 ${number(job.attempts)} 次执行`:`${mode} · ${sourceLabels[job.source]||job.source} · ${job.message||'等待前序任务完成'}`;
  const progress=current?`<p class="job-phase">${escape(phaseLabels[job.phase]||'等待进度更新')}${job.remaining_seconds!=null?' · 已运行 '+escape(durationLabel(job.elapsed_seconds))+' · '+(job.remaining_seconds>0?'时限剩余 '+escape(durationLabel(job.remaining_seconds)):'时限已到，正在收尾'):''}</p>${job.media_total!=null?`<p>此账号媒体已归档 ${number(job.media_done)} / ${number(job.media_total)} 个（含引用媒体）</p>`:''}`:'';
  const controls=current?`<button class="text-button delete" type="button" data-stop-target="${escape(job.target)}">停止并暂停监控</button>`:`<button class="text-button delete" type="button" data-cancel-job="${Number(job.id)}">取消本次排队</button>`;
- return `<article class="job-row ${current?'current':''}"><div class="job-position">${current?icon('clock'):number(job.position)}</div><div class="run-main"><strong><a class="task-profile-link" href="https://x.com/${encodeURIComponent(job.target)}" target="_blank" rel="noopener noreferrer" title="在 X 查看 @${escape(job.target)}">@${escape(job.target)}</a></strong><p>${escape(detail)}</p>${progress}<div class="run-time">${current?'开始于 '+escape(date(job.started_at,true)):'入队于 '+escape(date(job.queued_at,true))}${!current&&job.retry_at?' · 最早 '+escape(date(job.retry_at,true))+' 重试':''}</div></div><div class="job-actions"><span class="badge ${cls}">${escape(label)}</span>${controls}</div></article>`;
+ return `<article class="job-row ${current?'current':''}"><div class="job-position">${current?icon('clock'):number(job.position)}</div><div class="run-main">${taskProfileHTML(job)}<p>${escape(detail)}</p>${progress}<div class="run-time">${current?'开始于 '+escape(date(job.started_at,true)):'入队于 '+escape(date(job.queued_at,true))}${!current&&job.retry_at?' · 最早 '+escape(date(job.retry_at,true))+' 重试':''}</div></div><div class="job-actions"><span class="badge ${cls}">${escape(label)}</span>${controls}</div></article>`;
 }
 async function refreshRuns() {
   const payload=await api('/activity'),legacy=Array.isArray(payload),runs=legacy?payload:payload.runs;
   if(!legacy){const current=payload.current,queue=payload.queue||[];$('current-job-count').textContent=current?'1':'0';$('queue-count').textContent=number(queue.length);$('current-job').innerHTML=current?jobHTML(current,true):'<div class="activity-empty">当前没有正在执行的任务</div>';$('job-queue').innerHTML=queue.length?queue.map(j=>jobHTML(j)).join(''):'<div class="activity-empty">等待队列为空</div>';const wait=$('queue-wait');wait.hidden=!payload.wait_reason;wait.textContent=payload.wait_reason+(payload.wait_until?' · 预计 '+date(payload.wait_until,true)+' 后继续':'');}
-  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'动态更新'}`;return `<article class="run-row"><div class="run-main"><strong><a class="task-profile-link" href="https://x.com/${encodeURIComponent(r.target)}" target="_blank" rel="noopener noreferrer" title="在 X 查看 @${escape(r.target)}">@${escape(r.target)}</a></strong><p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${['incomplete','media_failed','failed','interrupted'].includes(r.status)?'<p><a href="#accounts">查看计划或继续采集 →</a></p>':''}</div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
+  $('runs').innerHTML=runs.length?runs.map(r=>{const [label,cls]=runLabels[r.status]||[r.status,'neutral'];const source=r.source&&r.source!=='legacy'?` · ${sourceLabels[r.source]||r.source}`:'';const mode=` · ${modeLabels[r.mode]||r.mode||'动态更新'}`;return `<article class="run-row"><div class="run-main">${taskProfileHTML(r)}<p>本轮读取 ${r.posts} 条 · ${r.new_posts==null?'新增未记录':`新增 ${r.new_posts} 条`} · ${escape(stopLabels[r.message]||r.message||'正在读取时间线')}</p><div class="run-time">${escape(date(r.started_at))}${r.finished_at?' → '+escape(date(r.finished_at,true)):''}${escape(mode+source)}</div>${['incomplete','media_failed','failed','interrupted'].includes(r.status)?'<p><a href="#accounts">查看计划或继续采集 →</a></p>':''}</div><span class="badge ${cls}">${escape(label)}</span></article>`;}).join(''):'<div class="empty-state"><h3>还没有已结束的执行</h3><p>当前任务结束后，执行结果会显示在这里。</p></div>';
 }
 $('refresh-runs').addEventListener('click',()=>action($('refresh-runs'),refreshRuns));
 $('current-job').addEventListener('click',event=>{const button=event.target.closest('[data-stop-target]');if(!button)return;action(button,async()=>{await api('/monitors/'+encodeURIComponent(button.dataset.stopTarget)+'/stop','POST');toast('已请求停止并暂停此账号；已保存内容保留');await refreshRuns();await refreshOverview();});});

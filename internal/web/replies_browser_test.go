@@ -121,4 +121,12 @@ func TestReplyThreadPageAndSwipeBackBrowser(t *testing.T) {
 	if !eval(`!!document.querySelector('[data-post-id="101"]')&&!!document.querySelector('[data-post-id="500"]')`) {
 		t.Fatal("account replies tab no longer exposes archived replies")
 	}
+	if !eval(`(()=>{const row=document.querySelector('[data-post-id="500"] .reply-preview-missing');return row?.tagName==='A'&&row.href==='https://x.com/i/status/999'&&row.target==='_blank'&&row.rel.includes('noopener')&&!row.querySelector('a')&&!row.textContent.includes('在 X 查看原文')&&row.querySelector('.reply-preview-text').closest('a')===row;})()`) {
+		t.Fatal("missing reply row is not a single accessible external link")
+	}
+	// Intercept default navigation so the fixture never contacts X. The outer
+	// post click handler must still ignore clicks anywhere inside this link.
+	if !eval(`(()=>{const row=document.querySelector('[data-post-id="500"] .reply-preview-missing');row.focus();const focused=document.activeElement===row;row.addEventListener('click',event=>{window.replyLinkClicked=event.target.closest('a').href;event.preventDefault();},{once:true});row.querySelector('.reply-preview-text').click();return focused&&window.replyLinkClicked==='https://x.com/i/status/999'&&location.hash==='#user/alice'&&!state.focusPost;})()`) {
+		t.Fatal("reply placeholder click was hijacked by the containing post")
+	}
 }

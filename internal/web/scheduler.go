@@ -670,9 +670,11 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	var result archive.Collection
 	var latestProfile *archive.Profile
 	saveFailed := false
+	timelineSaved := false
 	if collectErr == nil {
 		s.setPhase("timeline")
-		result, collectErr = collect(workCtx, cfg, cookies, m.Username, identity, archive.CollectionSafetyMaxPosts, m.Replies, func(p archive.Page) error {
+		savePage := func(p archive.Page) error {
+			timelineSaved = timelineSaved || p.Timeline || p.Progress != nil || len(p.Posts) > 0
 			if p.Profile != nil {
 				if err := a.store.SaveTargetProfile(m.Username, *p.Profile); err != nil {
 					saveFailed = true
@@ -699,7 +701,16 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			}
 			saveFailed = saveFailed || err != nil
 			return err
-		})
+		}
+		result, collectErr = collect(workCtx, cfg, cookies, m.Username, identity, archive.CollectionSafetyMaxPosts, m.Replies, savePage)
+		if !saveFailed && !timelineSaved && result.Posts == 0 && workCtx.Err() == nil && identity.UserID != "" && (archive.FailureReason(collectErr) == "not_found" || archive.FailureReason(collectErr) == "username_missing") {
+			var updated bool
+			identity, updated, collectErr = s.recoverRenamedAccount(workCtx, cfg, cookies, cookieGeneration, m.Username, identity, collectErr)
+			if updated {
+				s.setPhase("timeline")
+				result, collectErr = collect(workCtx, cfg, cookies, m.Username, identity, archive.CollectionSafetyMaxPosts, m.Replies, savePage)
+			}
+		}
 	}
 	if !saveFailed && collectErr != nil && archive.FailureKind(collectErr) == "transient" && jobCtx.Err() == nil && errors.Is(workCtx.Err(), context.DeadlineExceeded) {
 		result.Stop, collectErr = "time_budget_reached", nil
@@ -778,7 +789,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 				repliesBaseline = "blocked"
 			}
 			baselineFinished = ended
-			baselineStop = message
+			baselineStop = safeMessage(collectErr)
 		case collectErr == nil && jobCtx.Err() == nil && !bounded:
 			// A stable browser bottom without an API end marker is useful evidence,
 			// but it cannot prove that X exposed the complete account history.

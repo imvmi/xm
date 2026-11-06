@@ -166,6 +166,10 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		return eName
 	}
 
+	if displayName == "" {
+		displayName = m.Username
+	}
+
 	var ready int
 	if err = tx.QueryRow("SELECT ready FROM notification_targets WHERE target=?", m.Username).Scan(&ready); err != nil {
 		return err
@@ -211,16 +215,16 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		case "auth":
 			err = notificationIncident(tx, cfg, "cookie", "auth", "", "XM · Cookie 失效", "X 登录状态失效或受限，自动采集已暂停。请在连接设置中更新 Cookie。")
 		case "identity":
-			err = notificationIncident(tx, cfg, "identity:"+m.Username, "identity", m.Username, "XM · 账号身份校验失败", "@"+m.Username+" 的身份无法确认或与绑定用户 ID 不符，监控已暂停，未接受不匹配账号的推文。请检查采集记录。")
+			err = notificationIncident(tx, cfg, "identity:"+m.Username, "identity", displayName, "XM · 账号身份校验失败", "@"+displayName+" 的身份无法确认或与绑定用户 ID 不符，监控已暂停，未接受不匹配账号的推文。请检查采集记录。")
 		case "access":
-			err = notificationIncident(tx, cfg, "access:"+m.Username, "access", m.Username, "XM · 账号无法访问", "@"+m.Username+" 无法访问，可能是权限变化、账号不可用或未获准关注。该账号监控已暂停，请检查。")
+			err = notificationIncident(tx, cfg, "access:"+m.Username, "access", displayName, "XM · 账号无法访问", "@"+displayName+" 无法访问，可能是权限变化、账号不可用或未获准关注。该账号监控已暂停，请检查。")
 		case "rate":
 			err = notificationIncident(tx, cfg, "rate", "rate", "", "XM · X 请求限流", "X 返回限流，采集已进入至少 15 分钟的冷却期。")
 		case "media":
-			err = notificationIncident(tx, cfg, "health:"+m.Username, "media_failed", m.Username, "XM · 媒体保存失败", "@"+m.Username+" 部分图片或视频尚未归档。请查看采集记录，检查网络、存储或文件限制；临时失败会在后续任务重试，永久失败需处理原因后修复。")
+			err = notificationIncident(tx, cfg, "health:"+m.Username, "media_failed", displayName, "XM · 媒体保存失败", "@"+displayName+" 部分图片或视频尚未归档。请查看采集记录，检查网络、存储或文件限制；临时失败会在后续任务重试，永久失败需处理原因后修复。")
 		case "transient":
 			if failures >= 3 {
-				err = notificationIncident(tx, cfg, "health:"+m.Username, "collection_failed", m.Username, "XM · 连续采集失败", fmt.Sprintf("@%s 已连续失败 %d 次。系统正在退避重试，请查看采集记录。", m.Username, failures))
+				err = notificationIncident(tx, cfg, "health:"+m.Username, "collection_failed", displayName, "XM · 连续采集失败", fmt.Sprintf("@%s 已连续失败 %d 次。系统正在退避重试，请查看采集记录。", displayName, failures))
 			}
 		}
 		if err != nil {
@@ -228,7 +232,7 @@ func (a *App) recordNotifications(cfg archive.Config, m Monitor, success, cancel
 		}
 		if success {
 			for _, key := range []string{"cookie", "rate", "access:" + m.Username, "health:" + m.Username, "identity:" + m.Username} {
-				if err = notificationRecovery(tx, cfg, key, m.Username); err != nil {
+				if err = notificationRecovery(tx, cfg, key, displayName); err != nil {
 					return err
 				}
 			}

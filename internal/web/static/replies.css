@@ -41,3 +41,7 @@
  .thread-current .post-text{font-size:17px!important}
  .thread-replies-heading{padding:14px 12px}
 }
+
+.reply-preview-missing:hover .reply-preview-text,.reply-preview-missing:focus-visible .reply-preview-text{text-decoration:underline;text-underline-offset:3px}
+
+.timeline-posts .post[data-open-post] a.reply-preview-missing{cursor:pointer}

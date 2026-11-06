@@ -307,6 +307,11 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 	}
 	var err error
 	result, err = collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
+	// Keep explicit account diagnoses intact. Missing usernames are recovered by
+	// the scheduler using the same bounded resolver as the identity-update action.
+	if reason := FailureReason(err); reason != "" && reason != "unavailable" {
+		return result, err
+	}
 	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" || FailureKind(err) == "timeline" || FailureKind(err) == "checkpoint" || FailureKind(err) == "budget_storage" {
 		return result, err
 	}
@@ -540,13 +545,17 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			responseReaders.Add(1)
 			go func(id network.RequestID, meta responseMeta, sequence uint64) {
 				defer responseReaders.Add(-1)
-				if meta.status != 200 {
+				if meta.status != 200 && meta.status != 403 && meta.status != 404 {
 					send(captured{sequence: sequence, meta: meta})
 					return
 				}
 				// The response event precedes body completion. Read only after CDP makes
 				// the full body available, with a bounded wait and cancellation.
-				readCtx, cancelRead := context.WithTimeout(browser, 30*time.Second)
+				bodyTimeout := 30 * time.Second
+				if meta.status != 200 {
+					bodyTimeout = 3 * time.Second
+				}
+				readCtx, cancelRead := context.WithTimeout(browser, bodyTimeout)
 				defer cancelRead()
 				for {
 					var body []byte
@@ -561,6 +570,11 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					}
 					select {
 					case <-readCtx.Done():
+						if meta.status != 200 {
+							// Keep the original HTTP diagnosis if no error body is available.
+							send(captured{sequence: sequence, meta: meta})
+							return
+						}
 						err := errors.New("未能读取完整浏览器响应，已入库内容保留，请重试")
 						if isTimelineOperation(meta.operation) {
 							err = timelineFailure(meta, "浏览器响应读取超时")
@@ -693,7 +707,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 				if c.meta.status == 401 {
 					return result, fail("auth", "Cookie 登录态失效，请重新导入")
 				}
-				if c.meta.status == 200 {
+				if c.meta.status == 200 || c.meta.status == 403 || c.meta.status == 404 {
 					_, e := ParsePage(c.data, c.meta.operation)
 					if e != nil && FailureKind(e) == "rate" {
 						return result, rateLimitFailure(c.meta)
@@ -720,7 +734,22 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			case 200:
 			case 401:
 				return result, fail("auth", "Cookie 登录态失效，请重新导入")
-			case 403:
+			case 403, 404:
+				if !resolvingPost {
+					_, e := ParsePage(c.data, c.meta.operation)
+					if FailureKind(e) == "rate" {
+						return result, rateLimitFailure(c.meta)
+					}
+					if FailureReason(e) != "" || FailureKind(e) == "auth" {
+						return result, e
+					}
+				}
+				if c.meta.status == 404 {
+					if c.meta.cursor != "" {
+						return result, checkpointFailure()
+					}
+					return result, fmt.Errorf("X 数据请求返回 HTTP 404，尚不能确认账号是否存在")
+				}
 				return result, fail("access", "X "+c.meta.operation+" 拒绝访问：可能无查看权限、账号受限或需要浏览器验证")
 			case 429:
 				return result, rateLimitFailure(c.meta)
