@@ -251,6 +251,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notifications/deliveries/{id}/retry", a.retryNotification)
 	mux.HandleFunc("GET /api/storage", a.storageSettings)
 	mux.HandleFunc("PUT /api/storage/profiles/{id}/credentials", a.rotateStorageCredentials)
+	mux.HandleFunc("DELETE /api/storage/profiles/{id}", a.deleteStorageProfile)
 	mux.HandleFunc("GET /api/migrations", a.migrationStatus)
 	mux.HandleFunc("GET /api/migrations/preview", a.migrationPreview)
 	mux.HandleFunc("POST /api/migrations/preview", a.migrationPreview)
@@ -376,7 +377,7 @@ func (a *App) Handler() http.Handler {
 				return
 			}
 			_, storagePattern := mux.Handler(r)
-			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") && r.URL.Path != "/api/storage/cache" && storagePattern != "PUT /api/storage/profiles/{id}/credentials" {
+			if mutation && strings.HasPrefix(r.URL.Path, "/api/storage/") && r.URL.Path != "/api/storage/cache" && storagePattern != "PUT /api/storage/profiles/{id}/credentials" && storagePattern != "DELETE /api/storage/profiles/{id}" {
 				problem(w, 403, "初始化已完成，数据库与存储配置已锁定，无法修改")
 				return
 			}

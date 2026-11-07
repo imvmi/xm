@@ -72,7 +72,7 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.match(menu,/role="switch" aria-checked="false"[^>]*data-op="replies"/);
  assert.match(menu,/data-monitor="alice" data-op="edit">编辑账号配置/);
  assert.match(menu,/data-monitor="alice" data-op="identity">更新账号身份/);
- assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|取消监控|NaN/);
+ assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|NaN/);
 });
 test('archive-only and unresolved runtime accounts cannot toggle collection',()=>{
  const f=fixture();
@@ -108,4 +108,21 @@ test('authoritative null attention excludes intentional stops and cleared diagno
  assert.doesNotMatch(f.ctx.accountCard(f.rows()[2]),/需关注|account-attention/);
  const old={monitored:true,last_error:'任务已停止；已入库内容保留',last_status:'cancelled'};
  assert.equal(f.ctx.accountNeedsAttention(old),false);
+});
+
+test('account failures have distinct filters and reversible archive management',()=>{
+ const f=fixture();
+ for(const code of ['suspended','username_unavailable','protected','identity_conflict','identity_unresolved']){
+  f.state.monitors[0].attention={code,label:'明确诊断',suggestion:'处理建议'};
+  f.controls['monitor-filter'].value=code;assert.deepEqual(f.names(),['alice']);
+  const u=f.rows()[0],card=f.ctx.accountCard(u),menu=f.ctx.accountManagementHTML(u);
+  assert.match(card,/data-op="manage"/);
+  assert.match(menu,/data-op="recheck"/);
+  assert.match(menu,/data-op="archive-only"/);
+  assert.match(menu,/在 X 核实账号状态|查看当前用户名主页/);
+  assert.match(menu,/不开启自动采集/);
+  if(code==='identity_conflict'){assert.match(menu,/核对原账号的新用户名/);assert.match(f.ctx.accountManagementHTML({...u,user_id:'42'}),/https:\/\/x.com\/i\/user\/42/);}
+  assert.doesNotMatch(f.ctx.accountManagementHTML({...u,running:true}),/data-op="recheck"|data-op="archive-only"/);
+  assert.doesNotMatch(f.ctx.accountManagementHTML({...u,queued_job:{id:1}}),/data-op="recheck"/);
+ }
 });

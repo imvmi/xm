@@ -34,6 +34,9 @@ func TestBrowserCollectionOffline(t *testing.T) {
 		{"suspended", `{"data":{"user":{"result":{"__typename":"UserUnavailable","reason":"Suspended"}}}}`, "UserOriginalsTimeline", true, 200, ""},
 		{"suspended_http403", `{"errors":[{"code":63}]}`, "UserOriginalsTimeline", true, 403, ""},
 		{"not_found_http404", `{"errors":[{"code":50}]}`, "UserOriginalsTimeline", true, 404, ""},
+		{"page_suspended", "Account suspended", "UserTweets", true, 200, ""},
+		{"page_not_found", "This account doesn’t exist", "UserTweets", true, 200, ""},
+		{"page_protected", "These posts are protected", "UserTweets", true, 200, ""},
 		{"protected_denied", `{"errors":[{"code":179}]}`, "UserOriginalsTimeline", true, 200, ""},
 		{"expired_cookie", `{"errors":[{"code":89}]}`, "UserOriginalsTimeline", true, 200, ""},
 		{"rate_limited", `{"errors":[{"code":88}]}`, "UserOriginalsTimeline", true, 200, "x-rate-limit-reset"},
@@ -87,6 +90,9 @@ func TestBrowserCollectionOffline(t *testing.T) {
 								noise = `await fetch('/i/api/graphql/fixture/UserByRestId?variables=%7B%22userId%22%3A%2299%22%7D');`
 							}
 							body = `<html><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><script>(async()=>{` + noise + `await fetch('/i/api/graphql/fixture/UserByScreenName');await new Promise(r=>setTimeout(r,300));await fetch('/i/api/graphql/fixture/` + test.operation + `');})()</script></body></html>`
+							if strings.HasPrefix(test.name, "page_") {
+								body = `<html><head><meta charset="utf-8"></head><body><button data-testid="SideNav_AccountSwitcher_Button">Account</button><main data-testid="primaryColumn"><div data-testid="emptyState"><div data-testid="empty_state_header_text">` + test.body + `</div></div></main></body></html>`
+							}
 						}
 						headers = append(headers, &fetch.HeaderEntry{Name: "Content-Type", Value: ct})
 						_ = chromedp.Do(ctx, chromedp.Func(func(c context.Context, target *chromedp.Target) error {
@@ -110,6 +116,9 @@ func TestBrowserCollectionOffline(t *testing.T) {
 				return s.SavePosts("alice", p.Posts)
 			}, setup)
 			if test.wantErr {
+				if strings.HasPrefix(test.name, "page_") && FailureReason(err) != strings.TrimPrefix(test.name, "page_") {
+					t.Fatalf("lost page diagnosis: %v", err)
+				}
 				if err == nil {
 					t.Fatal("expected explicit failure")
 				}

@@ -292,7 +292,7 @@ func collectIdentity(parent context.Context, cfg Config, cookies Cookies, target
 func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cookies, target string, identity TargetIdentity, limit int, replies bool, save func(Page) error, setup func(context.Context) error, root context.Context) (result Collection, resultErr error) {
 	ctx, cancel := context.WithTimeout(parent, collectionTimeout(cfg, identity))
 	defer cancel()
-	saveFailed := false
+	saveFailed, identityVerified := false, false
 	defer func() {
 		if identity.DurableProgress && !saveFailed && resultErr != nil && FailureKind(resultErr) == "transient" && parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
 			result.Stop, resultErr = "time_budget_reached", nil
@@ -302,6 +302,8 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 		err := save(p)
 		if err != nil {
 			saveFailed = true
+		} else if p.Profile != nil && p.Profile.ID == identity.UserID {
+			identityVerified = true
 		}
 		return err
 	}
@@ -309,7 +311,7 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 	result, err = collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
 	// Keep explicit account diagnoses intact. Missing usernames are recovered by
 	// the scheduler using the same bounded resolver as the identity-update action.
-	if reason := FailureReason(err); reason != "" && reason != "unavailable" {
+	if reason := FailureReason(err); reason != "" && reason != "unavailable" && reason != "identity_conflict" {
 		return result, err
 	}
 	if err == nil || identity.UserID == "" || identity.CurrentUsername == "" || result.Posts > 0 || saveFailed || ctx.Err() != nil || FailureKind(err) == "auth" || FailureKind(err) == "rate" || FailureKind(err) == "timeline" || FailureKind(err) == "checkpoint" || FailureKind(err) == "budget_storage" {
@@ -318,7 +320,15 @@ func collectIdentityWithBrowser(parent context.Context, cfg Config, cookies Cook
 	if userIDPattern.MatchString(identity.ReferencePostID) {
 		identity.CurrentUsername = ""
 	}
-	return collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
+	retryResult, retryErr := collectBoundWithBrowser(ctx, cfg, cookies, target, identity, limit, replies, checkedSave, setup, root)
+	// An inaccessible reference post must not erase an already verified takeover.
+	// A successful lookup still allows the original numeric identity to continue.
+	retryReason := FailureReason(retryErr)
+	ambiguousRetry := retryReason == "" || retryReason == "unavailable" || retryReason == "identity_conflict"
+	if FailureReason(err) == "identity_conflict" && retryErr != nil && ambiguousRetry && !identityVerified && ctx.Err() == nil && !saveFailed && retryResult.Posts == 0 && (FailureKind(retryErr) == "identity" || FailureKind(retryErr) == "access" || FailureKind(retryErr) == "transient") {
+		return retryResult, err
+	}
+	return retryResult, retryErr
 }
 
 func collectionTimeout(cfg Config, _ TargetIdentity) time.Duration {
@@ -814,7 +824,7 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 					return result, fail("identity", "无法确认目标账号身份")
 				}
 				if expectedID != "" && p.ID != expectedID {
-					return result, fail("identity", "目标用户 ID 与绑定身份不符，已停止采集")
+					return result, &Failure{Kind: "identity", Reason: "identity_conflict", Message: fmt.Sprintf("%s（原 ID：%s，当前 ID：%s），已停止采集", AccountIdentityConflictMessage, expectedID, p.ID)}
 				}
 				if expectedID == "" && !strings.EqualFold(p.Username, target) {
 					continue
@@ -1007,19 +1017,25 @@ func collectBoundWithBrowser(parent context.Context, cfg Config, cookies Cookies
 			type pageState struct {
 				Path   string  `json:"path"`
 				Denied bool    `json:"denied"`
+				Notice string  `json:"notice"`
 				Top    float64 `json:"top"`
 				Height float64 `json:"height"`
 				Bottom bool    `json:"bottom"`
 			}
-			state, e := chromedp.Run(browser, chromedp.Evaluate[pageState](`(()=>{const s=document.scrollingElement||document.documentElement;return {path:location.pathname,denied:/These posts are protected|These Tweets are protected|Only approved followers|这些帖子受到保护|这些推文受到保护/.test(document.body.innerText),top:s.scrollTop,height:s.scrollHeight,bottom:s.scrollTop+s.clientHeight>=s.scrollHeight-32}})()`))
+			state, e := chromedp.Run(browser, chromedp.Evaluate[pageState](`(()=>{const s=document.scrollingElement||document.documentElement;return {path:location.pathname,notice:[...document.querySelectorAll('[data-testid="primaryColumn"] [data-testid="empty_state_header_text"]')].filter(e=>!e.closest('article,[data-testid="tweet"],[data-testid="UserDescription"]')).map(e=>e.innerText.trim()).join("\n"),denied:/These posts are protected|These Tweets are protected|Only approved followers|这些帖子受到保护|这些推文受到保护/.test(document.body.innerText),top:s.scrollTop,height:s.scrollHeight,bottom:s.scrollTop+s.clientHeight>=s.scrollHeight-32}})()`))
 			if e != nil {
 				return result, errors.New("无法读取浏览器状态，浏览器可能已关闭")
 			}
 			if strings.HasPrefix(state.Path, "/i/flow/login") || strings.HasPrefix(state.Path, "/account/access") {
 				return result, fail("auth", "X 要求重新登录或人工验证，请在浏览器处理后重新导入 Cookie")
 			}
+			if !resolvingPost && profilePathMatches(state.Path, identity.CurrentUsername, target) {
+				if e := accountNoticeFailure(state.Notice); e != nil {
+					return result, e
+				}
+			}
 			if state.Denied {
-				return result, fail("access", "当前账号无权查看此锁推账号，请确认关注请求已经获准")
+				return result, accountFailure("protected", AccountProtectedMessage)
 			}
 			// Lack of responses while traversing an already loaded, tall timeline
 			// is not exhaustion. Start the wall-clock idle grace period only at a

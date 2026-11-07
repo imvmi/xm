@@ -3,9 +3,11 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -97,5 +99,73 @@ func TestArchiveDirectoryLoadsBeforeStatisticsBrowser(t *testing.T) {
 	wait(`document.querySelectorAll('#user-list .user-card').length===2 && state.users.every(u=>!u.stats_pending)`)
 	if !eval(`$('user-list').textContent.includes('alice') && $('user-list').textContent.includes('bob')`) {
 		t.Fatal("account detail replaced full directory")
+	}
+	// Diagnose a reused handle without asserting the original account was deleted.
+	if _, err := a.store.DB.Exec("UPDATE monitors SET last_error=? WHERE username='alice'", archive.AccountIdentityConflictMessage+"（原 ID：42，当前 ID：99），已停止采集"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.DB.Exec("INSERT INTO target_identities(target,user_id,current_username) VALUES('alice','42','alice')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.store.SaveCookies(archive.Cookies{AuthToken: "fixture", CSRF: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{refreshMonitors();return true})()`)
+	wait(`state.monitors.find(m=>m.username==='alice').attention?.code==='identity_conflict'`)
+	eval(`(()=>{$('monitor-filter').value='identity_conflict';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
+	wait(`document.querySelectorAll('#user-list .account-card').length===1`)
+	eval(`(()=>{document.querySelector('[data-account="alice"] [data-op="manage"]').click();return true})()`)
+	wait(`$('account-menu-dialog').open && $('account-menu-content').textContent.includes('核对原账号的新用户名')`)
+	if !eval(`$('account-menu-content').textContent.includes('这不能证明原账号已删除') && !!$('account-menu-content').querySelector('[data-op="recheck"]') && !!$('account-menu-content').querySelector('[data-op="archive-only"]') && !!$('account-menu-content').querySelector('a[href="https://x.com/i/user/42"]')`) {
+		t.Fatal("missing takeover management")
+	}
+	for _, width := range []int64{1280, 390} {
+		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 850)); err != nil {
+			t.Fatal(err)
+		}
+		if !eval(`document.documentElement.scrollWidth<=innerWidth && $('account-menu-dialog').scrollWidth<=$('account-menu-dialog').clientWidth`) {
+			t.Fatal("account handling dialog overflows")
+		}
+		if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			img, err := chromedp.Run(browser, chromedp.FullScreenshot(90))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("account-takeover-%d.png", width)), img, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	eval(`(()=>{document.querySelector('#account-menu-content [data-op="recheck"]').click();return true})()`)
+	wait(`!accountPending.size && !!state.monitors.find(m=>m.username==='alice').queued_job`)
+	if !eval(`!state.monitors.find(m=>m.username==='alice').enabled`) {
+		t.Fatal("manual recheck enabled monitoring")
+	}
+	// Cancelling the confirmation leaves the monitor and queued task intact.
+	eval(`(()=>{window.confirm=()=>false;openAccountMenu('alice');document.querySelector('#account-menu-content [data-op="archive-only"]').click();return true})()`)
+	if !eval(`state.monitors.some(m=>m.username==='alice'&&m.queued_job)`) {
+		t.Fatal("cancelled action removed monitor")
+	}
+	eval(`(()=>{window.confirm=()=>true;openAccountMenu('alice');document.querySelector('#account-menu-content [data-op="archive-only"]').click();return true})()`)
+	wait(`!accountPending.size && !state.monitors.some(m=>m.username==='alice')`)
+	var originalID string
+	if err := a.store.DB.QueryRow("SELECT user_id FROM target_identities WHERE target='alice'").Scan(&originalID); err != nil || originalID != "42" {
+		t.Fatalf("original identity lost: %s %v", originalID, err)
+	}
+	var count int
+	if err := a.store.DB.QueryRow("SELECT COUNT(*) FROM target_posts WHERE target='alice'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("archive lost: %d %v", count, err)
+	}
+	if err := a.store.DB.QueryRow("SELECT COUNT(*) FROM collection_jobs WHERE target='alice' AND finished_at=0").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("queue retained: %d %v", count, err)
+	}
+	eval(`(()=>{$('monitor-filter').value='archived';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
+	wait(`document.querySelectorAll('#user-list .account-card').length===2`)
+	eval(`(()=>{openAccountMenu('alice');return true})()`)
+	if !eval(`!!document.querySelector('#account-menu-content [data-op="readd"]')`) {
+		t.Fatal("missing restore monitoring action")
 	}
 }

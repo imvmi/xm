@@ -1,5 +1,39 @@
 'use strict';
-for(const button of document.querySelectorAll('[data-data-jump]'))button.addEventListener('click',()=>$(button.dataset.dataJump).scrollIntoView({block:'start',behavior:'instant'}));
+let migrationOperation='';
+function selectDataTab(name,focus=false){
+ for(const button of document.querySelectorAll('[data-data-tab]')){
+  const selected=button.dataset.dataTab===name;
+  button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+  $('data-'+button.dataset.dataTab).hidden=!selected;
+  if(selected&&focus)button.focus();
+ }
+}
+for(const button of document.querySelectorAll('[data-data-tab]')){
+ button.addEventListener('click',()=>selectDataTab(button.dataset.dataTab));
+ button.addEventListener('keydown',e=>{
+  const names=['location','performance','maintenance'];let i=names.indexOf(button.dataset.dataTab);
+  if(e.key==='ArrowRight')i=(i+1)%names.length;else if(e.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(e.key==='Home')i=0;else if(e.key==='End')i=names.length-1;else return;
+  e.preventDefault();selectDataTab(names[i],true);
+ });
+}
+function renderMigrationSteps(){
+ const checked=!!migrationChecked;
+ $('migration-operation-picker').hidden=!!migrationOperation;
+ $('migration-operation-heading').hidden=!migrationOperation;
+ $('migration-operation-title').textContent={database:'迁移数据库',media:'迁移媒体',cleanup:'清理迁移副本'}[migrationOperation]||'';
+ for(const [kind,id] of [['database','migration-database-section'],['media','migration-storage-section'],['cleanup','migration-cleanup-section']])$(id).hidden=kind!==migrationOperation||checked;
+ for(const step of ['choose','config','confirm']){
+  const current=step===(checked?'confirm':migrationOperation?'config':'choose');
+  if(current)$('migration-step-'+step).setAttribute('aria-current','step');else $('migration-step-'+step).removeAttribute('aria-current');
+ }
+}
+function selectMigrationOperation(kind,focus=true){
+ selectDataTab('maintenance');migrationOperation=kind;resetMigrationPreview();
+ if(focus){const target=kind?$('migration-operation-title'):$('migration-operation-picker').querySelector('button');if(kind)target.tabIndex=-1;target.focus();}
+}
+for(const button of document.querySelectorAll('[data-migration-kind]'))button.addEventListener('click',()=>selectMigrationOperation(button.dataset.migrationKind));
+$('migration-change-operation').addEventListener('click',()=>selectMigrationOperation(''));
+$('migration-edit-config').addEventListener('click',()=>selectMigrationOperation(migrationOperation));
 let migrationState=null, migrationChecked=null, migrationRetry=false, migrationRefreshing=false, migrationPreviewVersion=0, migrationConfigKey='',migrationRequest=0;
 const migrationLabels={running:'执行中',switching:'正在重启',paused:'已暂停',failed:'需重试',completed:'已完成'};
 const migrationConfirmation=kind=>kind==='cleanup'?'清理本地副本':'开始迁移';
@@ -7,7 +41,7 @@ const migrationDatabaseName=value=>value==='mysql'?'MySQL':value==='mariadb'?'Ma
 const migrationStorageName=id=>id==='local'?'本地磁盘':id==='new'?'新的远端存储':migrationState?.sources?.find(p=>p.id===id)?.name||id;
 function resetMigrationPreview(){
  migrationPreviewVersion++;migrationChecked=null;migrationRetry=false;
- $('migration-preview-panel').hidden=true;$('migration-confirm-panel').hidden=true;$('migration-confirm').value='';$('migration-start').disabled=true;$('migration-error').textContent='';
+ $('migration-preview-panel').hidden=true;$('migration-confirm-panel').hidden=true;$('migration-confirm').value='';$('migration-start').disabled=true;$('migration-error').textContent='';renderMigrationSteps();
 }
 function migrationStorageTargets(){
  const source=$('migration-source').value,previous=$('migration-storage-target').value,active=migrationState?.active_storage;
@@ -47,6 +81,7 @@ function migrationAvailability(){
 async function refreshMigrations(){
  const request=++migrationRequest,data=await api('/migrations');
  if(request!==migrationRequest)return;
+ const storageChanged=migrationState&&migrationState.active_storage!==data.active_storage;
  migrationState=data;
  const key=JSON.stringify([data.database_driver,data.active_storage,data.sources]);
  if(key!==migrationConfigKey){
@@ -56,6 +91,7 @@ async function refreshMigrations(){
   migrationStorageTargets();
  }
  migrationAvailability();
+ if(storageChanged&&typeof refreshStorage==='function'){await refreshStorage();if(request!==migrationRequest)return;}
  const j=data.job;$('migration-job-panel').hidden=!j||(j.status==='completed'&&j.acknowledged);$('migration-badge').textContent=j?(migrationLabels[j.status]||j.status):'未开始';
  if(!j)return;
  const source=j.kind==='database'?migrationDatabaseName(j.source):migrationStorageName(j.source),target=j.kind==='database'?migrationDatabaseName(j.target||'sqlite'):migrationStorageName(j.target||'local');
@@ -88,12 +124,13 @@ function migrationInput(kind){
  return input;
 }
 async function checkMigration(kind,retry=false){
- resetMigrationPreview();migrationRetry=retry;
+ if(migrationOperation!==kind)selectMigrationOperation(kind,false);
+ selectDataTab('maintenance');resetMigrationPreview();migrationRetry=retry;
  const version=migrationPreviewVersion;
  try{
   const input=retry&&kind==='media'?{kind,source:migrationState.job.source,target:migrationState.job.target}:migrationInput(kind);
   const p=await api('/migrations/preview','POST',input);if(version!==migrationPreviewVersion)return;
-  migrationChecked=input;
+  migrationChecked=input;renderMigrationSteps();
   $('migration-preview-title').textContent=kind==='cleanup'?'本地副本清理检查通过':(kind==='database'?'数据库':'存储')+'迁移检查通过';
   $('migration-preview-summary').textContent=`${kind==='database'?'推文':kind==='cleanup'?'待检查副本':'待迁移文件'} ${number(p.items)} · 估计数据 ${bytes(p.bytes)} · 本地所需空间 ${bytes(p.required_bytes)} · 本地可用 ${bytes(p.free_bytes)} · 目标：${p.destination}`;
   $('migration-preview-warning').textContent=p.warning;$('migration-preview-panel').hidden=false;$('migration-confirm-panel').hidden=false;
@@ -112,6 +149,7 @@ $('migration-cleanup-preview').addEventListener('click',()=>action($('migration-
 $('migration-preview').addEventListener('click',()=>action($('migration-preview'),()=>checkMigration('media')));
 $('migration-retry').addEventListener('click',()=>action($('migration-retry'),async()=>{
  const j=migrationState?.job;if(!j)return;
+ selectMigrationOperation(j.kind,false);
  if(j.kind==='media'){
   const known=j.target==='local'||migrationState.sources.some(p=>p.id===j.target);
   if(j.source===migrationState.active_storage){$('migration-storage-target').value=known?j.target:'new';migrationAvailability();}

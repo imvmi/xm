@@ -60,8 +60,12 @@ func TestMigrationBrowser(t *testing.T) {
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`typeof migrationState!=='undefined' && !!migrationState`)
 	eval(`(()=>{$('settings-tab-data').click();return true})()`)
-	if !eval(`[...document.querySelectorAll('[data-settings-tab]')].map(b=>b.textContent).join('/')==='认证/爬虫/时间线/数据/凭据' && $('data-database').contains($('database-label')) && $('data-database').contains($('migration-database-section')) && $('data-media').contains($('storage-readonly')) && $('data-media').contains($('migration-storage-section')) && !$('settings-tab-cleanup') && $('settings-cleanup').hidden && !!$('migration-database-section') && !!$('migration-storage-section') && $('migration-source').options.length===1 && $('migration-source').value==='s3-test' && $('migration-storage-target').value==='local'`) {
+	if !eval(`[...document.querySelectorAll('[data-settings-tab]')].map(b=>b.textContent).join('/')==='认证/爬虫/时间线/数据/凭据' && document.querySelector('.data-overview').contains($('database-label')) && $('data-maintenance').contains($('migration-database-section')) && document.querySelector('.data-overview').contains($('storage-readonly')) && $('data-performance').contains($('avatar-cache-clear')) && !$('data-location').hidden && $('data-performance').hidden && $('data-maintenance').hidden && !$('settings-tab-cleanup') && $('settings-cleanup').hidden && !!$('migration-database-section') && !!$('migration-storage-section') && $('migration-source').options.length===1 && $('migration-source').value==='s3-test' && $('migration-storage-target').value==='local'`) {
 		t.Fatal("migration sections or configured direction missing")
+	}
+	eval(`(()=>{$('data-tab-location').focus();$('data-tab-location').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));return true})()`)
+	if !eval(`document.activeElement===$('data-tab-performance') && !$('data-performance').hidden && $('data-tab-location').tabIndex===-1`) {
+		t.Fatal("data tabs lack keyboard navigation")
 	}
 	for _, theme := range []string{"light", "dark"} {
 		for _, width := range []int64{1280, 390} {
@@ -73,8 +77,8 @@ func TestMigrationBrowser(t *testing.T) {
 				t.Fatalf("migration tab overflow %s %d", theme, width)
 			}
 			if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
-				for _, group := range []string{"data-database", "data-media"} {
-					eval(fmt.Sprintf(`(()=>{$(%q).scrollIntoView({block:'start',behavior:'instant'});return true})()`, group))
+				for _, group := range []string{"location", "performance", "maintenance"} {
+					eval(fmt.Sprintf(`(()=>{selectDataTab(%q);$('data-tab-location').scrollIntoView({block:'start',behavior:'instant'});return true})()`, group))
 					shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
 					if err != nil {
 						t.Fatal(err)
@@ -89,12 +93,35 @@ func TestMigrationBrowser(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("opening UI started migration")
 	}
-	eval(`(()=>{$('migration-preview').click();return true})()`)
+	eval(`(()=>{selectMigrationOperation('media');$('migration-preview').click();return true})()`)
 	wait(`!$('migration-confirm-panel').hidden`)
-	if !eval(`$('migration-start').disabled && $('migration-preview-summary').textContent.includes('可用')`) {
+	if !eval(`$('migration-start').disabled && $('migration-preview-summary').textContent.includes('可用') && $('migration-storage-section').hidden && $('migration-step-confirm').getAttribute('aria-current')==='step'`) {
 		t.Fatal("missing preview or confirmation guard")
 	}
-	// Editing either migration form invalidates a previous check on the merged page.
+	// Returning to configuration must invalidate the check and restore its controls.
+	eval(`(()=>{$('migration-edit-config').click();return true})()`)
+	if !eval(`migrationChecked===null && !$('migration-storage-section').hidden && $('migration-preview-panel').hidden`) {
+		t.Fatal("back button retained a stale check or hid the form")
+	}
+	eval(`(()=>{$('migration-preview').click();return true})()`)
+	wait(`!$('migration-confirm-panel').hidden`)
+	// Switching tabs preserves the check, but changing operation invalidates it.
+	eval(`(()=>{selectDataTab('performance');selectDataTab('maintenance');return true})()`)
+	if !eval(`!!migrationChecked && !$('migration-preview-panel').hidden`) {
+		t.Fatal("tab change discarded preview")
+	}
+	eval(`(()=>{$('migration-change-operation').click();return true})()`)
+	if !eval(`migrationChecked===null && !$('migration-operation-picker').hidden && $('migration-preview-panel').hidden`) {
+		t.Fatal("changing operation retained old confirmation")
+	}
+	eval(`(()=>{selectMigrationOperation('database');$('migration-mysql-host').value='draft-host';selectDataTab('location');selectDataTab('maintenance');return true})()`)
+	if !eval(`$('migration-mysql-host').value==='draft-host' && !$('migration-database-section').hidden`) {
+		t.Fatal("tab change lost migration draft")
+	}
+	eval(`(()=>{selectMigrationOperation('media');$('migration-preview').click();return true})()`)
+	wait(`!$('migration-confirm-panel').hidden`)
+	// Editing any destination invalidates a previous check.
+
 	eval(`(()=>{$('migration-mysql-host').value='127.0.0.2';$('migration-mysql-host').dispatchEvent(new Event('input',{bubbles:true}));return true})()`)
 	if !eval(`$('migration-preview-panel').hidden && migrationChecked===null && $('migration-start').disabled`) {
 		t.Fatal("edited destination retained a stale migration check")
@@ -107,7 +134,7 @@ func TestMigrationBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
 	wait(`migrationState?.job?.status==='failed' && !$('migration-retry').hidden`)
-	if !eval(`$('migration-source').options.length===1 && $('migration-source').value===migrationState.active_storage && migrationState.active_storage==='local'`) {
+	if !eval(`$('migration-source').options.length===1 && $('migration-source').value===migrationState.active_storage && migrationState.active_storage==='local' && $('storage-readonly-name').textContent==='本地文件系统'`) {
 		t.Fatal("migration source did not follow the active storage after cutover")
 	}
 	if !eval(`$('migration-message').textContent.includes('失败') && !$('migration-failures-panel').hidden && $('migration-acknowledge').hidden`) {
@@ -126,9 +153,13 @@ func TestMigrationBrowser(t *testing.T) {
 		}
 	}
 	corrupt.Store(false)
+	eval(`(()=>{selectDataTab('location');return true})()`)
+	if !eval(`$('migration-job-panel').getBoundingClientRect().height>0`) {
+		t.Fatal("switching tabs hid failed job")
+	}
 	eval(`(()=>{$('migration-retry').click();return true})()`)
 	wait(`!$('migration-confirm-panel').hidden && migrationRetry`)
-	if !eval(`migrationChecked.source==='s3-test' && migrationChecked.target==='local' && $('migration-source').options.length===1 && $('migration-source').value==='local'`) {
+	if !eval(`!$('data-maintenance').hidden && $('migration-preview-panel').getBoundingClientRect().height>0 && migrationChecked.source==='s3-test' && migrationChecked.target==='local' && $('migration-source').options.length===1 && $('migration-source').value==='local'`) {
 		t.Fatal("retry did not preserve the original direction independently of the current source")
 	}
 	eval(`(()=>{$('migration-confirm').value='开始迁移';$('migration-confirm').dispatchEvent(new Event('input'));$('migration-start').click();return true})()`)
@@ -144,7 +175,7 @@ func TestMigrationBrowser(t *testing.T) {
 	wait(`typeof migrationState!=='undefined' && !!migrationState?.job?.acknowledged && $('migration-job-panel').hidden`)
 	eval(`(()=>{$('settings-tab-data').click();return true})()`)
 	// Local storage can select the configured S3 or add either remote type.
-	eval(`(()=>{$('migration-storage-target').value='new';$('migration-storage-target').dispatchEvent(new Event('change'));return true})()`)
+	eval(`(()=>{selectMigrationOperation('media');$('migration-storage-target').value='new';$('migration-storage-target').dispatchEvent(new Event('change'));return true})()`)
 	if !eval(`!$('migration-remote-fields').hidden && !$('migration-s3-fields').hidden && [...$('migration-storage-target').options].some(o=>o.value==='s3-test')`) {
 		t.Fatal("local outbound choices missing")
 	}
@@ -175,7 +206,7 @@ func TestMigrationBrowser(t *testing.T) {
 		if err := chromedp.Do(browser, chromedp.EmulateViewport(1280, 1000)); err != nil {
 			t.Fatal(err)
 		}
-		eval(`(()=>{applyArchiveTheme('light');$('migration-database-section').scrollIntoView({behavior:'instant',block:'start'});return true})()`)
+		eval(`(()=>{applyArchiveTheme('light');selectMigrationOperation('database');$('migration-database-section').scrollIntoView({behavior:'instant',block:'start'});return true})()`)
 		shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
 		if err != nil {
 			t.Fatal(err)

@@ -67,7 +67,7 @@ type Bootstrap struct {
 }
 
 func DefaultConfig() Config {
-	return Config{SessionTTLSeconds: 43200, BrowserMode: "local", CDPHost: "127.0.0.1", CDPPort: 9222, SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 60, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
+	return Config{SessionTTLSeconds: 43200, BrowserMode: "local", CDPHost: "127.0.0.1", CDPPort: 9222, SQLiteReadConnections: DefaultSQLiteReadConnections, DataDir: "data", Headless: true, RequestTimeout: 300, RequestInterval: 5, RequestBudgetMode: "balanced", RateLimitMode: "balanced", ScrollDelay: 20, ScrollJitter: 5, MaxScrolls: 40, MaxPostsPerRun: 1000, PageBudget: 15, TimelineIdleSeconds: 24, KnownBoundaryPosts: 3, MaxMediaBytes: 512 << 20, BrowserMaxAge: 6 * 3600, BrowserMaxTasks: 100, MediaRetryInitial: 5 * 60, MediaRetryMax: 24 * 3600, QueueInterval: 60, DefaultInterval: 6 * 3600, ArchiveTheme: "system", MediaPreloadMode: "standard", TimelinePageSize: 24, ImageCacheSeconds: 604800, VideoCacheSeconds: 600}
 }
 func LoadBootstrap(path string) (Config, error) {
 	c := DefaultConfig()

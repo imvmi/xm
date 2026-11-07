@@ -93,7 +93,7 @@ func TestStorageCredentialsBrowser(t *testing.T) {
 	wait(`state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`!$('view-settings').hidden && $('storage-credentials-profile').options.length===2`)
-	eval(`(()=>{$('settings-tab-data').click();return true})()`)
+	eval(`(()=>{$('settings-tab-data').click();$('storage-credentials-details').open=true;return true})()`)
 	if !eval(`!$('storage-credentials-panel').hidden && $('storage-credentials-panel').getBoundingClientRect().height>0 && $('storage-credentials-profile').value==='history' && $('storage-credentials-username').value==='user' && $('storage-credentials-password').value==='' && $('storage-credentials-password').type==='password'`) {
 		t.Fatal("historical credentials UI missing or leaked saved password")
 	}
@@ -114,4 +114,25 @@ func TestStorageCredentialsBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('storage-credentials-secret').value='unsaved-secret';location.hash='home';return true})()`)
 	wait(`state.view==='home' && $('storage-credentials-secret').value===''`)
+	eval(`(()=>{location.hash='settings';return true})()`)
+	wait(`state.view==='settings' && $('storage-credentials-profile').options.length===2`)
+	eval(`(()=>{$('settings-tab-data').click();$('storage-credentials-details').open=true;window.savedConfirm=window.confirm;window.confirm=()=>false;$('storage-delete').click();return true})()`)
+	if !eval(`$('storage-credentials-profile').options.length===2`) {
+		t.Fatal("cancelled deletion removed connection")
+	}
+	eval(`(()=>{window.confirm=()=>true;$('storage-delete').click();return true})()`)
+	wait(`$('storage-credentials-profile').options.length===1 && ! $('storage-delete').disabled`)
+	if _, err := a.Config().Storage("s3"); err == nil {
+		t.Fatal("deleted connection still in configuration")
+	}
+	if !eval(`$('storage-credentials-profile').value==='history' && $('storage-credentials-secret').value==='' && !migrationState.sources.some(p=>p.id==='s3')`) {
+		t.Fatal("deleted connection retained in selector, draft or migration choices")
+	}
+	eval(`(()=>{$('storage-delete').click();return true})()`)
+	wait(`$('storage-credentials-panel').hidden && $('storage-credentials-profile').options.length===0 && $('storage-delete').disabled`)
+	if len(a.Config().StorageProfiles) != 0 {
+		t.Fatal("last connection was not deleted")
+	}
+	eval(`(()=>{window.confirm=window.savedConfirm;return true})()`)
+
 }

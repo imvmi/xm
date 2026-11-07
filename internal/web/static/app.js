@@ -48,7 +48,7 @@ function showLogin() {
   releaseTimelineMedia();
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
-  settingsBaselines.clear();$('session-settings-form').reset();$('session-settings-result').textContent='';$('collection-settings-form').reset();$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
+  settingsBaselines.clear();delete $('cookie-manual-method').dataset.initialized;$('cookie-manual-method').open=false;$('cookie-api-method').open=false;$('cookie-api-advanced').open=false;$('cookie-api-fetch-saved').hidden=true;$('session-settings-form').reset();$('session-settings-result').textContent='';$('collection-settings-form').reset();$('chrome-runtime-form').reset();$('chrome-runtime-result').textContent='';$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
   state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
@@ -498,38 +498,58 @@ function settingsFormDirty(id){return settingsBaselines.has(id)&&settingsBaselin
 function updateSettingsDraftNotice(){
  const dirty=[...settingsBaselines.keys()].some(settingsFormDirty);
  $('settings-draft-notice').hidden=!dirty;
- $('collection-draft-status').textContent=settingsFormDirty('collection-settings-form')?'有未保存修改':'设置已保存';
+ for(const [form,label] of [['collection-settings-form','collection-draft-status'],['chrome-runtime-form','chrome-runtime-draft-status'],['archive-display-form','display-draft-status']])$(label).textContent=settingsFormDirty(form)?'有未保存修改':'设置已保存';
 }
 function acceptSettingsForm(id,snapshot=settingsSnapshot(id)){settingsBaselines.set(id,snapshot);updateSettingsDraftNotice();}
 function hydrateSettingsForm(id,fill){if(settingsFormDirty(id))return;fill();acceptSettingsForm(id);}
+// Flow links reveal the related settings without submitting or resetting drafts.
+for(const button of document.querySelectorAll('[data-crawler-target]'))button.addEventListener('click',()=>{
+ const target=$(button.dataset.crawlerTarget);if(!target)return;
+ if(target.tagName==='DETAILS')target.open=true;
+ const focus=target.tagName==='DETAILS'?target.querySelector('summary'):target.querySelector('h2,h3');
+ if(focus){if(focus.tagName!=='SUMMARY')focus.tabIndex=-1;focus.focus({preventScroll:true});}
+ target.scrollIntoView({block:'start',behavior:'instant'});
+});
+for(const button of document.querySelectorAll('[data-crawler-settings]'))button.addEventListener('click',()=>{
+ const name=button.dataset.crawlerSettings;selectSettingsTab(name,true);
+ if(name==='data'&&typeof selectDataTab==='function')selectDataTab('location');
+ $('settings-'+name).scrollIntoView({block:'start',behavior:'instant'});
+});
 function updateCollectionSummaries(){
  $('plan-summary').textContent=`周期 ${$('default-interval').value} 小时 · 账号间隔 ${$('queue-interval').value} 秒`;
  $('timeline-summary').textContent=`滚动等待 ${$('scroll-delay').value} ± ${$('scroll-jitter').value} 秒`;
- $('browser-summary').textContent=`${$('browser-max-age').value} 小时 · ${$('browser-max-tasks').value} 次任务`;
+ $('browser-summary').textContent=`每个任务最多 ${$('browser-max-age').value} 小时 · 每个会话最多 ${$('browser-max-tasks').value} 次任务`;
  $('network-summary').textContent=`请求超时 ${$('request-timeout').value} 秒 · ${{conservative:'保守',balanced:'均衡',fast:'快速'}[$('rate-limit-mode').value]}`;
  $('media-summary').textContent=`单文件 ${$('max-media-mib').value} MiB · 首次重试等待 ${$('media-retry-initial').value} 分钟`;
 }
 for(const form of document.querySelectorAll('#view-settings form')){
- for(const event of ['input','change'])form.addEventListener(event,()=>{updateSettingsDraftNotice();if(form.id==='collection-settings-form'){updateScrollSpacingHelp();updateCollectionSummaries();}});
+ for(const event of ['input','change'])form.addEventListener(event,()=>{updateSettingsDraftNotice();if(['collection-settings-form','chrome-runtime-form'].includes(form.id)){updateScrollSpacingHelp();updateCollectionSummaries();}});
  form.addEventListener('invalid',event=>{let el=event.target.parentElement;while(el&&el!==form){if(el.tagName==='DETAILS')el.open=true;el=el.parentElement;}},true);
 }
 window.addEventListener('beforeunload',event=>{if([...settingsBaselines.keys()].some(settingsFormDirty)){event.preventDefault();event.returnValue='';}});
 function updateKeyboardLayout(){document.body.classList.toggle('keyboard-open',!!window.visualViewport&&window.innerHeight-window.visualViewport.height>150);}
 window.visualViewport?.addEventListener('resize',updateKeyboardLayout);
-const collectionDefaults={timeline:{'scroll-delay':20,'scroll-jitter':5,'timeline-idle-seconds':24,'known-boundary-posts':3},browser:{'browser-max-age':6,'browser-max-tasks':100},network:{'rate-limit-mode':'balanced','request-timeout':60},media:{'max-media-mib':512,'media-retry-initial':5,'media-retry-max':24}};
+const collectionDefaults={timeline:{'scroll-delay':20,'scroll-jitter':5,'timeline-idle-seconds':24,'known-boundary-posts':3},browser:{'browser-max-age':6,'browser-max-tasks':100},network:{'rate-limit-mode':'balanced','request-timeout':300},media:{'max-media-mib':512,'media-retry-initial':5,'media-retry-max':24}};
 for(const button of document.querySelectorAll('[data-default-group]'))button.addEventListener('click',()=>{
  for(const [id,value] of Object.entries(collectionDefaults[button.dataset.defaultGroup]))$(id).value=value;
  updateScrollSpacingHelp();updateCollectionSummaries();updateSettingsDraftNotice();
- $('collection-settings-result').textContent='已填入本组默认值，保存后生效。';
+ $(button.closest('form').id==='chrome-runtime-form'?'chrome-runtime-result':'collection-settings-result').textContent='已填入本组默认值，保存后生效。';
 });
 $('collection-settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const submitted=settingsSnapshot('collection-settings-form');
-  const input={queue_interval_seconds:Number($('queue-interval').value),scroll_delay_seconds:Number($('scroll-delay').value),scroll_jitter_seconds:Number($('scroll-jitter').value),timeline_idle_seconds:Number($('timeline-idle-seconds').value),known_boundary_posts:Number($('known-boundary-posts').value),rate_limit_mode:$('rate-limit-mode').value,request_timeout_seconds:Number($('request-timeout').value),max_media_bytes:Number($('max-media-mib').value)*1048576,browser_max_age_seconds:Number($('browser-max-age').value)*3600,browser_max_tasks:Number($('browser-max-tasks').value),media_retry_initial_seconds:Number($('media-retry-initial').value)*60,media_retry_max_seconds:Number($('media-retry-max').value)*3600};
+  const input={queue_interval_seconds:Number($('queue-interval').value),rate_limit_mode:$('rate-limit-mode').value,request_timeout_seconds:Number($('request-timeout').value),max_media_bytes:Number($('max-media-mib').value)*1048576,media_retry_initial_seconds:Number($('media-retry-initial').value)*60,media_retry_max_seconds:Number($('media-retry-max').value)*3600};
   const interval=Math.round(Number($('default-interval').value)*3600);
   if(interval!==state.settings.default_interval_seconds)input.default_interval_seconds=interval;
   await api('/settings','PUT',input);state.settings=await api('/settings');
   acceptSettingsForm('collection-settings-form',submitted);populateCollectionSettings(state.settings);
-  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'爬虫设置已保存；跟随全局的账号已重新安排下次采集。其他设置从下一个任务生效，账号间隔会更新当前等待。':'爬虫设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('爬虫设置已保存');
+  $('collection-settings-result').textContent=input.default_interval_seconds!==undefined?'采集设置已保存；跟随全局的账号已重新安排下次采集。其他设置从下一个任务生效，账号间隔会更新当前等待。':'采集设置已保存；从下一个任务生效，账号间隔会更新当前等待。';toast('采集设置已保存');
+});});
+$('chrome-runtime-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
+ const submitted=settingsSnapshot('chrome-runtime-form');
+ const input={scroll_delay_seconds:Number($('scroll-delay').value),scroll_jitter_seconds:Number($('scroll-jitter').value),timeline_idle_seconds:Number($('timeline-idle-seconds').value),known_boundary_posts:Number($('known-boundary-posts').value),browser_max_age_seconds:Number($('browser-max-age').value)*3600,browser_max_tasks:Number($('browser-max-tasks').value)};
+ await api('/settings','PUT',input);state.settings=await api('/settings');
+ acceptSettingsForm('chrome-runtime-form',submitted);populateCollectionSettings(state.settings);
+ $('chrome-runtime-result').textContent='浏览器参数已保存，下一个任务生效；当前任务继续使用原设置。';toast('浏览器参数已保存');
 });});
 $('archive-display-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
   const submitted=settingsSnapshot('archive-display-form');
@@ -554,14 +574,23 @@ $('sqlite-performance-form').addEventListener('submit',event=>{event.preventDefa
  state.settings=await api('/settings');acceptSettingsForm('sqlite-performance-form',submitted);populateSQLiteSettings(state.settings);
  $('sqlite-performance-result').textContent='读取设置已保存并生效，无需重启。';toast('读取设置已保存');
 });});
-function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('quote-display-depth').value=s.quote_display_depth??4;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('video-auto-next').checked=s.video_auto_next===true;$('video-timeline-autoplay').checked=s.video_timeline_autoplay===true;$('video-timeline-preload').checked=s.video_timeline_preload===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});applyArchiveTheme(s.archive_theme||'system');}
+function updateDisplaySettingsHelp(){
+ const descriptions={off:'不额外预读后续媒体；切换时再按需加载。',standard:'提前准备后两张图片和下一条视频的基本信息，并按需加载后续推文。',enhanced:'在标准预加载的基础上，额外缓冲下一条视频；可能下载完整视频并增加流量。'};
+ $('display-preload-help').textContent=descriptions[$('media-preload-mode').value]||descriptions.standard;
+ $('display-loop-priority').hidden=!($('video-loop').checked&&$('video-auto-next').checked);
+}
+$('archive-display-form').addEventListener('change',updateDisplaySettingsHelp);
+function populateArchiveDisplaySettings(s){hydrateSettingsForm('archive-display-form',()=>{$('archive-theme').value=s.archive_theme||'system';$('timeline-page-size').value=s.timeline_page_size||24;$('quote-display-depth').value=s.quote_display_depth??4;$('video-default-muted').checked=s.video_default_muted!==false;$('video-loop').checked=s.video_loop===true;$('video-auto-next').checked=s.video_auto_next===true;$('video-timeline-autoplay').checked=s.video_timeline_autoplay===true;$('video-timeline-preload').checked=s.video_timeline_preload===true;$('media-preload-mode').value=s.media_preload_mode||'standard';$('image-cache-hours').value=(s.image_cache_seconds||604800)/3600;$('video-cache-minutes').value=(s.video_cache_seconds||600)/60;});updateDisplaySettingsHelp();applyArchiveTheme(s.archive_theme||'system');}
 function populateCollectionSettings(s){
  renderGlobalCollection(s.polling_paused);
  hydrateSettingsForm('collection-settings-form',()=>{
   $('default-interval').value=s.default_interval_seconds/3600;$('queue-interval').value=s.queue_interval_seconds;
-  $('scroll-delay').value=s.scroll_delay_seconds;$('scroll-jitter').value=s.scroll_jitter_seconds;$('timeline-idle-seconds').value=s.timeline_idle_seconds;$('known-boundary-posts').value=s.known_boundary_posts;updateScrollSpacingHelp();
-  $('rate-limit-mode').value=s.rate_limit_mode;$('request-timeout').value=s.request_timeout_seconds;$('max-media-mib').value=s.max_media_bytes/1048576;$('browser-max-age').value=s.browser_max_age_seconds/3600;$('browser-max-tasks').value=s.browser_max_tasks;$('media-retry-initial').value=s.media_retry_initial_seconds/60;$('media-retry-max').value=s.media_retry_max_seconds/3600;
- });updateCollectionSummaries();
+  $('rate-limit-mode').value=s.rate_limit_mode;$('request-timeout').value=s.request_timeout_seconds;$('max-media-mib').value=s.max_media_bytes/1048576;$('media-retry-initial').value=s.media_retry_initial_seconds/60;$('media-retry-max').value=s.media_retry_max_seconds/3600;
+ });
+ hydrateSettingsForm('chrome-runtime-form',()=>{
+  $('scroll-delay').value=s.scroll_delay_seconds;$('scroll-jitter').value=s.scroll_jitter_seconds;$('timeline-idle-seconds').value=s.timeline_idle_seconds;$('known-boundary-posts').value=s.known_boundary_posts;
+  $('browser-max-age').value=s.browser_max_age_seconds/3600;$('browser-max-tasks').value=s.browser_max_tasks;
+ });updateScrollSpacingHelp();updateCollectionSummaries();
 }
 function updateScrollSpacingHelp(){
   const interval=Number($('scroll-delay').value),jitter=Number($('scroll-jitter').value),help=$('scroll-spacing-help');
@@ -651,7 +680,7 @@ $('browser-settings-form').addEventListener('submit',event=>{event.preventDefaul
  const input=browserSettingsDraft();
  await api('/settings','PUT',input);state.settings=await api('/settings');
  acceptSettingsForm('browser-settings-form',submitted);populateBrowserSettings(state.settings);renderChromeMode();
- $('chrome-result').textContent='';$('browser-settings-result').textContent='已保存，下次诊断和采集生效；当前任务继续使用原连接。';toast('浏览器设置已保存');
+ $('chrome-result').textContent='';$('browser-settings-result').textContent='已保存，下次诊断和采集生效；当前任务继续使用原连接。';toast('浏览器连接设置已保存');
 });});
 
 function selectSettingsTab(name,focus=false){
@@ -674,7 +703,8 @@ async function refreshSettings() {
   $('database-help').textContent='保存正文、引用关系、媒体索引、监控计划与通知队列。';
   $('database-label').textContent=s.database_driver==='sqlite'?'SQLite · 本地数据库':(s.database_driver==='mariadb'?'MariaDB':'MySQL')+' · '+s.database_name;
   $('cookie-badge').textContent=s.cookie_blocked?'需更新':s.cookie_ready?'已保存':'未导入';$('cookie-badge').className='badge '+(s.cookie_blocked?'error':s.cookie_ready?'':'neutral');
-  $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`Cookie 已保存${s.cookie_imported?' · '+date(s.cookie_imported)+' 更新':''}。有效性以采集结果为准。`:'支持粘贴 Cookie 请求头，或导入 JSON / Netscape 文件。');
+  $('cookie-status').textContent=s.cookie_blocked|| (s.cookie_ready?`${s.cookie_imported?'上次更新 '+date(s.cookie_imported)+'。':'Cookie 已保存。'}有效性以采集结果为准。`:'尚未配置登录凭据，选择下方任一种方式开始。');
+  if(!$('cookie-manual-method').dataset.initialized){$('cookie-manual-method').open=!s.cookie_ready;$('cookie-manual-method').dataset.initialized='true';}
   hydrateSettingsForm('settings-form',()=>{$('proxy-mode').value=s.proxy_configured?'proxy':'direct';$('proxy-url').value='';$('proxy-label').textContent='当前：'+s.proxy_label;$('proxy-fields').hidden=!s.proxy_configured;});renderChromeMode();populateCollectionSettings(s);
   if(!settingsBaselines.has('cookie-form'))acceptSettingsForm('cookie-form');
   await refreshCookieSource();
@@ -686,7 +716,11 @@ async function refreshCookieSource() {
   const c=await api('/cookies/source');
   hydrateSettingsForm('cookie-api-form',()=>{$('cookie-api-url').value=c.url||'';$('cookie-api-token').value='';$('cookie-api-clear-token').checked=false;
   $('cookie-api-auto').checked=c.url?c.auto_refresh:true;$('cookie-api-proxy').checked=!!c.use_proxy;});
+  $('cookie-api-fetch-saved').hidden=!c.url;
+  $('cookie-api-summary').textContent=c.url?'已配置 · '+(c.auto_refresh?'自动恢复已开启':'自动恢复未开启'):'尚未配置 · 可在登录失效时自动更新';
+  $('cookie-api-url-help').textContent=c.token_configured?'已保存接口认证；修改地址后，请在“访问认证与代理”中重新填写 Token。':'填写可返回 Cookie 的接口地址。';
   $('cookie-api-token-help').textContent=(c.token_configured?'Token 已保存，留空保留。':'无需认证时可留空。')+'修改接口地址后需重新填写 Token。';
+  $('cookie-api-result').classList.toggle('form-error',!!c.last_error);
   $('cookie-api-result').textContent=c.last_error?'最近获取失败：'+c.last_error:c.last_fetched?'最近成功获取：'+date(c.last_fetched):'';
 }
 $('cookie-api-form').addEventListener('submit',event=>{
@@ -694,15 +728,26 @@ $('cookie-api-form').addEventListener('submit',event=>{
   if(fields.disabled)return;
   const input={url:$('cookie-api-url').value.trim(),token:$('cookie-api-token').value.trim(),clear_token:$('cookie-api-clear-token').checked,auto_refresh:$('cookie-api-auto').checked,use_proxy:$('cookie-api-proxy').checked};
   action(null,async()=>{
-    fields.disabled=true;$('cookie-api-result').textContent=fetchNow?'正在保存配置并获取 Cookie…':'正在保存配置…';
+    fields.disabled=true;$('cookie-api-fetch-saved').disabled=true;$('cookie-api-result').classList.remove('form-error');$('cookie-api-result').textContent=fetchNow?'正在保存配置并获取 Cookie…':'正在保存配置…';
     try {
       await api('/cookies/source','PUT',input);$('cookie-api-token').value='';acceptSettingsForm('cookie-api-form');
       const r=fetchNow?await api('/cookies/fetch','POST'): {message:'Cookie API 配置已保存到数据库'};
-      await refreshSettings();await refreshOverview();$('cookie-api-result').textContent=r.message;toast(r.message);
-    } catch(err) { $('cookie-api-result').textContent=err.message;throw err; }
-    finally { fields.disabled=false; }
+      await refreshSettings();await refreshOverview();$('cookie-api-result').classList.remove('form-error');$('cookie-api-result').textContent=r.message;toast(r.message);
+    } catch(err) { $('cookie-api-result').classList.add('form-error');$('cookie-api-result').textContent=err.message;throw err; }
+    finally { fields.disabled=false;$('cookie-api-fetch-saved').disabled=false; }
   });
 });
+$('cookie-api-fetch-saved').addEventListener('click',()=>{
+  if($('cookie-api-fields').disabled)return;
+  if(settingsFormDirty('cookie-api-form')){$('cookie-api-method').open=true;$('cookie-api-url').focus();toast('接口配置尚未保存，请在下方选择“保存并获取”',true);return;}
+  action($('cookie-api-fetch-saved'),async()=>{
+    $('cookie-api-fields').disabled=true;$('cookie-api-result').classList.remove('form-error');$('cookie-api-result').textContent='正在从已保存的接口获取 Cookie…';
+    try{const r=await api('/cookies/fetch','POST');await refreshSettings();await refreshOverview();$('cookie-api-result').classList.remove('form-error');$('cookie-api-result').textContent=r.message;toast(r.message);}
+    catch(err){$('cookie-api-result').classList.add('form-error');$('cookie-api-result').textContent=err.message;throw err;}
+    finally{$('cookie-api-fields').disabled=false;}
+  });
+});
+$('cookie-file-select').addEventListener('click',()=>$('cookie-file').click());
 $('proxy-mode').addEventListener('change',()=>$('proxy-fields').hidden=$('proxy-mode').value==='direct');
 $('reset-media-retry').addEventListener('click',()=>action($('reset-media-retry'),async()=>{
   $('media-retry-reset-result').textContent='正在清除媒体重试等待…';
@@ -720,7 +765,7 @@ $('reset-rate-limit').addEventListener('click',()=>action($('reset-rate-limit'),
   } catch(err) { $('rate-limit-reset-result').textContent=err.message;throw err; }
 }));
 $('cookie-file').addEventListener('change',async()=>{const file=$('cookie-file').files[0];if(!file)return;if(file.size>1024*1024){toast('Cookie 文件不能超过 1 MiB',true);$('cookie-file').value='';return;}try{$('cookie-content').value=await file.text();updateSettingsDraftNotice();$('cookie-file-name').textContent=file.name;}catch{toast('无法读取文件',true);}});
-$('cookie-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const content=$('cookie-content').value.trim();if(!content)throw new Error('请粘贴 Cookie 或选择文件');const r=await api('/cookies','POST',{content});$('cookie-content').value='';$('cookie-file').value='';$('cookie-file-name').textContent='或直接粘贴到上方';acceptSettingsForm('cookie-form');toast(r.message);await refreshSettings();await refreshOverview();});});
+$('cookie-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const content=$('cookie-content').value.trim();if(!content)throw new Error('请粘贴 Cookie 或选择文件');const r=await api('/cookies','POST',{content});$('cookie-content').value='';$('cookie-file').value='';$('cookie-file-name').textContent='支持 .json、.txt';acceptSettingsForm('cookie-form');toast(r.message);await refreshSettings();await refreshOverview();});});
 function proxyChange() { if($('proxy-mode').value==='direct')return {proxy:''};const p=$('proxy-url').value.trim();if(p)return {proxy:p};if(!state.settings?.proxy_configured)throw new Error('请输入代理地址');return {}; }
 $('settings-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{const submitted=settingsSnapshot('settings-form');await api('/settings','PUT',proxyChange());acceptSettingsForm('settings-form',submitted);toast('代理设置已保存，下一个采集任务生效');await refreshSettings();});});
 $('test-proxy').addEventListener('click',()=>action($('test-proxy'),async()=>{$('proxy-result').textContent='正在连接 X…';try{const r=await api('/proxy-test','POST',proxyChange());$('proxy-result').textContent=`收到 HTTP ${r.status} · ${r.latency_ms} ms。${r.message}`;}catch(err){$('proxy-result').textContent=err.message;throw err;}}));

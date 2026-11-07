@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,43 @@ func TestMediaLazyPlaybackAndBrowserCache(t *testing.T) {
 	wait(`state.view==='settings' && window.testPlayingVideo.getAttribute('src')===null && window.testPlayingVideo.paused`)
 	eval(`(()=>{$('settings-tab-display').click();return true})()`)
 	wait(`!$('settings-display').hidden && $('image-cache-hours').value==='168'`)
+	if !eval(`$('display-inline').contains($('video-timeline-autoplay')) && $('display-inline').contains($('video-timeline-preload')) && $('display-viewer').contains($('video-auto-next')) && $('display-viewer').contains($('media-preload-mode')) && !$('display-cache').open`) {
+		t.Fatal("display settings not grouped by viewing context")
+	}
+	eval(`(()=>{$('video-auto-next').click();$('video-loop').click();$('media-preload-mode').value='enhanced';$('media-preload-mode').dispatchEvent(new Event('change',{bubbles:true}));return true})()`)
+	if !eval(`!$('display-loop-priority').hidden && $('display-preload-help').textContent.includes('增加流量') && $('display-draft-status').textContent==='有未保存修改'`) {
+		t.Fatal("missing priority, preload explanation, or draft state")
+	}
+	eval(`(()=>{$('settings-tab-data').click();$('settings-tab-display').click();return true})()`)
+	if !eval(`$('media-preload-mode').value==='enhanced' && $('video-auto-next').checked`) {
+		t.Fatal("tab change lost display draft")
+	}
+	for _, width := range []int64{1280, 390} {
+		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 1000)); err != nil {
+			t.Fatal(err)
+		}
+		for _, theme := range []string{"light", "dark"} {
+			eval(fmt.Sprintf(`(()=>{applyArchiveTheme(%q);$('display-inline').scrollIntoView({block:'start',behavior:'instant'});return true})()`, theme))
+			if !eval(`!document.querySelector('#archive-display-form button[type=submit]').disabled && getComputedStyle($('video-auto-next')).backgroundColor==='rgb(29, 155, 240)' && document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('.display-option input')].every(el=>{const r=el.getBoundingClientRect();return r.width>=40 && r.right<=innerWidth})`) {
+				t.Fatal("display settings overflow or inaccessible switch", width, theme)
+			}
+			if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+				shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("display-settings-%s-%d.png", theme, width)), shot, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	// Invalid advanced cache settings must expand before native validation focuses them.
+	eval(`(()=>{$('video-auto-next').click();$('media-preload-mode').value='standard';$('media-preload-mode').dispatchEvent(new Event('change',{bubbles:true}));$('image-cache-hours').value='0';$('archive-display-form').requestSubmit();return true})()`)
+	if !eval(`$('display-cache').open && ! $('image-cache-hours').checkValidity()`) {
+		t.Fatal("invalid cache field remained hidden")
+	}
+
 	eval(`(()=>{$('video-default-muted').checked=false;$('video-loop').checked=true;$('image-cache-hours').value='48';$('video-cache-minutes').value='5';$('archive-display-form').requestSubmit();return true})()`)
 	wait(`state.settings.video_default_muted===false && state.settings.video_loop===true && state.settings.image_cache_seconds===172800 && state.settings.video_cache_seconds===300`)
 	eval(`(()=>{location.hash='home';return true})()`)

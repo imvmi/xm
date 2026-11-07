@@ -40,6 +40,7 @@ function filteredAccounts(rows){
  const list=rows.filter(u=>(u.username+' '+handle(u)+' '+(u.name||'')).toLowerCase().includes(q)&&(
   filter==='all'||filter==='enabled'&&u.monitored&&u.enabled||filter==='paused'&&u.monitored&&!u.enabled||
   filter==='archived'&&!u.monitored||filter==='attention'&&accountNeedsAttention(u)||
+  filter===u.attention?.code&&accountNeedsAttention(u)||
   filter==='visible'&&visibleInTimeline(u)||filter==='hidden'&&!visibleInTimeline(u)
  ));
  const byName=(a,b)=>handle(a).localeCompare(handle(b),'en',{sensitivity:'base'})||a.username.localeCompare(b.username);
@@ -60,16 +61,17 @@ function accountCard(u){
  const lastSaved=u.stats_pending?'统计加载中…':u.last_saved?'最近归档 '+date(u.last_saved,true):'等待第一次采集';
  return `<div class="account-card-top"><div class="account-identity"><a class="account-avatar-link" href="${userURL(u.username)}" aria-label="查看 ${escape(u.name||handle(u))} 的归档">${avatar(handle(u),'user-avatar',u.avatar_url)}</a><span><strong><a class="account-name" href="${userURL(u.username)}" title="${escape(u.name||handle(u))}">${escape(u.name||handle(u))}</a>${u.protected?icon('lock'):''}</strong><a class="user-handle" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer" title="@${escape(handle(u))}">@${escape(handle(u))}</a>${u.current_username&&u.current_username!==u.username?`<small class="muted" title="原 @${key} · 归档已延续">原 @${key} · 归档已延续</small>`:''}</span></div><span class="badge ${cls}">${label}${accountNeedsAttention(u)&&label!=='需关注'?' · 需关注':''}</span></div>
  <div class="account-stats"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个媒体</span><span class="account-last-saved"><span title="${escape(lastSaved)}">${escape(lastSaved)}</span></span></div>
- ${accountNeedsAttention(u)&&u.attention?`<p class="account-attention" title="${escape(u.attention.suggestion)}">上次采集：${escape(u.attention.label)}</p>`:''}
+ ${accountNeedsAttention(u)&&u.attention?`<p class="account-attention" title="${escape(u.attention.suggestion)}">上次采集：${escape(u.attention.label)}<button type="button" class="text-button account-attention-action" data-monitor="${key}" data-op="manage"${disabled}>查看原因与处理 →</button></p>`:''}
  <div class="account-controls"><button type="button" class="timeline-switch" role="switch" aria-checked="${shown}" aria-label="@${escape(handle(u))} 在主时间线显示" data-monitor="${key}" data-op="timeline"${disabled}><span class="switch-track" aria-hidden="true"></span><span>首页显示</span></button><button type="button" class="timeline-switch" role="switch" aria-checked="${enabled}" aria-label="@${escape(handle(u))} 自动采集" title="${escape(autoHelp)}" data-monitor="${key}" data-op="toggle"${pending||!u.monitored||u.runtime_pending?' disabled':''}><span class="switch-track" aria-hidden="true"></span><span>自动采集</span></button></div>`;
 }
 function accountManagementHTML(u){
  const key=escape(u.username),action=(op,text,extra='')=>`<button type="button" class="text-button ${extra}" data-monitor="${key}" data-op="${op}">${text}</button>`;
- let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${action('edit','编辑账号配置')}${action('identity','更新账号身份')}${collectionActions(u)}<button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${key}" data-op="replies"><span>包含回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">包含该账号发出的回复。切换后立即保存，并重新建立历史采集基线；已归档内容保留。</p>${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}`):action('readd','重新添加监控');
+ const needsCheck=accountNeedsAttention(u)&&['suspended','username_unavailable','protected','identity','identity_unresolved','identity_conflict','unavailable'].includes(u.attention?.code);
+ let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${action('edit','编辑账号配置')}${action('identity',u.attention?.code==='identity_conflict'?'核对原账号的新用户名':'更新账号身份')}${needsCheck&&!u.running&&!u.requested&&!u.queued_job?action('recheck','重新检查并尝试采集'):collectionActions(u)}<button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${key}" data-op="replies"><span>包含回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">包含该账号发出的回复。切换后立即保存，并重新建立历史采集基线；已归档内容保留。</p>${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}${!u.running?action('archive-only','取消监控，仅保留归档'):''}`):action('readd','重新添加监控');
  if(accountPending.has(u.username))operations=operations.replace(/<button\b([^>]*)>/g,(tag,attrs)=>attrs.includes('disabled')?tag:`<button disabled${attrs}>`);
  const detail=u.monitored&&!u.runtime_pending?`<details class="account-details" data-detail="${key}:status"${accountExpanded.has(u.username+':status')?' open':''}><summary>采集详情${accountNeedsAttention(u)?' · 需关注':''}</summary><div>${baselineHTML(u)}${checkpointHTML(u)}${u.last_error?`<p class="account-error">${escape(u.last_error)}</p>`:''}${monitorNextStep(u)}<p>最近结束：${u.last_finished?escape(date(u.last_finished,true)):'尚未采集'}</p><p>${!u.enabled||state.overview?.paused?'自动采集已暂停':u.next_run>state.overview?.server_time?'下次：'+escape(date(u.next_run,true)):'等待调度'} · 每 ${number(u.interval_seconds/60)} 分钟（${u.interval_override_seconds?'自定义':'跟随全局'}）</p><p>上轮新增 ${number(u.new_posts)} 条</p><a class="account-task-link" href="#activity">查看任务 →</a></div></details>`:'';
  const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往爬虫设置恢复。':'自动采集按账号周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
- return `${accountNeedsAttention(u)&&u.attention?`<div class="account-attention"><strong>上次采集：${escape(u.attention.label)}</strong><p>${escape(u.attention.suggestion)}</p>${u.last_finished?`<small>记录于 ${escape(date(u.last_finished,true))}</small>`:''}</div>`:''}<p class="account-menu-help">${escape(help)}</p><div class="account-action-list">${operations}</div>${detail}`;
+ return `${accountNeedsAttention(u)&&u.attention?`<div class="account-attention"><strong>上次采集：${escape(u.attention.label)}</strong><p>${escape(u.attention.suggestion)}</p>${u.last_finished?`<small>记录于 ${escape(date(u.last_finished,true))}</small>`:''}</div>`:''}<p class="account-menu-help">${escape(help)}</p>${needsCheck?`<p class="account-menu-help">重新检查会加入一次手动采集任务，不开启自动采集；仍遵守限流与身份校验。${u.user_id?`原账号数字 ID：${escape(u.user_id)}。`:""}</p><a class="account-task-link" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer">${u.attention?.code==='identity_conflict'?'查看当前用户名主页（可能属于其他账号）':'在 X 核实账号状态'} ↗</a>${u.attention?.code==='identity_conflict'&&u.user_id?`<a class="account-task-link" href="https://x.com/i/user/${encodeURIComponent(u.user_id)}" target="_blank" rel="noopener noreferrer">按原数字 ID 查看账号 ↗</a>`:""}`:""}<div class="account-action-list">${operations}</div>${detail}`;
 }
 function renderAccountMenu(){
  const dialog=$('account-menu-dialog');if(!dialog.open)return;
@@ -158,14 +160,18 @@ async function handleAccountAction(event){
  if(b.disabled)return;
  const u=accountRows().find(u=>u.username===b.dataset.monitor);if(!u)return;
  if(accountPending.has(u.username))return;
+ if(b.dataset.op==='manage'){openAccountMenu(u.username);return;}
  if(b.closest('#account-menu-dialog')&&b.dataset.op!=='replies')$('account-menu-dialog').close();
  if(b.dataset.op==='identity'){openIdentityRefresh(u);return;}
  if(['readd','edit'].includes(b.dataset.op)){await action(b,()=>openMonitor(u));return;}
+ if(b.dataset.op==='archive-only'&&!window.confirm('取消 @'+handle(u)+' 的监控？自动采集及排队任务将取消，未完成的分页断点会清除。已归档推文、媒体、收藏与首页显示偏好保留；以后可重新添加监控。'))return;
  if(b.dataset.op==='rescan'&&!window.confirm('重新扫描将清除未完成的分页断点，并从最新内容重新扫描。已归档内容不会删除。是否继续？'))return;
  accountPending.add(u.username);renderUsers();
  try{
   const target=encodeURIComponent(u.username);
   switch(b.dataset.op){
+   case 'archive-only':{const result=await api('/monitors/'+target,'DELETE');toast(result.message);break;}
+   case 'recheck':await api('/monitors/'+target+'/run','POST',{mode:'incremental'});toast('重新检查已加入采集队列，自动采集开关保持不变');break;
    case 'timeline':await api('/users/'+target+'/timeline','PUT',{show_in_timeline:!visibleInTimeline(u)});toast(visibleInTimeline(u)?'已从首页隐藏，归档与采集不受影响':'已在首页显示');break;
    case 'replies':{
     await api('/monitors/'+target,'PUT',{replies:!u.replies,enabled:!!u.enabled});

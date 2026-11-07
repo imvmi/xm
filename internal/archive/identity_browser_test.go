@@ -21,7 +21,7 @@ func TestBrowserIdentityOffline(t *testing.T) {
 		name                                      string
 		wrong, missing, replies, takeover, modern bool
 	}{
-		{name: "rename_and_out_of_order"}, {name: "renamed_replies", replies: true}, {name: "renamed_modern_replies", replies: true, modern: true}, {name: "wrong_resolved_identity", wrong: true}, {name: "deleted_reference", missing: true}, {name: "old_handle_taken_over", takeover: true},
+		{name: "rename_and_out_of_order"}, {name: "renamed_replies", replies: true}, {name: "renamed_modern_replies", replies: true, modern: true}, {name: "wrong_resolved_identity", wrong: true}, {name: "deleted_reference", missing: true}, {name: "old_handle_taken_over", takeover: true}, {name: "takeover_missing_reference", takeover: true, missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{Headless: true, BrowserMaxAge: 30, ScrollDelay: 1, MaxScrolls: 3}
@@ -103,6 +103,12 @@ func TestBrowserIdentityOffline(t *testing.T) {
 				}
 				return nil
 			}, setup)
+			if tc.takeover && tc.missing {
+				if FailureReason(err) != "identity_conflict" || saved != 0 || verified || !strings.Contains(err.Error(), "原 ID：42，当前 ID：99") {
+					t.Fatalf("lost takeover diagnosis or mixed identity: %v saved=%d verified=%v", err, saved, verified)
+				}
+				return
+			}
 			if tc.wrong || tc.missing {
 				if FailureKind(err) != "identity" || saved != 0 {
 					t.Fatal("unsafe failure", result, err, saved)

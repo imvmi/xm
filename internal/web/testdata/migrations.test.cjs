@@ -11,7 +11,7 @@ const status=(id='job',state='completed',acknowledged=false)=>({
 function fixture(api){
  const nodes=new Map();
  const node=id=>{
-  if(!nodes.has(id))nodes.set(id,{value:'',hidden:false,dataset:{},listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},removeAttribute(){},focus(){}});
+  if(!nodes.has(id))nodes.set(id,{value:'',hidden:false,dataset:{},listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},setAttribute(){},removeAttribute(){},focus(){}});
   return nodes.get(id);
  };
  const ctx=vm.createContext({$:node,api,document:{querySelectorAll:()=>[]},state:{authenticated:true,view:'settings'},setInterval(){},escape:String,date:String,number:String,bytes:String,toast(){},action:(_,fn)=>fn()});

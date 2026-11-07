@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -57,9 +58,12 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='认证' && $('settings-tab-display').textContent==='时间线' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「数据 → 媒体存储」中的服务器缓存相互独立')`) {
 		t.Fatal("navigation and settings organization are inconsistent")
 	}
+	if !eval(`$('crawler-xm').contains($('collection-settings-form')) && $('crawler-xm').contains($('settings-form')) && $('crawler-chrome').contains($('browser-settings-form')) && $('crawler-chrome').contains($('chrome-runtime-form')) && !$('collection-settings-form').contains($('scroll-delay'))`) {
+		t.Fatal("crawler groups are not separated")
+	}
 	// Reader limits have their own form and apply without a restart.
 	if a.store.DB.Dialect == "sqlite" {
-		eval(`(()=>{$('settings-tab-data').click();return true})()`)
+		eval(`(()=>{$('settings-tab-data').click();$('data-tab-performance').click();return true})()`)
 		if !eval(`!$('sqlite-performance-panel').hidden && $('sqlite-read-connections').value==='4'`) {
 			t.Fatal("SQLite concurrency control missing")
 		}
@@ -146,7 +150,17 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 		t.Fatal("minimums not enforced")
 	}
 	eval(`(()=>{document.getElementById('default-interval').value='2';document.getElementById('queue-interval').value='45';document.getElementById('scroll-delay').value='6';document.getElementById('scroll-delay').dispatchEvent(new Event('input'));document.getElementById('scroll-jitter').value='2';document.getElementById('scroll-jitter').dispatchEvent(new Event('input'));document.getElementById('timeline-idle-seconds').value='40';document.getElementById('known-boundary-posts').value='12';document.getElementById('rate-limit-mode').value='fast';document.getElementById('request-timeout').value='90';document.getElementById('max-media-mib').value='1024';document.getElementById('browser-max-age').value='12';document.getElementById('browser-max-tasks').value='250';document.getElementById('media-retry-initial').value='10';document.getElementById('media-retry-max').value='48';document.querySelector('#collection-settings-form button[type="submit"]').click();return true})()`)
-	wait(`state.settings.default_interval_seconds===7200 && state.settings.queue_interval_seconds===45 && state.settings.scroll_delay_seconds===6 && state.settings.scroll_jitter_seconds===2 && state.settings.rate_limit_mode==='fast'`)
+	wait(`state.settings.default_interval_seconds===7200 && state.settings.queue_interval_seconds===45 && state.settings.rate_limit_mode==='fast'`)
+	if a.Config().ScrollDelay != 3 || a.Config().BrowserMaxAge != 6*3600 || !eval(`settingsFormDirty('chrome-runtime-form') && $('scroll-delay').value==='6' && $('browser-max-age').value==='12'`) {
+		t.Fatal("XM save submitted or erased Chrome draft")
+	}
+	eval(`(()=>{$('queue-interval').value='49';$('queue-interval').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chrome-runtime-form button[type=submit]').click();return true})()`)
+	wait(`state.settings.scroll_delay_seconds===6 && state.settings.scroll_jitter_seconds===2 && !settingsFormDirty('chrome-runtime-form')`)
+	if !eval(`$('queue-interval').value==='49' && settingsFormDirty('collection-settings-form')`) || a.Config().QueueInterval != 45 {
+		t.Fatal("Chrome save submitted or erased XM draft")
+	}
+	eval(`(()=>{$('queue-interval').value='45';$('queue-interval').dispatchEvent(new Event('input',{bubbles:true}));return true})()`)
+
 	if a.Config().DefaultInterval != 7200 || a.Config().QueueInterval != 45 || a.Config().MaxPostsPerRun != 1000 || a.Config().PageBudget != 15 || a.Config().MaxScrolls != 40 || a.Config().ScrollDelay != 6 || a.Config().ScrollJitter != 2 || a.Config().TimelineIdleSeconds != 40 || a.Config().KnownBoundaryPosts != 12 || a.Config().RequestBudgetMode != "balanced" || a.Config().RateLimitMode != "fast" || a.Config().RequestTimeout != 90 || a.Config().MaxMediaBytes != 1024<<20 || a.Config().BrowserMaxAge != 12*3600 || a.Config().BrowserMaxTasks != 250 || a.Config().MediaRetryInitial != 10*60 || a.Config().MediaRetryMax != 48*3600 {
 		t.Fatal("UI did not persist settings")
 	}
@@ -164,29 +178,61 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`state.view==='settings' && document.getElementById('browser-max-age').value==='8' && !document.getElementById('settings-draft-notice').hidden`)
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();document.querySelector('#settings-form button[type="submit"]').click();return true})()`)
 	wait(`document.getElementById('toast').textContent.includes('代理设置已保存')`)
-	if !eval(`document.getElementById('browser-max-age').value==='8' && settingsFormDirty('collection-settings-form')`) {
+	if !eval(`document.getElementById('browser-max-age').value==='8' && settingsFormDirty('chrome-runtime-form')`) {
 		t.Fatal("saving proxy erased collection draft")
 	}
 	eval(`(()=>{document.getElementById('settings-tab-collection').click();document.querySelector('[data-settings-group="browser"]').open=true;document.querySelector('[data-default-group="browser"]').click();return true})()`)
-	if !eval(`document.getElementById('browser-max-age').value==='6' && document.getElementById('max-media-mib').value==='1024' && document.getElementById('collection-draft-status').textContent==='有未保存修改'`) {
+	if !eval(`document.getElementById('browser-max-age').value==='6' && document.getElementById('max-media-mib').value==='1024' && document.getElementById('chrome-runtime-draft-status').textContent==='有未保存修改'`) {
 		t.Fatal("group defaults changed unrelated settings")
 	}
-	eval(`(()=>{document.querySelector('#collection-settings-form button[type="submit"]').click();return true})()`)
-	wait(`state.settings.browser_max_age_seconds===21600 && !settingsFormDirty('collection-settings-form')`)
-	if !eval(`!document.getElementById('collection-settings-result').textContent.includes('重新安排')`) {
+	eval(`(()=>{document.querySelector('#chrome-runtime-form button[type="submit"]').click();return true})()`)
+	wait(`state.settings.browser_max_age_seconds===21600 && !settingsFormDirty('chrome-runtime-form')`)
+	if !eval(`!document.getElementById('chrome-runtime-result').textContent.includes('重新安排')`) {
 		t.Fatal("save falsely claimed schedule was changed")
 	}
 	// Invalid fields in collapsed groups must become visible and focusable.
-	if !eval(`(()=>{const group=document.querySelector('[data-settings-group="browser"]');group.open=false;document.getElementById('browser-max-age').value='0';document.querySelector('#collection-settings-form button[type="submit"]').click();return group.open})()`) {
+	if !eval(`(()=>{const group=document.querySelector('[data-settings-group="browser"]');group.open=false;document.getElementById('browser-max-age').value='0';document.querySelector('#chrome-runtime-form button[type="submit"]').click();return group.open})()`) {
 		t.Fatal("invalid collapsed field was hidden")
 	}
 	eval(`(()=>{document.getElementById('browser-max-age').value='6';document.getElementById('browser-max-age').dispatchEvent(new Event('input',{bubbles:true}));document.querySelectorAll('[data-settings-group]').forEach(el=>el.open=true);return true})()`)
+	// Diagram links expand their destination, move focus, and keep unsaved drafts.
+	eval(`(()=>{$('queue-interval').value='73';$('queue-interval').dispatchEvent(new Event('input',{bubbles:true}));$('crawler-media').open=false;document.querySelector('[data-crawler-target="crawler-media"]').click();return true})()`)
+	if !eval(`$('crawler-media').open && document.activeElement===$('crawler-media').querySelector('summary') && $('queue-interval').value==='73' && settingsFormDirty('collection-settings-form')`) {
+		t.Fatal("flow link lost draft or did not reveal destination")
+	}
+	for _, name := range []string{"data", "account"} {
+		eval(fmt.Sprintf(`(()=>{document.querySelector('[data-crawler-settings="%s"]').click();return true})()`, name))
+		if !eval(fmt.Sprintf(`!$('settings-%s').hidden && $('queue-interval').value==='73'`, name)) {
+			t.Fatal("flow link did not switch settings or lost draft", name)
+		}
+		eval(`(()=>{$('settings-tab-collection').click();return true})()`)
+	}
+	for _, theme := range []string{"light", "dark"} {
+		for _, width := range []int64{1280, 390} {
+			if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 1000)); err != nil {
+				t.Fatal(err)
+			}
+			eval(fmt.Sprintf(`(()=>{applyArchiveTheme(%q);$('crawler-flow').scrollIntoView({behavior:'instant',block:'start'});return true})()`, theme))
+			if !eval(`document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('.crawler-flow-steps button')].every(el=>el.getBoundingClientRect().width>0)`) {
+				t.Fatal("flow overflow or missing steps", theme, width)
+			}
+			if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+				shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, fmt.Sprintf("crawler-flow-%s-%d.png", theme, width)), shot, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
 	for _, width := range []int64{1280, 390} {
 		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 844)); err != nil {
 			t.Fatal(err)
 		}
 		eval(`(()=>{document.querySelector('[data-settings-group="browser"]').scrollIntoView({behavior:'instant',block:'start'});return true})()`)
-		if !eval(`document.documentElement.scrollWidth<=window.innerWidth && (()=>{const r=document.querySelector('.collection-save-bar').getBoundingClientRect();return r.top>=0 && r.bottom<=window.innerHeight && r.width>0})()`) {
+		if !eval(`document.documentElement.scrollWidth<=window.innerWidth && (()=>{const r=document.querySelector('#chrome-runtime-form .collection-save-bar').getBoundingClientRect();return r.top>=0 && r.bottom<=window.innerHeight && r.width>0})()`) {
 			t.Fatal("settings overflow or save action outside viewport", width)
 		}
 		if !eval(`['reset-media-retry','reset-rate-limit'].every(id=>{const r=$(id).getBoundingClientRect();return r.width>0 && r.left>=0 && r.right<=innerWidth})`) {

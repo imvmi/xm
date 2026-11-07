@@ -45,6 +45,9 @@ func TestResolveTargetProfile(t *testing.T) {
 			}
 			return Profile{ID: id, Username: "newname"}, nil
 		})
+		if id != "42" && FailureReason(err) != "identity_conflict" {
+			t.Fatal("missing takeover diagnosis", err)
+		}
 		if (err == nil) != (id == "42") {
 			t.Fatal("manual identity check", p, err)
 		}

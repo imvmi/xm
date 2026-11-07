@@ -95,3 +95,5 @@
 .account-attention { margin:8px 0 12px;padding:8px 10px;border-left:3px solid #bb894a;border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px;line-height:1.6;overflow-wrap:anywhere; }
 .account-attention p { margin:4px 0; }
 .account-attention small { color:var(--muted); }
+
+.account-attention-action { display:block;min-height:36px;margin-top:4px;text-align:left; }

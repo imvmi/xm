@@ -89,7 +89,7 @@ func resolveTargetProfile(ctx context.Context, identity TargetIdentity, referenc
 		}
 		if err == nil {
 			if p.ID != identity.UserID {
-				return Profile{}, fail("identity", "账号身份不一致：数字用户 ID 与原账号不符，未更新")
+				return Profile{}, &Failure{Kind: "identity", Reason: "identity_conflict", Message: fmt.Sprintf("%s（原 ID：%s，当前 ID：%s），未更新", AccountIdentityConflictMessage, identity.UserID, p.ID)}
 			}
 			if !usernamePattern.MatchString(p.Username) {
 				return Profile{}, fail("identity", "返回的用户名无效，未更新")

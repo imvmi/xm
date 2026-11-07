@@ -20,14 +20,34 @@
 #migration-error:not(:empty){color:#d15454}
 #settings-data [hidden]{display:none!important}
 
-.data-jump-links{display:flex;flex-direction:row;flex-wrap:wrap;gap:10px;margin:18px 0}
-.data-group{margin-top:32px;scroll-margin-top:24px}
-.data-group-heading{display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line)}
-.data-group-heading h2{margin:0;font-size:21px}
-.data-group-heading p{margin:6px 0 0;color:var(--muted);font-size:13px;line-height:1.7}
-.data-group-number{display:grid;place-items:center;flex-shrink:0;width:38px;height:38px;border-radius:10px;background:var(--surface-raised,var(--surface-raised));color:var(--accent);font-weight:700;font-size:14px}
-.data-panel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
-#settings-data .data-panel-grid>.panel{margin:0;min-width:0}
-#settings-data .data-group>.panel{margin-top:16px}
-#settings-data .data-panel-grid:has(>.panel[hidden])>.panel:not([hidden]),#settings-data .data-panel-grid>.panel:only-child{grid-column:1/-1}
-@media(max-width:900px){.data-panel-grid{grid-template-columns:minmax(0,1fr)}}
+/* Data overview stays visible while switching between focused settings. */
+.data-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:20px}
+#settings-data .data-overview>.panel{margin:0;min-width:0}
+#settings-data .data-overview .panel-heading{padding:18px 20px 0;border:0}
+#settings-data .data-overview .panel-heading h2{font-size:14px;color:var(--muted)}
+#settings-data .data-overview .panel-body{padding:12px 20px 18px}
+.data-overview h3{font-size:17px;margin:0 0 8px}
+.data-overview p{margin:0;font-size:13px}
+.data-tabs{display:flex;flex-direction:row;gap:0;border-bottom:1px solid var(--line);margin:24px 0 20px}
+.data-tabs button{flex:1;position:relative;padding:16px 8px;border:0;background:transparent;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+.data-tabs button[aria-selected=true]{color:var(--ink)}
+.data-tabs button[aria-selected=true]::after{content:"";position:absolute;bottom:-1px;left:20%;right:20%;height:3px;border-radius:3px;background:var(--accent)}
+.data-tabs button:hover{background:var(--surface-raised)}
+.data-tab-content{max-width:860px;margin:0 auto}
+.migration-steps{display:flex;list-style:none;gap:20px;padding:0;margin:24px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
+.migration-steps [aria-current=step]{color:var(--accent);font-weight:700}
+.migration-operation-picker{display:grid;gap:12px}
+.migration-operation-picker button{display:flex;flex-direction:column;gap:8px;text-align:left;padding:20px;border:1px solid var(--line);border-radius:14px;background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+.migration-operation-picker button:hover{background:var(--surface-raised);border-color:var(--accent)}
+.migration-operation-picker strong{display:flex;justify-content:space-between;width:100%;font-size:16px}
+.migration-operation-picker button>span{color:var(--muted);font-size:13px;line-height:1.6}
+.migration-operation-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0}
+.migration-operation-heading h3{margin:0;font-size:18px}
+#settings-data #storage-credentials-details{margin:0}
+#storage-credentials-details summary{font-weight:600}
+#storage-credentials-details form{margin-top:24px}
+@media(max-width:600px){.data-overview{grid-template-columns:minmax(0,1fr);gap:12px}.data-tabs button{font-size:13px;padding:14px 4px}.migration-steps{gap:12px;font-size:12px}}
+
+.storage-delete-control{border-top:1px solid var(--line);margin-top:24px;padding-top:20px}
+.storage-delete-control h3{font-size:15px}
+#storage-delete{margin-top:12px}

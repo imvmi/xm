@@ -52,6 +52,7 @@ function selectStorageCredentialProfile(){
  $('storage-credentials-username').value=p?.username||'';
  $('storage-credentials-destination').textContent=p?[p.endpoint||'AWS S3',p.bucket,p.region,p.prefix].filter(Boolean).join(' · '):'';
  $('storage-credentials-result').textContent='';
+ renderStorageDeletion();
 }
 function renderStorageCredentialProfiles(profiles){
  storageCredentialProfiles=profiles;
@@ -60,6 +61,7 @@ function renderStorageCredentialProfiles(profiles){
  select.value=profiles.some(p=>p.id===previous)?previous:(profiles[0]?.id||'');
  $('storage-credentials-panel').hidden=!profiles.length;
  if(select.value!==previous)selectStorageCredentialProfile();
+ renderStorageDeletion();
 }
 $('storage-credentials-profile').addEventListener('change',selectStorageCredentialProfile);
 $('storage-credentials-clear-token').addEventListener('change',()=>{
@@ -88,3 +90,19 @@ $('storage-credentials-form').addEventListener('submit',event=>{
   }catch(err){resetStorageCredentialSecrets();$('storage-credentials-result').textContent=err.message;throw err;}
  });
 });
+
+function renderStorageDeletion(){
+ const p=storageCredentialProfiles.find(p=>p.id===$('storage-credentials-profile').value);
+ $('storage-delete').disabled=p?.can_delete!==true;
+ $('storage-delete-reason').textContent=p?.delete_reason||(p?.can_delete?'此连接当前未被使用，可以删除。':'');
+}
+$('storage-delete').addEventListener('click',()=>action($('storage-delete'),async()=>{
+ const p=storageCredentialProfiles.find(p=>p.id===$('storage-credentials-profile').value);
+ if(!p?.can_delete||!window.confirm('删除存储连接“'+p.name+'”及其保存的凭据？仅从 XM 移除连接，不删除存储中的文件。再次使用时需要重新配置。')){renderStorageDeletion();return;}
+ try{
+  const result=await api('/storage/profiles/'+encodeURIComponent(p.id),'DELETE');
+  resetStorageCredentialSecrets();toast(result.message);
+  await refreshStorage();if(typeof refreshMigrations==='function')await refreshMigrations();
+ }catch(err){$('storage-credentials-result').textContent=err.message;await refreshStorage();throw err;}
+ // action() re-enables its button on return, so reapply eligibility afterwards.
+}).finally(renderStorageDeletion));
