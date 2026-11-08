@@ -53,7 +53,7 @@ function showLogin() {
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
-  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('rate-limit-reset-result').textContent='';$('media-retry-reset-result').textContent='';$('cookie-api-token-help').textContent='';
+  $('large-image').removeAttribute('src');$('cookie-content').value='';$('proxy-url').value='';$('cookie-api-form').reset();$('cookie-api-result').textContent='';$('rate-limit-reset-result').textContent='';$('media-retry-reset-result').textContent='';$('media-staging-usage').textContent='';$('media-staging-result').textContent='';$('cookie-api-token-help').textContent='';
   document.querySelectorAll('dialog[open]').forEach(d=>d.close());
   $('notification-editor').hidden=true;state.monitors=[];monitorListReady=false;monitorRequest++;accountPending.clear();accountExpanded.clear();accountScroll=0;accountRestoring=false;state.users=[];state.settings=null;state.overview=null;state.navRequest++;
 }
@@ -609,7 +609,7 @@ async function openMonitor(m=null) {
   state.settings=await api('/settings');state.readding=m?.username||null;state.editingMonitor=m?.monitored?m.username:null;
   $('monitor-dialog-title').textContent=state.editingMonitor?'编辑账号配置':m?'重新添加监控':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
   $('monitor-interval-mode').value=m?.interval_override_seconds?'custom':'global';$('monitor-interval').value=m?.interval_override_seconds?m.interval_override_seconds/60:15;updateMonitorIntervalField();
-  $('monitor-replies').checked=!!m?.replies;$('monitor-enabled').checked=state.editingMonitor?!!m.enabled:true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
+  $('monitor-replies').checked=m?!!m.replies:true;$('monitor-enabled').checked=state.editingMonitor?!!m.enabled:true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
 }
 document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>action(b,()=>openMonitor())));
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
@@ -756,6 +756,23 @@ $('reset-media-retry').addEventListener('click',()=>action($('reset-media-retry'
     $('media-retry-reset-result').textContent=r.message;toast(r.message);
   } catch(err) { $('media-retry-reset-result').textContent=err.message;throw err; }
 }));
+async function refreshMediaStaging(){
+ const data=await api('/media/staging');
+ const u=data.usage;
+ $('media-staging-usage').textContent=`暂存占用 ${bytes(u.bytes)} / ${bytes(data.limit_bytes)} · 可清理断点 ${bytes(u.partial_bytes)} · 完整待处理文件 ${bytes(u.complete_bytes)}`;
+}
+$('media-staging-refresh').addEventListener('click',()=>action($('media-staging-refresh'),refreshMediaStaging));
+$('media-staging-clear').addEventListener('click',()=>$('media-staging-dialog').showModal());
+$('media-staging-confirm').addEventListener('click',()=>{
+ action($('media-staging-confirm'),async()=>{
+  try{
+   const r=await api('/media/staging/cleanup','POST',{confirm:true});
+   $('media-staging-dialog').close();
+   $('media-staging-result').textContent=`${r.message} 已释放 ${bytes(r.removed_bytes)}。`;
+   await refreshMediaStaging();
+  }catch(err){$('media-staging-result').textContent=err.message;throw err;}
+ });
+});
 $('reset-rate-limit').addEventListener('click',()=>action($('reset-rate-limit'),async()=>{
   $('rate-limit-reset-result').textContent='正在清除 XM 采集冷却…';
   try {
@@ -803,7 +820,7 @@ const stopLabels={limit_reached:'已达到系统安全上限，可能尚未追�
 const jobLabels={queued:['等待执行','warn'],running:['正在采集','running'],waiting_budget:['等待执行','warn'],waiting_rate:['限流冷却','warn'],waiting_auth:['等待登录恢复','warn'],retrying:['等待重试','warn']};
 const sourceLabels={api:'外部 API',manual:'手动',automatic:'自动批次',retry:'自动重试',legacy:'历史任务'};
 const modeLabels={incremental:'动态更新',backfill:'历史补采',rescan:'重新扫描'};
-const phaseLabels={preparing:'准备任务',identity:'核对账号是否改名',timeline:'读取时间线',avatar:'保存头像',media:'下载与归档媒体',finishing:'保存执行结果'};
+const phaseLabels={preparing:'准备任务',identity:'核对账号是否改名',timeline:'读取推文 · 后台归档媒体',avatar:'保存头像 · 后台归档媒体',media:'处理剩余媒体',finishing:'保存执行结果'};
 function durationLabel(seconds){const n=Math.max(0,Math.floor(Number(seconds)||0));return n>=3600?`${Math.floor(n/3600)} 小时 ${Math.floor(n%3600/60)} 分钟`:n>=60?`${Math.floor(n/60)} 分 ${n%60} 秒`:`${n} 秒`;}
 function taskProfileHTML(task){
  const username=task.current_username||task.target;

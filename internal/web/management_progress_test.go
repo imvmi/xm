@@ -36,7 +36,7 @@ func TestActivityShowsActualPhaseAndTaskDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		job := data.Current
-		if job == nil || job.Phase != phase || job.Remaining == nil || *job.Remaining < 21500 || *job.Remaining > 21600 || job.Elapsed < 0 {
+		if job == nil || (phase != "" && job.Phase != phase) || job.Remaining == nil || *job.Remaining < 21500 || *job.Remaining > 21600 || job.Elapsed < 0 {
 			t.Fatal("wrong phase or captured deadline", job)
 		}
 		if job.MediaTotal == nil || *job.MediaTotal != 2 || job.MediaDone == nil || *job.MediaDone != done {
@@ -52,13 +52,26 @@ func TestActivityShowsActualPhaseAndTaskDeadline(t *testing.T) {
 		}
 		return archive.Collection{Stop: "known_boundary_reached", HistoryComplete: true}, nil
 	}
-	a.scheduler.avatar = func(context.Context, archive.Config, archive.Profile) error { read("avatar", 1); return nil }
+	allowDownload := make(chan struct{})
+	a.scheduler.avatar = func(context.Context, archive.Config, archive.Profile) error {
+		read("avatar", 1)
+		close(allowDownload)
+		return nil
+	}
+	downloaded := false
 	a.scheduler.download = func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error) {
-		read("media", 1)
+		if downloaded {
+			return archive.DownloadSummary{}, nil
+		}
+		<-allowDownload
+		// Downloads now overlap page/ avatar processing; the foreground phase
+		// need not have switched to the final media-drain phase yet.
+		read("", 1)
 		if _, err := a.store.DB.Exec("UPDATE media SET status='done' WHERE post_id='200'"); err != nil {
 			t.Fatal(err)
 		}
-		read("media", 2)
+		downloaded = true
+		read("", 2)
 		return archive.DownloadSummary{}, nil
 	}
 	schedulerStep(t, a)

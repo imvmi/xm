@@ -39,99 +39,16 @@ func mediaURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// Download sends no account Cookie or Authorization to media hosts.
-func Download(ctx context.Context, c *http.Client, dir string, j MediaJob, max int64) (string, int64, string, error) {
-	if j.URL == "" {
-		return "", 0, "", permanentMedia("该媒体未提供可下载的图片/MP4 地址；HLS 暂不支持")
-	}
-	u, err := mediaURL(j.URL)
-	if err != nil {
-		return "", 0, "", permanentMedia(err.Error())
-	}
-	client := *c
-	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("媒体重定向次数过多")
-		}
-		_, err := mediaURL(r.URL.String())
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return "", 0, "", errors.New("无法创建媒体请求")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, "", NetworkError(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", 0, "", fmt.Errorf("媒体下载返回 HTTP %d；可重新采集刷新链接后重试", resp.StatusCode)
-	}
-	if resp.ContentLength > max {
-		return "", 0, "", permanentMedia("媒体超过配置的大小上限")
-	}
-	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	ext := ""
-	if j.Kind == "photo" {
-		switch ct {
-		case "image/jpeg":
-			ext = ".jpg"
-		case "image/png":
-			ext = ".png"
-		case "image/webp":
-			ext = ".webp"
-		case "image/gif":
-			ext = ".gif"
-		case "image/avif":
-			ext = ".avif"
-		}
-	} else if ct == "video/mp4" || ct == "application/mp4" {
-		ext = ".mp4"
-	}
-	if ext == "" {
-		return "", 0, "", permanentMedia("媒体响应类型不匹配，未保存可能的错误页")
-	}
-	rel, err := mediaRelativePath(j, ext)
-	if err != nil {
-		return "", 0, "", err
-	}
-	full := filepath.Join(dir, rel)
-	if err = PrivateDir(filepath.Dir(full)); err != nil {
-		return "", 0, "", errors.New("无法创建媒体目录")
-	}
-	f, err := os.CreateTemp(filepath.Dir(full), ".download-*")
-	if err != nil {
-		return "", 0, "", errors.New("无法创建媒体临时文件")
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, max+1))
-	if err != nil {
-		return "", 0, "", errors.New("媒体读取或写入失败，临时文件已移除")
-	}
-	if n > max {
-		return "", 0, "", permanentMedia("媒体超过配置的大小上限")
-	}
-	if n == 0 {
-		return "", 0, "", errors.New("媒体内容为空")
-	}
-	if err = f.Sync(); err != nil {
-		return "", 0, "", errors.New("媒体同步到磁盘失败")
-	}
-	if err = f.Close(); err != nil {
-		return "", 0, "", errors.New("关闭媒体文件失败")
-	}
-	if err = os.Rename(f.Name(), full); err != nil {
-		return "", 0, "", errors.New("媒体文件提交失败")
-	}
-	return filepath.ToSlash(rel), n, hex.EncodeToString(h.Sum(nil)), nil
-}
-
 type DownloadSummary struct {
 	Downloaded, Skipped, Failed int
 	ChangedPostIDs              []string `json:"-"`
+}
+
+// MediaDownloadError reports per-file failures; database/queue errors are separate.
+type MediaDownloadError struct{ Count int }
+
+func (e *MediaDownloadError) Error() string {
+	return fmt.Sprintf("%d 个媒体下载失败，详情见数据库 media.last_error；使用 retry-media 重试", e.Count)
 }
 
 func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, verify bool) (DownloadSummary, error) {
@@ -141,13 +58,33 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		return summary, err
 	}
 	defer c.CloseIdleConnections()
+	return downloadPendingWithClient(ctx, s, cfg, target, verify, c)
+}
+
+func downloadPendingWithClient(ctx context.Context, s *Store, cfg Config, target string, verify bool, c *http.Client) (DownloadSummary, error) {
+	s.mediaStagingMu.Lock()
+	defer s.mediaStagingMu.Unlock()
+	var summary DownloadSummary
 	jobs, err := s.MediaJobs(target, verify)
 	if err != nil {
 		return summary, err
 	}
+	var budget *mediaStagingBudget
+	defer func() {
+		if budget != nil {
+			budget.root.Close()
+		}
+	}()
 	for _, j := range jobs {
 		if err = ctx.Err(); err != nil {
 			return summary, err
+		}
+		current, checkErr := s.MediaJobCurrent(j)
+		if checkErr != nil {
+			return summary, checkErr
+		}
+		if !current {
+			continue
 		}
 		if j.Status == "done" {
 			valid := false
@@ -177,7 +114,30 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		j.RetryInitialSeconds, j.RetryMaxSeconds = cfg.MediaRetryInitial, cfg.MediaRetryMax
 		var downloadErr error
 		if !validLocalMedia(cfg.DataDir, j) {
-			localPath, size, hash, downloadErr = Download(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes)
+			if budget == nil {
+				budget, err = s.newMediaStagingBudget(ctx, cfg)
+				if err != nil {
+					return summary, err
+				}
+			}
+			capacity := budget.capacity(j)
+			var stageErr error
+			localPath, size, hash, downloadErr = downloadMediaWithCapacity(ctx, c, cfg.DataDir, j, cfg.MaxMediaBytes, capacity, func(path string, size int64, hash string) error {
+				stageErr = s.StageMedia(&j, path, size, hash)
+				return stageErr
+			})
+			if errors.Is(stageErr, ErrMediaChanged) {
+				budget.refresh(j, localPath, false)
+				continue
+			}
+			if stageErr != nil {
+				return summary, stageErr
+			}
+			if downloadErr != nil && j.Path != "" {
+				// Publication may have failed after staging was committed. Preserve its
+				// reference and complete checkpoint for a retry without another GET.
+				localPath, size, hash = j.Path, j.Bytes, j.SHA256
+			}
 		}
 		savedPath := localPath
 		if downloadErr == nil && j.StorageID != "local" && j.StorageID != "" {
@@ -186,13 +146,36 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 				savedPath = ""
 			}
 		}
-		if err = s.MediaResult(j, savedPath, size, hash, downloadErr); err != nil {
+		// A stopped task leaves its durable queue entry untouched, without
+		// consuming a retry or imposing a new backoff for user cancellation.
+		if err = ctx.Err(); err != nil {
+			return summary, err
+		}
+		if err = s.MediaResult(j, savedPath, size, hash, downloadErr); errors.Is(err, ErrMediaChanged) {
+			// URL refresh can invalidate a staged result; ignoring media may retain it.
+			// Remove only a file that no current media row references.
+			if localPath != "" {
+				var refs int
+				if e := s.DB.QueryRow("SELECT COUNT(*) FROM media WHERE local_path=?", localPath).Scan(&refs); e != nil {
+					return summary, e
+				} else if refs == 0 {
+					_ = os.Remove(filepath.Join(cfg.DataDir, filepath.FromSlash(localPath)))
+				}
+			}
+			if budget != nil {
+				budget.refresh(j, localPath, false)
+			}
+			continue
+		} else if err != nil {
 			return summary, err
 		}
 		summary.ChangedPostIDs = append(summary.ChangedPostIDs, j.PostID)
 		if downloadErr == nil && savedPath == "" && localPath != "" {
 			// Remove staging only after both upload verification and DB commit.
 			_ = os.Remove(filepath.Join(cfg.DataDir, filepath.FromSlash(localPath)))
+		}
+		if budget != nil {
+			budget.refresh(j, localPath, downloadErr == nil)
 		}
 		if downloadErr != nil {
 			summary.Failed++
@@ -201,7 +184,7 @@ func DownloadPending(ctx context.Context, s *Store, cfg Config, target string, v
 		}
 	}
 	if summary.Failed > 0 {
-		return summary, fmt.Errorf("%d 个媒体下载失败，详情见数据库 media.last_error；使用 retry-media 重试", summary.Failed)
+		return summary, &MediaDownloadError{Count: summary.Failed}
 	}
 	return summary, nil
 }
@@ -245,6 +228,18 @@ func uploadRemote(ctx context.Context, cfg Config, id, localPath string, size in
 	}
 	if n != size {
 		return key, errors.New("上传后远程文件长度不一致，暂存文件已保留")
+	}
+	// HEAD alone cannot detect same-length corruption. Keep the local original
+	// until the uploaded representation has been read back and verified.
+	r, err := b.Open(ctx, key, 0)
+	if err != nil {
+		return key, errors.New("上传后无法回读远程文件，暂存文件已保留")
+	}
+	h := sha256.New()
+	n, readErr := io.Copy(h, io.LimitReader(r, size+1))
+	closeErr := r.Close()
+	if readErr != nil || closeErr != nil || n != size || hex.EncodeToString(h.Sum(nil)) != hash {
+		return key, errors.New("上传后远程文件 SHA256 校验失败，暂存文件已保留")
 	}
 	return key, nil
 }

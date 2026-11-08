@@ -67,6 +67,12 @@ func TestRunErrorsDetailsAndManualMediaActions(t *testing.T) {
 		if want.ID == "200" {
 			want.Status = "ignored"
 			want.Next = 0
+			// An action advances the revision timestamp so an in-flight result
+			// cannot undo ignore/restore; original error and attempts survive.
+			if item.Updated == want.Updated {
+				t.Fatal("manual action did not advance media revision")
+			}
+			want.Updated = item.Updated
 		}
 		if item != want {
 			t.Fatal("manual action lost media metadata", item, want)

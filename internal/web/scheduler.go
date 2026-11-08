@@ -667,6 +667,9 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 	identity.CatchupReplyAnchor = replyAnchor
 	identity.CatchupScrollBudget = m.CatchupScrolls
 	identity.CollectionMode = mode
+	media := archive.StartMediaPipeline(workCtx, func(ctx context.Context) (archive.DownloadSummary, error) {
+		return s.download(ctx, a.store, cfg, m.Username, false)
+	})
 	var result archive.Collection
 	var latestProfile *archive.Profile
 	saveFailed := false
@@ -685,6 +688,7 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 			}
 			err := a.store.SaveCollectionPage(m.Username, id, p)
 			if err == nil {
+				media.Notify()
 				var remember func(archive.Post, int)
 				remember = func(post archive.Post, depth int) {
 					if post.ID == "" || depth > archive.MaxQuoteDepth {
@@ -722,19 +726,19 @@ func (s *Scheduler) runMonitor(jobCtx context.Context, cfg archive.Config, cooki
 		_ = s.avatar(workCtx, cfg, *latestProfile)
 	}
 
-	var mediaErr error
-	if workCtx.Err() == nil {
-		s.setPhase("media")
-		var summary archive.DownloadSummary
-		summary, mediaErr = s.download(workCtx, a.store, cfg, m.Username, false)
-		for _, id := range summary.ChangedPostIDs {
-			changedPosts[id] = true
-		}
+	s.setPhase("media")
+	summary, mediaErr := media.Finish()
+	for _, id := range summary.ChangedPostIDs {
+		changedPosts[id] = true
 	}
 	s.setPhase("finishing")
 	remainingMedia, remainingErr := a.store.OutstandingMedia(m.Username)
+	var downloadFailures *archive.MediaDownloadError
+	if remainingErr == nil && remainingMedia == 0 && errors.As(mediaErr, &downloadFailures) {
+		mediaErr = nil // A later refreshed URL may have recovered an early failure.
+	}
 	mediaBudgetReached := jobCtx.Err() == nil && errors.Is(workCtx.Err(), context.DeadlineExceeded) && remainingMedia > 0
-	if mediaBudgetReached {
+	if jobCtx.Err() == nil && errors.Is(workCtx.Err(), context.DeadlineExceeded) {
 		// Pending media stays durable and will be retried by a later task. Budget
 		// exhaustion is incomplete work, not an authentication or media incident.
 		mediaErr = nil

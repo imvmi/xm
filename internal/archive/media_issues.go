@@ -65,7 +65,7 @@ func (s *Store) SetMediaIgnored(target, postID, mediaID string, ignore bool) err
 		status = "ignored"
 	}
 	// Preserve the original error, attempts, URL, and any local staging file.
-	result, err := s.DB.Exec("UPDATE media SET status=?,next_attempt=0 WHERE status<>'done' AND post_id=? AND media_id=?"+targetMediaFilter, status, postID, mediaID, target)
+	result, err := s.DB.Exec("UPDATE media SET status=?,next_attempt=0,updated_at=? WHERE status<>'done' AND post_id=? AND media_id=?"+targetMediaFilter, status, now(), postID, mediaID, target)
 	if err != nil {
 		return err
 	}

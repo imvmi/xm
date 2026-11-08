@@ -22,6 +22,7 @@ type storageFixture struct {
 	objects     map[string][]byte
 	fail        bool
 	ignoreRange bool
+	corrupt     bool
 }
 
 func mockStorage(t *testing.T, kind string) (StorageProfile, *storageFixture) {
@@ -57,6 +58,9 @@ func mockStorage(t *testing.T, kind string) (StorageProfile, *storageFixture) {
 			v, e := io.ReadAll(r.Body)
 			if e != nil {
 				t.Error(e)
+			}
+			if f.corrupt {
+				v = bytes.Repeat([]byte("x"), len(v))
 			}
 			f.objects[r.URL.Path] = v
 			w.WriteHeader(200)
@@ -260,5 +264,48 @@ func TestStorageValidationAndRedirects(t *testing.T) {
 	defer b.Close()
 	if e = b.Test(context.Background()); e == nil {
 		t.Fatal("redirect accepted")
+	}
+}
+
+func TestRemoteUploadRejectsSameLengthCorruption(t *testing.T) {
+	for _, kind := range []string{"webdav", "s3"} {
+		t.Run(kind, func(t *testing.T) {
+			profile, fixture := mockStorage(t, kind)
+			fixture.corrupt = true
+			dir := t.TempDir()
+			store, err := OpenStore(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if err = store.SavePosts("alice", []Post{{ID: "100", AuthorID: "42", Username: "alice", Assets: []Asset{{ID: "video", Kind: "video", URL: "https://video.twimg.com/fixture.mp4"}}}}); err != nil {
+				t.Fatal(err)
+			}
+			cfg := Config{DataDir: dir, MaxMediaBytes: 1024, MediaStorage: profile.ID, StorageProfiles: []StorageProfile{profile}}
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return mediaResponse(200, "", `"v1"`, strings.NewReader("abcdef"), 6), nil
+			})}
+			summary, err := downloadPendingWithClient(context.Background(), store, cfg, "alice", false, client)
+			if err == nil || summary.Failed != 1 || summary.Downloaded != 0 {
+				t.Fatal(summary, err)
+			}
+			jobs, err := store.MediaJobs("alice", true)
+			if err != nil || len(jobs) != 1 || jobs[0].Status != "failed" || !validLocalMedia(dir, jobs[0]) {
+				t.Fatal(jobs, err)
+			}
+			fixture.mu.Lock()
+			fixture.corrupt = false
+			fixture.mu.Unlock()
+			if _, err = store.DB.Exec("UPDATE media SET next_attempt=0"); err != nil {
+				t.Fatal(err)
+			}
+			client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				t.Error("must reuse original local copy")
+				return nil, fmt.Errorf("unexpected CDN request")
+			})
+			if summary, err = downloadPendingWithClient(context.Background(), store, cfg, "alice", false, client); err != nil || summary.Downloaded != 1 {
+				t.Fatal(summary, err)
+			}
+		})
 	}
 }

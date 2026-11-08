@@ -55,12 +55,21 @@ func TestCollectionSettingsBrowser(t *testing.T) {
 	wait(`typeof state!=='undefined' && state.authenticated`)
 	eval(`(()=>{location.hash='settings';return true})()`)
 	wait(`state.settings!==null && !document.getElementById('view-settings').hidden && document.getElementById('scroll-delay').value==='3'`)
-	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='认证' && $('settings-tab-display').textContent==='时间线' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form .display-preference-group').length===4 && $('settings-display').textContent.includes('与「数据 → 媒体存储」中的服务器缓存相互独立')`) {
+	if !eval(`[...document.querySelectorAll('.sidebar nav .nav-text')].map(el=>el.textContent).join('/')==='首页/账号/任务/通知/设置' && $('settings-tab-account').textContent==='认证' && $('settings-tab-display').textContent==='时间线' && $('settings-collection').contains($('reset-rate-limit')) && !$('settings-account').contains($('reset-rate-limit')) && document.querySelectorAll('#archive-display-form section.display-card').length===4 && $('settings-display').textContent.includes('服务器缓存请前往「数据 → 性能与缓存」设置')`) {
 		t.Fatal("navigation and settings organization are inconsistent")
 	}
 	if !eval(`$('crawler-xm').contains($('collection-settings-form')) && $('crawler-xm').contains($('settings-form')) && $('crawler-chrome').contains($('browser-settings-form')) && $('crawler-chrome').contains($('chrome-runtime-form')) && !$('collection-settings-form').contains($('scroll-delay'))`) {
 		t.Fatal("crawler groups are not separated")
 	}
+	if !eval(`$('crawler-media').contains($('media-staging-refresh')) && $('crawler-media').contains($('media-staging-clear'))`) {
+		t.Fatal("media staging controls missing")
+	}
+	eval(`(()=>{$('media-staging-clear').click();return true})()`)
+	if !eval(`$('media-staging-dialog').open && $('media-staging-dialog').textContent.includes('完整待上传文件保留')`) {
+		t.Fatal("staging cleanup needs an explicit confirmation with preservation details")
+	}
+	eval(`(()=>{$('media-staging-dialog').close();$('media-staging-refresh').click();return true})()`)
+	wait(`$('media-staging-usage').textContent.includes('暂存占用')`)
 	// Reader limits have their own form and apply without a restart.
 	if a.store.DB.Dialect == "sqlite" {
 		eval(`(()=>{$('settings-tab-data').click();$('data-tab-performance').click();return true})()`)

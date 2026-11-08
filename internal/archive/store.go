@@ -8,13 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"xm/internal/database"
 
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ DB *database.DB }
+type Store struct {
+	DB             *database.DB
+	mediaStagingMu sync.Mutex
+}
 
 func OpenStore(dir string) (*Store, error) {
 	return OpenStoreFile(dir, DefaultSQLiteFile)
@@ -243,7 +247,7 @@ func (s *Store) SaveCollectionPage(target string, runID int64, page Page) error 
 		}
 		if !unchanged {
 			for _, a := range p.Assets {
-				result, updateErr := tx.Exec(`UPDATE media SET kind=?,status=CASE WHEN status<>'ignored' AND source_url<>? THEN 'pending' ELSE status END,attempts=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE attempts END,next_attempt=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE next_attempt END,last_error=CASE WHEN status<>'ignored' AND source_url<>? THEN '' ELSE last_error END,source_url=?,updated_at=? WHERE post_id=? AND media_id=?`, a.Kind, a.URL, a.URL, a.URL, a.URL, a.URL, t, p.ID, a.ID)
+				result, updateErr := tx.Exec(`UPDATE media SET local_path=CASE WHEN status<>'done' AND source_url<>? THEN '' ELSE local_path END,bytes=CASE WHEN status<>'done' AND source_url<>? THEN 0 ELSE bytes END,sha256=CASE WHEN status<>'done' AND source_url<>? THEN '' ELSE sha256 END,updated_at=CASE WHEN source_url<>? OR kind<>? THEN ? ELSE updated_at END,kind=?,status=CASE WHEN status<>'ignored' AND source_url<>? THEN 'pending' ELSE status END,attempts=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE attempts END,next_attempt=CASE WHEN status<>'ignored' AND source_url<>? THEN 0 ELSE next_attempt END,last_error=CASE WHEN status<>'ignored' AND source_url<>? THEN '' ELSE last_error END,source_url=? WHERE post_id=? AND media_id=?`, a.URL, a.URL, a.URL, a.URL, a.Kind, t, a.Kind, a.URL, a.URL, a.URL, a.URL, a.URL, p.ID, a.ID)
 				if updateErr != nil {
 					return updateErr
 				}
@@ -323,6 +327,7 @@ type MediaJob struct {
 	StorageID, ObjectKey                 string
 	Bytes                                int64
 	SHA256                               string
+	UpdatedAt                            string
 	Attempts                             int
 	NextAttempt                          int64
 	RetryInitialSeconds, RetryMaxSeconds int
@@ -377,7 +382,7 @@ func (s *Store) TargetMediaCounts(target string) (done, total int, err error) {
 }
 
 func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
-	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt FROM media JOIN posts ON posts.id=media.post_id WHERE status<>'ignored'`
+	query := `SELECT post_id,media_id,kind,source_url,local_path,status,bytes,sha256,storage_id,object_key,posts.author_id,posts.username,attempts,next_attempt,media.updated_at FROM media JOIN posts ON posts.id=media.post_id WHERE status<>'ignored'`
 	var args []any
 	if !includeDone {
 		query += " AND (status='pending' OR (status='failed' AND next_attempt<=?))"
@@ -396,13 +401,42 @@ func (s *Store) MediaJobs(target string, includeDone bool) ([]MediaJob, error) {
 	var jobs []MediaJob
 	for r.Next() {
 		var j MediaJob
-		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey, &j.AuthorID, &j.Username, &j.Attempts, &j.NextAttempt); err != nil {
+		if err = r.Scan(&j.PostID, &j.ID, &j.Kind, &j.URL, &j.Path, &j.Status, &j.Bytes, &j.SHA256, &j.StorageID, &j.ObjectKey, &j.AuthorID, &j.Username, &j.Attempts, &j.NextAttempt, &j.UpdatedAt); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
 	}
 	return jobs, r.Err()
 }
+
+var ErrMediaChanged = errors.New("媒体状态或链接已更新，忽略旧下载结果")
+
+// StageMedia commits a complete local download without counting an attempt or
+// changing retry timing. A pending row is not exposed as a finished archive.
+func (s *Store) StageMedia(j *MediaJob, path string, size int64, hash string) error {
+	stamp := now()
+	result, err := s.DB.Exec(`UPDATE media SET local_path=?,bytes=?,sha256=?,status='pending',updated_at=? WHERE post_id=? AND media_id=? AND source_url=? AND status=? AND attempts=? AND next_attempt=? AND updated_at=? AND status<>'ignored'`, path, size, hash, stamp, j.PostID, j.ID, j.URL, j.Status, j.Attempts, j.NextAttempt, j.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrMediaChanged
+	}
+	j.Path, j.Bytes, j.SHA256, j.Status, j.UpdatedAt = path, size, hash, "pending", stamp
+	return nil
+}
+
+// MediaJobCurrent avoids starting obsolete jobs from an earlier queue snapshot.
+func (s *Store) MediaJobCurrent(j MediaJob) (bool, error) {
+	var count int
+	err := s.DB.QueryRow("SELECT COUNT(*) FROM media WHERE post_id=? AND media_id=? AND source_url=? AND status=? AND attempts=? AND next_attempt=? AND updated_at=?", j.PostID, j.ID, j.URL, j.Status, j.Attempts, j.NextAttempt, j.UpdatedAt).Scan(&count)
+	return count == 1, err
+}
+
 func (s *Store) MediaResult(j MediaJob, path string, size int64, hash string, downloadErr error) error {
 	if j.StorageID == "" {
 		j.StorageID = "local"
@@ -426,7 +460,22 @@ func (s *Store) MediaResult(j MediaJob, path string, size int64, hash string, do
 			nextAttempt = time.Now().Add(min(delay, maximum)).Unix()
 		}
 	}
-	_, err := s.DB.Exec(`UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,next_attempt=?,last_error=?,updated_at=? WHERE post_id=? AND media_id=?`, status, path, size, hash, j.StorageID, j.ObjectKey, nextAttempt, message, now(), j.PostID, j.ID)
+	query := `UPDATE media SET status=?,local_path=?,bytes=?,sha256=?,storage_id=?,object_key=?,attempts=attempts+1,next_attempt=?,last_error=?,updated_at=? WHERE post_id=? AND media_id=? AND status<>'ignored'`
+	args := []any{status, path, size, hash, j.StorageID, j.ObjectKey, nextAttempt, message, now(), j.PostID, j.ID}
+	// Queue snapshots carry a revision timestamp. Compare all scheduling fields as
+	// well, so explicit retry/ignore operations cannot be undone by an old request.
+	if j.UpdatedAt != "" {
+		query += " AND source_url=? AND status=? AND attempts=? AND next_attempt=? AND updated_at=?"
+		args = append(args, j.URL, j.Status, j.Attempts, j.NextAttempt, j.UpdatedAt)
+	}
+	result, err := s.DB.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count == 0 {
+		return ErrMediaChanged
+	}
 	return err
 }
 

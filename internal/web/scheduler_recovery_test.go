@@ -27,6 +27,7 @@ func TestSchedulerCrashRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		collected := make(chan struct{})
 		a.scheduler.collect = func(_ context.Context, _ archive.Config, _ archive.Cookies, _ string, _ archive.TargetIdentity, _ int, _ bool, save func(archive.Page) error) (archive.Collection, error) {
 			if err := save(archive.Page{Posts: []archive.Post{
 				{ID: "200", AuthorID: "42", Username: "alice"},
@@ -37,9 +38,11 @@ func TestSchedulerCrashRecovery(t *testing.T) {
 			if os.Getenv("XM_TEST_CRASH_STAGE") == "collect" {
 				os.Exit(23)
 			}
+			close(collected)
 			return archive.Collection{Posts: 2, Stop: "known_boundary_reached"}, nil
 		}
 		a.scheduler.download = func(context.Context, *archive.Store, archive.Config, string, bool) (archive.DownloadSummary, error) {
+			<-collected
 			os.Exit(23)
 			return archive.DownloadSummary{}, nil
 		}

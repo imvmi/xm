@@ -242,6 +242,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/settings/avatars/cache", a.clearAvatars)
 	mux.HandleFunc("POST /api/rate-limit/reset", a.resetRateLimit)
 	mux.HandleFunc("POST /api/media/retry/reset", a.resetMediaRetry)
+	mux.HandleFunc("GET /api/media/staging", a.mediaStagingUsage)
+	mux.HandleFunc("POST /api/media/staging/cleanup", a.clearMediaPartials)
 	mux.HandleFunc("GET /api/runs/{run}/errors", readTimeout(postReadTimeout, a.runErrors))
 	mux.HandleFunc("POST /api/runs/{run}/media/{post}/{media}/{operation}", a.manageRunMedia)
 	mux.HandleFunc("GET /api/notifications", a.notificationSettings)

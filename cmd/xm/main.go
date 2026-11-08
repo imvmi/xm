@@ -271,57 +271,13 @@ func run(ctx context.Context, args []string) error {
 		var mediaFailed bool
 		for _, target := range targets {
 			fmt.Fprintf(os.Stderr, "开始采集 @%s（最多 %d 条）\n", target, *limit)
-			id, e := s.StartRun(target)
-			if e != nil {
-				return e
-			}
-			identity, e := s.TargetIdentity(target)
-			if e != nil {
-				return e
-			}
-			if !*backfill {
-				identity.KnownPostIDs, e = s.KnownTargetPosts(target, max(*limit*4, 500))
-				if e != nil {
-					return e
-				}
-			}
-			var latestProfile *archive.Profile
-			result, collectErr := archive.CollectBound(ctx, cfg, cookies, target, identity, *limit, *replies, func(page archive.Page) error {
-				if page.Profile != nil {
-					if err := s.SaveTargetProfile(target, *page.Profile); err != nil {
-						return err
-					}
-					profile := *page.Profile
-					latestProfile = &profile
-				}
-				if err := s.SavePosts(target, page.Posts); err != nil {
+			result, err := collectTarget(ctx, s, cfg, cookies, target, *limit, *replies, *backfill, collectServices{collect: archive.CollectBound, download: archive.DownloadPending, avatar: archive.DownloadAvatar})
+			fmt.Println(archive.JSON(map[string]any{"target": target, "collection": result.Collection, "media": result.Media, "status": result.Status}))
+			if err != nil {
+				if result.Status != "media_failed" {
 					return err
 				}
-				if len(page.Posts) > 0 {
-					fmt.Fprintf(os.Stderr, "@%s 已入库本页 %d 条\n", target, len(page.Posts))
-				}
-				return nil
-			})
-			if latestProfile != nil && latestProfile.AvatarURL != "" && ctx.Err() == nil {
-				_ = archive.DownloadAvatar(ctx, cfg, *latestProfile)
-			}
-			status, message := "bounded_complete", result.Stop
-			if collectErr != nil {
-				status = "failed"
-				message = collectErr.Error()
-			}
-			if e = s.EndRun(id, status, result.Posts, message); e != nil {
-				return e
-			}
-			// Text and media jobs are committed before attempting downloads. Even a
-			// partial collection remains usable and retryable after browser failure.
-			downloads, downloadErr := archive.DownloadPending(ctx, s, cfg, target, false)
-			fmt.Println(archive.JSON(map[string]any{"target": target, "collection": result, "media": downloads}))
-			if collectErr != nil {
-				return collectErr
-			}
-			if downloadErr != nil {
-				fmt.Fprintln(os.Stderr, downloadErr)
+				fmt.Fprintln(os.Stderr, err)
 				mediaFailed = true
 			}
 		}

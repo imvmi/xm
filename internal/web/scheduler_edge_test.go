@@ -200,15 +200,18 @@ func TestTaskDeadlineCoversMediaAndReleasesNextTarget(t *testing.T) {
 	}
 	var targets []string
 	var deadline time.Time
+	deadlineReady := make(chan struct{})
 	a.scheduler.collect = func(ctx context.Context, _ archive.Config, _ archive.Cookies, target string, _ archive.TargetIdentity, _ int, _ bool, _ func(archive.Page) error) (archive.Collection, error) {
 		targets = append(targets, target)
 		if target == "alice" {
 			deadline, _ = ctx.Deadline()
+			close(deadlineReady)
 		}
 		return archive.Collection{Stop: "known_boundary_reached", HistoryComplete: true}, nil
 	}
 	a.scheduler.download = func(ctx context.Context, _ *archive.Store, _ archive.Config, target string, _ bool) (archive.DownloadSummary, error) {
 		if target == "alice" {
+			<-deadlineReady
 			mediaDeadline, ok := ctx.Deadline()
 			if !ok || !mediaDeadline.Equal(deadline) {
 				t.Fatal("media did not share task deadline", mediaDeadline, deadline)

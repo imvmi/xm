@@ -478,3 +478,8 @@ body:has(#view-settings:not([hidden]) #settings-collection:not([hidden])) .toast
 #settings-display .collection-save-bar{padding:16px; border:1px solid var(--line);border-radius:12px}
 #display-draft-status{font-size:13px;color:var(--muted)}
 @media(max-width:600px){#settings-display label.display-option{gap:16px}#settings-display details.display-cache>summary{padding:20px 18px}.display-option small{font-size:12px}#settings-display .collection-save-bar{gap:8px;padding:12px}}
+
+.crawler-flow-overlap{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:12px;font-size:13px;line-height:1.7}
+.crawler-flow-overlap p{display:flex;gap:12px;margin:8px 0}
+.crawler-flow-overlap b{flex:0 0 80px;color:var(--accent)}
+.crawler-flow-overlap small{display:block;color:var(--muted);font-size:12px}

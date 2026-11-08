@@ -42,7 +42,7 @@ test('task center renders current work, FIFO positions, wait reason, and run his
  await ctx.refreshRuns();
  assert.match(nodes['current-job'].innerHTML,/@alice/);
  assert.match(nodes['current-job'].innerHTML,/已读取 8 条/);
- assert.match(nodes['current-job'].innerHTML,/下载与归档媒体/);
+ assert.match(nodes['current-job'].innerHTML,/处理剩余媒体/);
  assert.match(nodes['current-job'].innerHTML,/已运行 1 分 5 秒/);
  assert.match(nodes['current-job'].innerHTML,/时限剩余 2 小时 0 分钟/);
  assert.match(nodes['current-job'].innerHTML,/3 \/ 8/);
