@@ -304,6 +304,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/targets", a.targets)
 	mux.HandleFunc("GET /api/users/stats", readTimeout(postReadTimeout, a.userStats))
 	mux.HandleFunc("PUT /api/users/{username}/timeline", a.editMonitorTimeline)
+	mux.HandleFunc("PUT /api/users/{username}/follow", a.setAccountFollow)
 	mux.HandleFunc("GET /api/users", func(w http.ResponseWriter, r *http.Request) {
 		load := archiveUsersFor
 		if r.URL.Query().Get("stats") == "0" {
@@ -904,16 +905,21 @@ func (a *App) addMonitor(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]bool{"ok": true})
 }
 func (a *App) editMonitor(w http.ResponseWriter, r *http.Request) {
-	var input monitorInput
+	var input struct {
+		monitorUpdate
+		Username string `json:"username"` // Accepted for existing clients; the route identifies the account.
+	}
 	if !decode(w, r, &input) {
 		return
 	}
-	a.updateMonitor(w, r, monitorUpdate{Enabled: &input.Enabled, Replies: &input.Replies, IntervalOverride: input.IntervalOverride, ShowInTimeline: input.ShowInTimeline})
+	a.updateMonitor(w, r, input.monitorUpdate)
 }
 
 type monitorUpdate struct {
-	Enabled, Replies, ShowInTimeline *bool
-	IntervalOverride                 *int
+	Enabled          *bool `json:"enabled"`
+	Replies          *bool `json:"replies"`
+	ShowInTimeline   *bool `json:"show_in_timeline"`
+	IntervalOverride *int  `json:"interval_override_seconds"`
 }
 
 // Merge omitted fields with current values inside the same lock and transaction
@@ -1163,9 +1169,13 @@ func (a *App) posts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch q.Get("section") {
-	case "", "posts", "replies", "media", "bookmarks":
+	case "", "posts", "replies", "media", "bookmarks", "following":
 	default:
 		problem(w, 400, "无效的动态类型")
+		return
+	}
+	if q.Get("section") == "following" && q.Get("target") != "" {
+		problem(w, 400, "关注动态仅用于主时间线")
 		return
 	}
 	before := q.Get("before")

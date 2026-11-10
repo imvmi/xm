@@ -482,3 +482,10 @@
 .quote-card[data-quote-post]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .timeline-posts .post.post-located{box-shadow:inset 3px 0 var(--accent);background:var(--surface-raised,var(--paper))}
 #post-detail-back[hidden]{display:none}
+
+/* Keep the local follow action beside the avatar; archive metadata stays below the handle. */
+#view-user #profile-follow { min-width:96px;min-height:40px;flex-shrink:0;margin-bottom:8px; }
+#view-user #profile-follow[aria-pressed=false] { background:var(--primary);color:var(--on-primary);border-color:var(--primary); }
+#view-user #profile-follow[aria-pressed=true] { background:var(--paper);color:var(--ink);border-color:var(--border-strong); }
+#view-user .profile-identity>.profile-archive-status { margin:8px 0 0;font-size:12px;gap:6px; }
+#view-user .profile-identity>.profile-archive-status svg { width:14px;height:14px; }

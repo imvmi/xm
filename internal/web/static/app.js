@@ -49,7 +49,7 @@ function showLogin() {
   userRequest++;userDirectoryCache=null;userStatsValues.clear();userStatsInFlight.clear();lastUserStatsRefresh=0;
   bookmarkSession++;bookmarkOverrides.clear();bookmarkPending.clear();
   settingsBaselines.clear();delete $('cookie-manual-method').dataset.initialized;$('cookie-manual-method').open=false;$('cookie-api-method').open=false;$('cookie-api-advanced').open=false;$('cookie-api-fetch-saved').hidden=true;$('session-settings-form').reset();$('session-settings-result').textContent='';$('collection-settings-form').reset();$('chrome-runtime-form').reset();$('chrome-runtime-result').textContent='';$('archive-display-form').reset();$('settings-form').reset();$('remote-cache-form').reset();$('sqlite-performance-form').reset();$('browser-settings-form').reset();$('sqlite-performance-result').textContent='';updateSettingsDraftNotice();
-  state.authenticated=false;state.csrf='';state.postRequest++;document.title='登录 · XM';
+  state.authenticated=false;state.csrf='';state.homeTimelineTab='';state.postRequest++;document.title='登录 · XM';
   $('app').hidden=true;$('login-view').hidden=false;
   for(const id of ['posts','user-list','profile-header','profile-summary','runs'])$(id).replaceChildren();
   $('notification-form').reset();$('notification-channels').replaceChildren();$('notification-deliveries').replaceChildren();
@@ -137,7 +137,7 @@ async function navigate() {
     }
   }
   else if(state.view==='home') {
-    state.target='';state.timelineTab='';$('search').value='';$('kind-filter').value='';
+    state.target='';state.timelineTab=state.homeTimelineTab||'';$('search').value='';$('kind-filter').value='';
     $('home-feed').append($('timeline-panel'));syncTabs();
     $('kind-filter').querySelector('option[value="text"]').disabled=false;
     await refreshPosts();
@@ -208,26 +208,26 @@ $('user-search').addEventListener('input',renderUsers);
 function renderProfile(){
  const u=state.users.find(u=>u.username===state.target)||{username:state.target,name:state.target,posts:0,media:0};
  $('profile-top-name').textContent=u.name;$('profile-top-count').textContent=userStat(u,'posts')+' 条已归档推文';document.title=u.name+' (@'+handle(u)+') · XM';
- $('profile-header').innerHTML=`<div class="profile-cover" aria-hidden="true"></div><div class="profile-identity"><div class="profile-actions">${avatar(handle(u),'profile-avatar',u.avatar_url)}<div class="profile-meta profile-archive-status">${icon('clock')}<span>${u.stats_pending?'正在读取归档统计…':u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</span></div></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><a href="https://x.com/${encodeURIComponent(handle(u))}" class="user-handle profile-x-link" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(handle(u))}">@${escape(handle(u))}</a>${u.bio?`<p class="profile-bio">${escape(u.bio)}</p>`:''}<div class="profile-numbers"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个已归档媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div></div>`;
+ $('profile-header').innerHTML=`<div class="profile-cover" aria-hidden="true"></div><div class="profile-identity"><div class="profile-actions">${avatar(handle(u),'profile-avatar',u.avatar_url)}<button id="profile-follow" type="button" class="button ${u.followed?'secondary':'primary'} profile-follow" aria-pressed="${!!u.followed}" title="仅在 XM 内关注，不影响 X 上的关注关系"${state.followingPending?.has(u.username)||!state.users.some(account=>account.username===u.username)?' disabled':''}>${u.followed?'已关注':'关注'}</button></div><h2>${escape(u.name)} ${u.protected?icon('lock'):''}</h2><a href="https://x.com/${encodeURIComponent(handle(u))}" class="user-handle profile-x-link" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(handle(u))}">@${escape(handle(u))}</a><div class="profile-meta profile-archive-status">${icon('clock')}<span>${u.stats_pending?'正在读取归档统计…':u.last_saved?'最近归档于 '+escape(date(u.last_saved)):'尚未归档'}</span></div>${u.bio?`<p class="profile-bio">${escape(u.bio)}</p>`:''}<div class="profile-numbers"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个已归档媒体</span><span class="badge neutral">${u.monitored?(u.enabled?'已启用监控':'监控已暂停'):'已归档'}</span></div></div>`;
  $('profile-summary').innerHTML=`<dl><div><dt>已保存推文</dt><dd>${userStat(u,'posts')}</dd></div><div><dt>已归档媒体（含引用）</dt><dd>${userStat(u,'media')}</dd></div><div><dt>自动采集周期</dt><dd>${u.interval_seconds?number(u.interval_seconds/60)+' 分钟':'未设置'}</dd></div><div><dt>最近采集</dt><dd>${escape(date(u.last_run,true))}</dd></div></dl>`;
 }
 const timelineTabs=['posts','replies','media','bookmarks'];
-const homeTimelineTabs=['','bookmarks'];
-function timelineTabID(name,home=false){return home?(name==='bookmarks'?'home-tab-bookmarks':'home-tab-all'):'tab-'+name;}
+const homeTimelineTabs=['','following','bookmarks'];
+function timelineTabID(name,home=false){return home?(name?'home-tab-'+name:'home-tab-all'):'tab-'+name;}
 function syncTabs(){
  const home=state.view==='home';
  for(const name of home?homeTimelineTabs:timelineTabs){const selected=state.timelineTab===name;const tab=$(timelineTabID(name,home));tab.classList.toggle('selected',selected);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;}
  $('timeline-panel').setAttribute('role','tabpanel');$('timeline-panel').removeAttribute('aria-label');
  $('timeline-panel').setAttribute('aria-labelledby',state.focusPost?'home-feed-title':timelineTabID(state.timelineTab,home));
  if(state.focusPost)$('timeline-panel').setAttribute('role','region');
- $('home-timeline-description').textContent=state.focusPost?'已归档对话 · 向右滑动返回':state.timelineTab==='bookmarks'?'全部收藏 · 按收藏时间倒序':'已开启首页显示的账号 · 按发布时间倒序';
+ $('home-timeline-description').textContent=state.focusPost?'已归档对话 · 向右滑动返回':state.timelineTab==='bookmarks'?'全部收藏 · 按收藏时间倒序':state.timelineTab==='following'?'已关注且开启首页显示的账号 · 按发布时间倒序':'已开启首页显示的账号 · 按发布时间倒序';
  $('timeline-order').hidden=state.timelineTab!=='bookmarks';
  $('search').placeholder=state.timelineTab==='bookmarks'?'搜索收藏及引用内容':'搜索推文及引用内容';
  $('kind-filter').querySelector('option[value="text"]').disabled=state.timelineTab==='media';
 }
 for(const home of [false,true])for(const name of home?homeTimelineTabs:timelineTabs){
  const names=home?homeTimelineTabs:timelineTabs,tab=$(timelineTabID(name,home));
- tab.addEventListener('click',()=>{if(state.timelineTab===name)return;state.timelineTab=name;$('kind-filter').value='';syncTabs();refreshPosts();});
+ tab.addEventListener('click',()=>{if(state.timelineTab===name)return;state.timelineTab=name;if(home)state.homeTimelineTab=name;$('kind-filter').value='';syncTabs();refreshPosts();});
  tab.addEventListener('keydown',event=>{if(event.ctrlKey||event.metaKey||event.altKey)return;let i=names.indexOf(name);if(event.key==='ArrowRight')i=(i+1)%names.length;else if(event.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(event.key==='Home')i=0;else if(event.key==='End')i=names.length-1;else return;event.preventDefault();const next=$(timelineTabID(names[i],home));next.focus();next.click();});
 }
 function defaultVideoMuted(){return state.settings?.video_default_muted!==false;}
@@ -280,7 +280,7 @@ function replyHTML(p){
  const q=p.reply_preview,source=`https://x.com/i/status/${encodeURIComponent(p.reply_to)}`;
  const username=q?.username||(p.self_reply?p.username:'?'),name=escape(q?.name||username);
  const rail=`<div class="reply-thread-rail">${avatar(username,'post-avatar',q?.avatar_url||(p.self_reply?p.avatar_url||userAvatar(p.username):''))}</div>`;
- if(!q)return `<a class="post-body reply-preview reply-preview-missing" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="回复的推文尚未归档或关系无法确认，在 X 查看原文（新标签页）">${rail}<div class="post-content"><div class="reply-preview-label">回复的推文</div><p class="reply-preview-text">回复的推文尚未归档或关系无法确认</p></div></a>`;
+ if(!q)return `<a class="post-body reply-preview reply-preview-missing" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="回复的推文尚未归档或关系无法确认，在 X 查看原文（新标签页）">${rail}<div class="post-content"><div class="reply-preview-label">回复的推文</div><p class="reply-preview-text">尚未归档或关系无法确认</p></div></a>`;
  const author=p.self_reply&&p.archive_target?`<a href="${userURL(p.archive_target)}">${name}</a>`:name;
  return `<section class="post-body reply-preview" aria-label="回复的推文">${rail}<div class="post-content"><div class="reply-preview-label">原帖摘要</div><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer">@${escape(username)}</a><span class="timeline-date"> · ${escape(date(q.created_at))}</span></span></div></div><p class="reply-preview-text">${escape(q.text||'原帖没有文字，可能包含媒体')}</p><a class="reply-parent-source" href="${source}" target="_blank" rel="noopener noreferrer">在 X 查看原文 ↗</a></div></section>`;
 }
@@ -334,8 +334,8 @@ function updateTimelineLoader(){
 function updateTimelineEmpty(){
  $('post-empty').hidden=state.postIDs.size>0;
  const filtered=$('search').value||$('kind-filter').value||state.timelineTab==='media',bookmarks=state.timelineTab==='bookmarks';
- $('post-empty').querySelector('h3').textContent=filtered?'没有找到匹配的动态':bookmarks?'还没有收藏的推文':state.timelineTab==='replies'?'还没有保存的回复':'还没有保存的推文';
- $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击推文右上角的书签即可收藏；引用推文可先点击打开详情再收藏。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
+ $('post-empty').querySelector('h3').textContent=filtered?'没有找到匹配的动态':bookmarks?'还没有收藏的推文':state.timelineTab==='following'?'暂无关注动态':state.timelineTab==='replies'?'还没有保存的回复':'还没有保存的推文';
+ $('empty-text').textContent=filtered?'搜索也会匹配引用推文；媒体筛选包含引用中的图片和视频。':bookmarks?(state.view==='user'?'点击推文右上角的书签即可收藏；引用推文可先点击打开详情再收藏。':'点击推文右上角的书签，即可保存到收藏。收藏不受账号首页显示开关影响。'):state.timelineTab==='following'?'前往账号主页点击「关注」。此处仅显示已关注且开启首页显示的账号已归档动态。':state.timelineTab==='replies'?'在监控账号设置中开启「包含回复」，采集后会显示该用户发出的回复。':state.view==='home'?'暂无可显示的动态。请先采集，或在「账号」中开启「在主时间线显示」。':'采集完成后，该用户的推文及引用内容会显示在这里。';
 }
 async function refreshPosts(){
  cancelPostReads();
@@ -609,14 +609,25 @@ async function openMonitor(m=null) {
   state.settings=await api('/settings');state.readding=m?.username||null;state.editingMonitor=m?.monitored?m.username:null;
   $('monitor-dialog-title').textContent=state.editingMonitor?'编辑账号配置':m?'重新添加监控':'添加账号';$('monitor-username').value=m?handle(m):'';$('monitor-username').disabled=!!m;
   $('monitor-interval-mode').value=m?.interval_override_seconds?'custom':'global';$('monitor-interval').value=m?.interval_override_seconds?m.interval_override_seconds/60:15;updateMonitorIntervalField();
-  $('monitor-replies').checked=m?!!m.replies:true;$('monitor-enabled').checked=state.editingMonitor?!!m.enabled:true;$('monitor-timeline').checked=m?visibleInTimeline(m):true;$('monitor-dialog').showModal();
+  $('monitor-replies').checked=m?!!m.replies:true;$('monitor-dialog').showModal();
 }
 document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>action(b,()=>openMonitor())));
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
-$('monitor-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{
-  const payload={username:state.readding||$('monitor-username').value.trim(),replies:$('monitor-replies').checked,enabled:$('monitor-enabled').checked,show_in_timeline:$('monitor-timeline').checked,interval_override_seconds:$('monitor-interval-mode').value==='custom'?Math.round(Number($('monitor-interval').value)*60):0};
-  await api(state.editingMonitor?'/monitors/'+encodeURIComponent(state.editingMonitor):'/monitors',state.editingMonitor?'PUT':'POST',payload);$('monitor-dialog').close();toast('账号已保存');await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
-});});
+let monitorSaving=false;
+$('monitor-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(monitorSaving)return;
+  const enable=event.submitter?.value==='enable';
+  const payload={username:state.readding||$('monitor-username').value.trim(),replies:$('monitor-replies').checked,interval_override_seconds:$('monitor-interval-mode').value==='custom'?Math.round(Number($('monitor-interval').value)*60):0};
+  if(!state.editingMonitor)payload.enabled=enable;
+  monitorSaving=true;
+  const buttons=[...document.querySelectorAll('#monitor-form button[type="submit"]')];buttons.forEach(b=>b.disabled=true);
+  try{
+    await api(state.editingMonitor?'/monitors/'+encodeURIComponent(state.editingMonitor):'/monitors',state.editingMonitor?'PUT':'POST',payload);
+    $('monitor-dialog').close();toast(enable?(state.overview?.paused?'账号已保存并启用采集；全局自动采集仍暂停，恢复后执行':'账号已保存并启用自动采集'):'账号已保存');
+    await refreshOverview();if(state.view==='archive')await refreshAccountsAfterChange();else{userDirectoryCache=null;location.hash='accounts';}
+  }catch(err){toast(err.message,true);}
+  finally{monitorSaving=false;buttons.forEach(b=>b.disabled=false);}
+});
 $('user-list').addEventListener('click',event=>handleAccountAction(event));
 let globalCollectionPending=false;
 function renderGlobalCollection(paused){

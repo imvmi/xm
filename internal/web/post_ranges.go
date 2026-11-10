@@ -49,13 +49,16 @@ func bookmarkRanges(before string) ([]postRange, error) {
 	}, nil
 }
 
-func timelineSource(db *database.DB, target string, page bool) (from, where, id string, args []any) {
+func timelineSource(db *database.DB, target string, page, following bool) (from, where, id string, args []any) {
 	if target != "" {
 		return " FROM target_posts t JOIN posts p ON p.id=t.post_id", " WHERE t.target=?", "t.post_id", []any{target}
 	}
 	// Visibility applies only to roots on the home feed. Scalar membership
 	// keeps MariaDB from turning EXISTS into a semijoin that sorts all roots.
 	visible := "SELECT 1 FROM target_posts t LEFT JOIN monitors m ON m.username=t.target LEFT JOIN account_preferences ap ON ap.target=t.target WHERE t.post_id=p.id AND COALESCE(m.show_in_timeline,ap.show_in_timeline,1)=1"
+	if following {
+		visible += " AND EXISTS (SELECT 1 FROM account_follows af WHERE af.target=t.target)"
+	}
 	where = " WHERE EXISTS (" + visible + ")"
 	if db.MariaDB && page {
 		where = " WHERE (" + visible + " LIMIT 1)=1"
@@ -73,6 +76,6 @@ func timelinePageSource(db *database.DB, target string) string {
 		}
 		return " FROM posts p FORCE INDEX (posts_timeline)"
 	}
-	from, _, _, _ := timelineSource(db, target, false)
+	from, _, _, _ := timelineSource(db, target, false, false)
 	return from
 }

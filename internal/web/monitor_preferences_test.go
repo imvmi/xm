@@ -117,6 +117,24 @@ func TestCancelMonitoringRollsBackPreferenceAndQueue(t *testing.T) {
 	}
 }
 
+func TestMonitorConfigEditPreservesCardSwitches(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	for _, enabled := range []bool{true, false} {
+		if _, err := a.store.DB.Exec("INSERT OR REPLACE INTO monitors(username,enabled,show_in_timeline,next_run,requested) VALUES('alice',?,0,123,1)", enabled); err != nil {
+			t.Fatal(err)
+		}
+		ok(t, b.request("PUT", "/api/monitors/alice", map[string]any{"replies": true, "interval_override_seconds": 300}, "http://localhost", true), 200)
+		var gotEnabled, shown, requested, replies bool
+		if err := a.store.DB.QueryRow("SELECT enabled,show_in_timeline,requested,replies FROM monitors WHERE username='alice'").Scan(&gotEnabled, &shown, &requested, &replies); err != nil {
+			t.Fatal(err)
+		}
+		if gotEnabled != enabled || shown || !requested || !replies {
+			t.Fatalf("config edit changed card switches or cancelled pending collection: enabled=%v shown=%v requested=%v replies=%v", gotEnabled, shown, requested, replies)
+		}
+	}
+}
+
 func TestMonitorTimelinePreference(t *testing.T) {
 	a := testApp(t)
 	b := login(t, a)

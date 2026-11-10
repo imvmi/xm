@@ -33,7 +33,7 @@ func archiveUserDirectory(db *database.DB, target string) ([]UserView, error) {
 func archiveUserDirectoryQuery(db *database.DB, cte string, args []any) ([]UserView, error) {
 	rows, err := db.Query(cte+`SELECT u.username,COALESCE(i.user_id,''),COALESCE(i.current_username,u.username),
  m.username IS NOT NULL,COALESCE(m.enabled,0),COALESCE(m.last_finished,0),COALESCE(m.show_in_timeline,a.show_in_timeline,1),
- COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0)
+ COALESCE(NULLIF(m.interval_override_seconds,0),(SELECT default_interval_seconds FROM system_settings WHERE id=1),0),COALESCE(p.raw_json,''),COALESCE(f.protected,0),EXISTS(SELECT 1 FROM account_follows af WHERE af.target=u.username)
  FROM users u LEFT JOIN target_identities i ON i.target=u.username
  LEFT JOIN monitors m ON m.username=u.username
  LEFT JOIN account_preferences a ON a.target=u.username
@@ -47,7 +47,7 @@ func archiveUserDirectoryQuery(db *database.DB, cte string, args []any) ([]UserV
 	for rows.Next() {
 		u := UserView{StatsPending: true}
 		var raw string
-		if err := rows.Scan(&u.Username, &u.UserID, &u.CurrentUsername, &u.Monitored, &u.Enabled, &u.LastRun, &u.ShowInTimeline, &u.Interval, &raw, &u.Protected); err != nil {
+		if err := rows.Scan(&u.Username, &u.UserID, &u.CurrentUsername, &u.Monitored, &u.Enabled, &u.LastRun, &u.ShowInTimeline, &u.Interval, &raw, &u.Protected, &u.Followed); err != nil {
 			return nil, err
 		}
 		u.Name, u.Bio = archive.AuthorDetails([]byte(raw))

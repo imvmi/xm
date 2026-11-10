@@ -70,7 +70,11 @@ test('cards expose independent switches, truncate names and move diagnostics int
  assert.match(menu,/采集详情/);
  assert.match(menu,/error &lt;img&gt;/);
  assert.match(menu,/role="switch" aria-checked="false"[^>]*data-op="replies"/);
- assert.match(menu,/data-monitor="alice" data-op="edit">编辑账号配置/);
+ assert.match(menu,/id="account-interval-form"/);
+ assert.doesNotMatch(menu,/data-op="edit"/);
+ assert.match(menu,/>采集设置</);
+ assert.match(menu,/>立即采集</);
+ assert.match(menu,/>账号管理</);
  assert.match(menu,/data-monitor="alice" data-op="identity">更新账号身份/);
  assert.doesNotMatch(menu,/data-op="toggle"|data-op="delete"|查看归档|NaN/);
 });

@@ -45,7 +45,7 @@ func TestMariaDBLargeTimelineUsesOrderedIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, target := range []string{"", "alice"} {
-		_, where, id, args := timelineSource(db, target, true)
+		_, where, id, args := timelineSource(db, target, true, false)
 		index, alias := "posts_timeline", "p"
 		if target != "" {
 			index, alias = "target_posts_timeline", "t"

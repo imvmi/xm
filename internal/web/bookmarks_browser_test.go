@@ -154,7 +154,9 @@ func TestBookmarksBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval(`(()=>{location.hash='home';return true})()`)
-	wait(`state.view==='home' && state.timelineTab==='' && !state.postsLoading && state.postIDs.size===1`)
+	wait(`state.view==='home' && state.timelineTab==='bookmarks' && !state.postsLoading && state.postIDs.size===2`)
+	click("#home-tab-all")
+	wait(`state.timelineTab==='' && !state.postsLoading && state.postIDs.size===1`)
 	click("#home-tab-bookmarks")
 	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && state.postIDs.size===2 && state.postIDs.has('50')`)
 	reject.Store(true)

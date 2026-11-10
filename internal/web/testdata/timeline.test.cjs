@@ -156,10 +156,11 @@ function profileHTML(user){
  return $('profile-header').innerHTML;
 }
 
-test('profile handle opens X while archive status occupies the former action position',()=>{
+test('profile follow button occupies the action position and archive status stays below the handle',()=>{
  const html=profileHTML({username:'zlswwww',name:'zlswwww',posts:0,media:0,monitored:true,enabled:false});
  assert.match(html,/<a href="https:\/\/x\.com\/zlswwww" class="user-handle profile-x-link"[^>]*>@zlswwww<\/a>/);
- assert.match(html,/<div class="profile-actions">[\s\S]*<div class="profile-meta profile-archive-status">[\s\S]*尚未归档[\s\S]*<\/div><\/div><h2>/);
+ assert.match(html,/<div class="profile-actions">[\s\S]*id="profile-follow"[^>]*aria-pressed="false"[^>]*>关注<\/button><\/div><h2>/);
+ assert.match(html,/class="profile-meta profile-archive-status">[\s\S]*尚未归档/);
  assert.doesNotMatch(html,/>在 X 查看/);
  const archived=profileHTML({username:'alice',name:'Alice',posts:1,media:0,last_saved:'2026-10-18T01:00:00Z'});
  assert.match(archived,/profile-archive-status[\s\S]*最近归档于 DATE:2026-10-18T01:00:00Z/);
@@ -300,7 +301,7 @@ test('missing reply preview is one external link without a separate source label
   const html=ctx.replyHTML({reply_to:'999',username:'alice',self_reply,archive_target:'alice'});
   assert.match(html,/^<a class="post-body reply-preview reply-preview-missing"/);
   assert.match(html,/href="https:\/\/x.com\/i\/status\/999" target="_blank" rel="noopener noreferrer"/);
-  assert.match(html,/<p class="reply-preview-text">回复的推文尚未归档或关系无法确认<\/p>/);
+  assert.match(html,/<p class="reply-preview-text">尚未归档或关系无法确认<\/p>/);
   assert.equal((html.match(/<a /g)||[]).length,1);
   assert.doesNotMatch(html,/reply-parent-source|在 X 查看原文 ↗/);
  }

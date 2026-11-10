@@ -15,6 +15,7 @@ const systemSettingsDDL = `CREATE TABLE IF NOT EXISTS system_settings(id INTEGER
 // Shared logical schema: SQLite and MySQL use the same keys and constraints.
 // Per-service credentials are columns, not one opaque configuration document.
 var settingsSchema = []string{
+	`CREATE TABLE IF NOT EXISTS account_follows(target VARCHAR(64) PRIMARY KEY,created_at BIGINT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS archive_accounts(target VARCHAR(64) PRIMARY KEY)`,
 	`CREATE TABLE IF NOT EXISTS notification_pending(target VARCHAR(64) NOT NULL,post_id VARCHAR(64) NOT NULL,PRIMARY KEY(target,post_id),FOREIGN KEY(target,post_id) REFERENCES target_posts(target,post_id) ON DELETE CASCADE)`,
 	`CREATE TABLE IF NOT EXISTS avatar_sources(user_id VARCHAR(64) PRIMARY KEY,source_url TEXT NOT NULL,updated_at VARCHAR(64) NOT NULL)`,

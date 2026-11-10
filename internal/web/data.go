@@ -261,8 +261,8 @@ func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, se
 		return listBookmarkedPosts(ctx, db, target, query, kind, offset, limit, before, count)
 	}
 	result := PostList{Items: []PostView{}, Offset: offset, Limit: limit}
-	from, where, orderID, args := timelineSource(db, target, false)
-	_, pageWhere, _, _ := timelineSource(db, target, true)
+	from, where, orderID, args := timelineSource(db, target, false, section == "following")
+	_, pageWhere, _, _ := timelineSource(db, target, true, section == "following")
 	sectionWhere := ""
 
 	switch section {
@@ -325,6 +325,7 @@ func listPostsPage(ctx context.Context, db *database.DB, target, query, kind, se
 }
 
 type UserView struct {
+	Followed        bool   `json:"followed"`
 	ShowInTimeline  bool   `json:"show_in_timeline"`
 	UserID          string `json:"user_id"`
 	AvatarURL       string `json:"avatar_url"`

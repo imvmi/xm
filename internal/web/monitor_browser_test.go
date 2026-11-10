@@ -122,29 +122,28 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		t.Fatal("preference lost on reload")
 	}
 	openMenu("bob")
-	if !eval(`!!document.querySelector('#account-menu-content [data-op=edit]') && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='true'`) {
-		t.Fatal("management must expose configuration editing and the saved replies switch")
+	if !eval(`!!$('account-interval-form') && !document.querySelector('#account-menu-content [data-op=edit]') && document.querySelector('#account-menu-content [data-op=replies]').getAttribute('aria-checked')==='true'`) {
+		t.Fatal("management must expose inline configuration without a second dialog")
 	}
-	// Edit the cycle, preserving replies and visibility, then restore inheritance.
-	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
-	wait(`$('monitor-dialog').open`)
-	if !eval(`$('monitor-dialog-title').textContent==='编辑账号配置' && $('monitor-username').disabled && $('monitor-replies').checked && !$('monitor-timeline').checked && $('monitor-enabled').checked && $('monitor-interval-mode').value==='global' && $('monitor-interval').disabled`) {
-		t.Fatal("edit form did not load saved settings")
+	// Draft input and focus survive background updates of the same account.
+	eval(`(()=>{$('account-interval-mode').value='custom';$('account-interval-mode').dispatchEvent(new Event('change',{bubbles:true}));$('account-interval-minutes').value='5';$('account-interval-minutes').dispatchEvent(new Event('input',{bubbles:true}));$('account-interval-minutes').focus();state.monitors.find(m=>m.username==='bob').new_posts=42;renderAccountMenu();return true})()`)
+	if !eval(`$('account-interval-minutes').value==='5' && document.activeElement.id==='account-interval-minutes' && !$('monitor-dialog').open`) {
+		t.Fatal("background refresh lost the interval draft or focus")
 	}
-	eval(`(()=>{$('monitor-interval-mode').value='custom';$('monitor-interval-mode').dispatchEvent(new Event('change'));$('monitor-interval').value='5';document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
-	wait(`!$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').interval_override_seconds===300`)
-	if !eval(`state.monitors.find(m=>m.username==='bob').replies && !state.monitors.find(m=>m.username==='bob').show_in_timeline && state.monitors.find(m=>m.username==='bob').interval_seconds===300`) {
-		t.Fatal("interval edit changed other preferences")
+	// A failed save keeps the user's draft without changing saved preferences.
+	eval(`(()=>{window.intervalFetch=window.fetch;window.fetch=(url,...args)=>String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'?Promise.resolve(new Response(JSON.stringify({error:'fixture interval failure'}),{status:500})):intervalFetch(url,...args);$('account-interval-save').click();return true})()`)
+	wait(`!accountPending.size && $('toast').textContent==='fixture interval failure'`)
+	if !eval(`$('account-menu-dialog').open && $('account-interval-minutes').value==='5' && !state.monitors.find(m=>m.username==='bob').interval_override_seconds`) {
+		t.Fatal("failed interval save lost the draft or changed state")
 	}
-	openMenu("bob")
-	eval(`(()=>{document.querySelector('#account-menu-content [data-op=edit]').click();return true})()`)
-	wait(`$('monitor-dialog').open`)
-	if !eval(`$('monitor-interval-mode').value==='custom' && $('monitor-interval').value==='5' && !$('monitor-interval').disabled`) {
-		t.Fatal("custom interval not restored in form")
+	eval(`(()=>{window.fetch=window.intervalFetch;$('account-interval-save').click();return true})()`)
+	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').interval_override_seconds===300`)
+	if !eval(`$('account-menu-dialog').open && !$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').replies && state.monitors.find(m=>m.username==='bob').enabled && !state.monitors.find(m=>m.username==='bob').show_in_timeline && state.monitors.find(m=>m.username==='bob').interval_seconds===300`) {
+		t.Fatal("inline interval edit changed other preferences or closed the menu")
 	}
-	eval(`(()=>{$('monitor-interval-mode').value='global';$('monitor-interval-mode').dispatchEvent(new Event('change'));document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
-	wait(`!$('monitor-dialog').open && state.monitors.find(m=>m.username==='bob').interval_override_seconds===0 && state.monitors.find(m=>m.username==='bob').interval_seconds===state.settings.default_interval_seconds`)
-	openMenu("bob")
+	// Restore the global cycle from the same menu.
+	eval(`(()=>{$('account-interval-mode').value='global';$('account-interval-mode').dispatchEvent(new Event('change',{bubbles:true}));$('account-interval-save').click();return true})()`)
+	wait(`!accountPending.size && state.monitors.find(m=>m.username==='bob').interval_override_seconds===0 && state.monitors.find(m=>m.username==='bob').interval_seconds===state.settings.default_interval_seconds`)
 	// Hold the save to check duplicate prevention and preservation of other preferences.
 	eval(`(()=>{window.repliesFetch=window.fetch;window.replySaves=[];window.fetch=(url,...args)=>{if(String(url).endsWith('/monitors/bob')&&args[0]?.method==='PUT'){replySaves.push(JSON.parse(args[0].body));return new Promise(resolve=>{window.finishReplySave=()=>resolve(repliesFetch(url,...args))})}return repliesFetch(url,...args)};const b=document.querySelector('#account-menu-content [data-op=replies]');b.focus();b.click();document.querySelector('#account-menu-content [data-op=replies]').click();return true})()`)
 	if !eval(`$('account-menu-dialog').open && document.querySelector('#account-menu-content [data-op=replies]').disabled && replySaves.length===1 && replySaves[0].replies===false && replySaves[0].enabled===true && !('show_in_timeline' in replySaves[0])`) {
@@ -181,7 +180,7 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	}
 	eval(`(()=>{$('user-search').value='';$('user-search').dispatchEvent(new Event('input'));$('monitor-sort').value='posts-desc';$('monitor-sort').dispatchEvent(new Event('change'));document.querySelector('[data-account=long_username15] .account-stats').click();return true})()`)
 	wait(`$('account-menu-dialog').open && accountMenuTarget==='long_username15'`)
-	if !eval(`$('account-menu-content').textContent.includes('包含回复') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
+	if !eval(`$('account-menu-content').textContent.includes('包含该账号发出的回复') && document.querySelector('[data-account=long_username15] .badge').textContent.includes('需关注')`) {
 		t.Fatal("card click did not show operations or hid the attention indicator")
 	}
 	eval(`(()=>{document.querySelector('#account-menu-content .account-details').open=true;return true})()`)
@@ -296,14 +295,14 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 	openMenu("bob")
 	eval(`(()=>{document.querySelector('#account-menu-content [data-op=readd]').click();return true})()`)
 	wait(`$('monitor-dialog').open`)
-	if !eval(`!$('monitor-timeline').checked && $('monitor-username').disabled && $('monitor-enabled').checked`) {
+	if !eval(`!$('monitor-timeline') && $('monitor-username').disabled && !$('monitor-enabled')`) {
 		t.Fatal("re-add form reset the preference")
 	}
 	eval(`(()=>{document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
 	wait(`!$('monitor-dialog').open && state.monitors.length===3 && $('user-empty').hidden===false`)
 	eval(`(()=>{$('monitor-filter').value='all';$('monitor-filter').dispatchEvent(new Event('change'));return true})()`)
 	wait(`document.querySelectorAll('#user-list .account-card').length===3 && document.querySelectorAll('[data-account=bob]').length===1 && !state.users.find(u=>u.username==='bob').stats_pending`)
-	if !eval(`state.users.find(u=>u.username==='bob').posts===2 && !state.monitors.find(m=>m.username==='bob').show_in_timeline`) {
+	if !eval(`state.users.find(u=>u.username==='bob').posts===2 && !state.monitors.find(m=>m.username==='bob').enabled && !state.monitors.find(m=>m.username==='bob').show_in_timeline`) {
 		t.Fatal("re-add duplicated or lost the archive")
 	}
 	// Browsing an archive preserves directory search, sorting, details and scroll.
@@ -324,6 +323,25 @@ func TestAccountMonitoringBrowser(t *testing.T) {
 		t.Fatal("new account inherited stale editing state")
 	}
 	eval(`(()=>{$('monitor-username').value='carol';$('monitor-interval-mode').value='custom';$('monitor-interval-mode').dispatchEvent(new Event('change'));$('monitor-interval').value='1';document.querySelector('#monitor-form button[type=submit]').click();return true})()`)
-	wait(`!$('monitor-dialog').open && state.monitors.some(m=>m.username==='carol' && m.interval_seconds===60 && m.interval_override_seconds===60)`)
+	wait(`!$('monitor-dialog').open && state.monitors.some(m=>m.username==='carol' && m.interval_seconds===60 && m.interval_override_seconds===60 && !m.enabled && m.show_in_timeline && m.replies)`)
+
+	wait(`!monitorSaving`)
+	eval(`(()=>{document.querySelector('[data-action="add"]').click();return true})()`)
+	wait(`$('monitor-dialog').open`)
+	if !eval(`$('monitor-save-only').textContent==='仅保存' && $('monitor-save-enable').textContent==='保存并启用采集' && $('monitor-dialog').scrollWidth<=$('monitor-dialog').clientWidth+1`) {
+		t.Fatal("add account choices missing or overflowing")
+	}
+	// Both choices share one in-flight request and recover after failure.
+	eval(`(()=>{$('monitor-username').value='dave';window.addFetch=window.fetch;window.addBodies=[];window.fetch=(url,...args)=>{if(String(url).endsWith('/monitors')&&args[0]?.method==='POST'){addBodies.push(JSON.parse(args[0].body));return new Promise(resolve=>{window.finishAdd=()=>resolve(new Response(JSON.stringify({error:'fixture add failure'}),{status:500}))})}return addFetch(url,...args)};$('monitor-save-enable').click();$('monitor-save-only').click();return true})()`)
+	if !eval(`monitorSaving && $('monitor-save-only').disabled && $('monitor-save-enable').disabled && addBodies.length===1 && addBodies[0].enabled===true`) {
+		t.Fatal("save choices did not prevent conflicting submissions")
+	}
+	eval(`(()=>{finishAdd();return true})()`)
+	wait(`!monitorSaving && $('toast').textContent==='fixture add failure'`)
+	if !eval(`$('monitor-dialog').open && $('monitor-username').value==='dave' && !$('monitor-save-only').disabled && !$('monitor-save-enable').disabled`) {
+		t.Fatal("failed add must preserve input and allow either choice again")
+	}
+	eval(`(()=>{window.fetch=window.addFetch;$('monitor-save-enable').click();return true})()`)
+	wait(`!monitorSaving && !$('monitor-dialog').open && state.monitors.some(m=>m.username==='dave' && m.enabled && m.show_in_timeline && m.replies)`)
 
 }

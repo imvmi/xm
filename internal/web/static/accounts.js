@@ -1,5 +1,5 @@
 'use strict';
-let accountScroll=0,accountRestoring=false,accountMenuTarget=null;
+let accountScroll=0,accountRestoring=false,accountMenuTarget=null,accountIntervalDraft=null;
 const accountPending=new Set(),accountExpanded=new Set();
 const archiveOverview=$('archive-overview'),archiveOverviewToggle=$('archive-overview-toggle');
 function positionArchiveOverview(){
@@ -59,19 +59,27 @@ function accountCard(u){
  const shown=visibleInTimeline(u),enabled=!!u.monitored&&!!u.enabled;
  const autoHelp=!u.monitored?'仅保留归档；请在管理菜单中重新添加监控':u.runtime_pending?'正在读取采集状态':enabled?'关闭将停止当前采集并取消排队；归档保留':state.overview?.paused?'启用后仍需在爬虫设置中恢复全局自动采集':'按此账号的采集周期自动采集';
  const lastSaved=u.stats_pending?'统计加载中…':u.last_saved?'最近归档 '+date(u.last_saved,true):'等待第一次采集';
+ const seconds=Number(u.interval_seconds),period=seconds%3600===0?number(seconds/3600)+' 小时':number(seconds/60)+' 分钟';
+ const interval=u.runtime_pending?'自动采集周期加载中…':Number.isFinite(seconds)&&seconds>0?`自动采集：每 ${period} · ${u.interval_override_seconds?'自定义':'跟随全局'}`:'自动采集周期未设置';
  return `<div class="account-card-top"><div class="account-identity"><a class="account-avatar-link" href="${userURL(u.username)}" aria-label="查看 ${escape(u.name||handle(u))} 的归档">${avatar(handle(u),'user-avatar',u.avatar_url)}</a><span><strong><a class="account-name" href="${userURL(u.username)}" title="${escape(u.name||handle(u))}">${escape(u.name||handle(u))}</a>${u.protected?icon('lock'):''}</strong><a class="user-handle" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer" title="@${escape(handle(u))}">@${escape(handle(u))}</a>${u.current_username&&u.current_username!==u.username?`<small class="muted" title="原 @${key} · 归档已延续">原 @${key} · 归档已延续</small>`:''}</span></div><span class="badge ${cls}">${label}${accountNeedsAttention(u)&&label!=='需关注'?' · 需关注':''}</span></div>
- <div class="account-stats"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个媒体</span><span class="account-last-saved"><span title="${escape(lastSaved)}">${escape(lastSaved)}</span></span></div>
+ <div class="account-stats"><span><strong>${userStat(u,'posts')}</strong> 条推文</span><span><strong>${userStat(u,'media')}</strong> 个媒体</span><span class="account-last-saved"><span title="${escape(lastSaved)}">${escape(lastSaved)}</span></span>${u.monitored?`<span class="account-interval" title="配置的采集周期；关闭自动采集或全局暂停时不自动运行，实际执行还受排队和限流影响。可在账号菜单中编辑。">${escape(interval)}</span>`:''}</div>
  ${accountNeedsAttention(u)&&u.attention?`<p class="account-attention" title="${escape(u.attention.suggestion)}">上次采集：${escape(u.attention.label)}<button type="button" class="text-button account-attention-action" data-monitor="${key}" data-op="manage"${disabled}>查看原因与处理 →</button></p>`:''}
  <div class="account-controls"><button type="button" class="timeline-switch" role="switch" aria-checked="${shown}" aria-label="@${escape(handle(u))} 在主时间线显示" data-monitor="${key}" data-op="timeline"${disabled}><span class="switch-track" aria-hidden="true"></span><span>首页显示</span></button><button type="button" class="timeline-switch" role="switch" aria-checked="${enabled}" aria-label="@${escape(handle(u))} 自动采集" title="${escape(autoHelp)}" data-monitor="${key}" data-op="toggle"${pending||!u.monitored||u.runtime_pending?' disabled':''}><span class="switch-track" aria-hidden="true"></span><span>自动采集</span></button></div>`;
+}
+function accountSettingsHTML(u){
+ if(!accountIntervalDraft||accountIntervalDraft.username!==u.username)accountIntervalDraft={username:u.username,mode:u.interval_override_seconds?'custom':'global',minutes:u.interval_override_seconds?String(u.interval_override_seconds/60):'15'};
+ const draft=accountIntervalDraft,custom=draft.mode==='custom',pending=accountPending.has(u.username),globalSeconds=state.settings?.default_interval_seconds||(!u.interval_override_seconds?u.interval_seconds:0);
+ return `<section class="account-menu-section"><h3>采集设置</h3><form id="account-interval-form"><fieldset${pending?' disabled':''}><label for="account-interval-mode">自动采集周期</label><div class="account-interval-row"><select id="account-interval-mode"><option value="global"${custom?'':' selected'}>跟随全局${globalSeconds?' · '+number(globalSeconds/60)+' 分钟':''}</option><option value="custom"${custom?' selected':''}>自定义周期</option></select><button id="account-interval-save" class="button secondary" type="submit">${pending?'处理中…':'保存周期'}</button></div><div id="account-interval-field"${custom?'':' hidden'}><label for="account-interval-minutes">间隔（分钟）</label><input id="account-interval-minutes" type="number" min="1" max="10080" step="any" value="${escape(draft.minutes)}"${custom?' required':' disabled'} aria-describedby="account-interval-help"></div><p id="account-interval-help" class="account-menu-help">修改后点击保存；仅在自动采集开启时按周期运行。</p></fieldset></form><div class="account-replies-setting"><button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${escape(u.username)}" data-op="replies"><span>包含该账号发出的回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">切换即保存，并重新建立历史基线；已有归档保留。</p></div></section>`;
 }
 function accountManagementHTML(u){
  const key=escape(u.username),action=(op,text,extra='')=>`<button type="button" class="text-button ${extra}" data-monitor="${key}" data-op="${op}">${text}</button>`;
  const needsCheck=accountNeedsAttention(u)&&['suspended','username_unavailable','protected','identity','identity_unresolved','identity_conflict','unavailable'].includes(u.attention?.code);
- let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${action('edit','编辑账号配置')}${action('identity',u.attention?.code==='identity_conflict'?'核对原账号的新用户名':'更新账号身份')}${needsCheck&&!u.running&&!u.requested&&!u.queued_job?action('recheck','重新检查并尝试采集'):collectionActions(u)}<button type="button" class="timeline-switch account-replies-switch" role="switch" aria-checked="${!!u.replies}" aria-describedby="account-replies-help" data-monitor="${key}" data-op="replies"><span>包含回复</span><span class="switch-track" aria-hidden="true"></span></button><p id="account-replies-help" class="account-replies-help">包含该账号发出的回复。切换后立即保存，并重新建立历史采集基线；已归档内容保留。</p>${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}${!u.running?action('archive-only','取消监控，仅保留归档'):''}`):action('readd','重新添加监控');
+ const section=(title,body)=>`<section class="account-menu-section"><h3>${title}</h3><div class="account-action-list">${body}</div></section>`;
+ let operations=u.monitored?(u.runtime_pending?'<p class="muted">正在读取采集状态…</p>':`${accountSettingsHTML(u)}${section('立即采集',`${needsCheck&&!u.running&&!u.requested&&!u.queued_job?action('recheck','重新检查并尝试采集'):collectionActions(u)}${u.last_error?.includes('请重置断点')?action('reset-progress','重置断点并重试'):''}`)}${section('账号管理',`${action('identity',u.attention?.code==='identity_conflict'?'核对原账号的新用户名':'更新账号身份')}${!u.running?action('archive-only','取消监控，仅保留归档','account-archive-action'):''}`)}`):section('账号管理',action('readd','重新添加监控'));
  if(accountPending.has(u.username))operations=operations.replace(/<button\b([^>]*)>/g,(tag,attrs)=>attrs.includes('disabled')?tag:`<button disabled${attrs}>`);
  const detail=u.monitored&&!u.runtime_pending?`<details class="account-details" data-detail="${key}:status"${accountExpanded.has(u.username+':status')?' open':''}><summary>采集详情${accountNeedsAttention(u)?' · 需关注':''}</summary><div>${baselineHTML(u)}${checkpointHTML(u)}${u.last_error?`<p class="account-error">${escape(u.last_error)}</p>`:''}${monitorNextStep(u)}<p>最近结束：${u.last_finished?escape(date(u.last_finished,true)):'尚未采集'}</p><p>${!u.enabled||state.overview?.paused?'自动采集已暂停':u.next_run>state.overview?.server_time?'下次：'+escape(date(u.next_run,true)):'等待调度'} · 每 ${number(u.interval_seconds/60)} 分钟（${u.interval_override_seconds?'自定义':'跟随全局'}）</p><p>上轮新增 ${number(u.new_posts)} 条</p><a class="account-task-link" href="#activity">查看任务 →</a></div></details>`:'';
- const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往爬虫设置恢复。':'自动采集按账号周期运行；关闭开关会停止当前采集并取消排队，归档保留。';
- return `${accountNeedsAttention(u)&&u.attention?`<div class="account-attention"><strong>上次采集：${escape(u.attention.label)}</strong><p>${escape(u.attention.suggestion)}</p>${u.last_finished?`<small>记录于 ${escape(date(u.last_finished,true))}</small>`:''}</div>`:''}<p class="account-menu-help">${escape(help)}</p>${needsCheck?`<p class="account-menu-help">重新检查会加入一次手动采集任务，不开启自动采集；仍遵守限流与身份校验。${u.user_id?`原账号数字 ID：${escape(u.user_id)}。`:""}</p><a class="account-task-link" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer">${u.attention?.code==='identity_conflict'?'查看当前用户名主页（可能属于其他账号）':'在 X 核实账号状态'} ↗</a>${u.attention?.code==='identity_conflict'&&u.user_id?`<a class="account-task-link" href="https://x.com/i/user/${encodeURIComponent(u.user_id)}" target="_blank" rel="noopener noreferrer">按原数字 ID 查看账号 ↗</a>`:""}`:""}<div class="account-action-list">${operations}</div>${detail}`;
+ const help=!u.monitored?'此账号仅保留归档；重新添加监控后可启用自动采集。':state.overview?.paused?'全局自动采集已暂停；账号开关开启也不会自动运行，可前往爬虫设置恢复。':u.enabled?'自动采集已开启 · 首页显示和采集开关在账号卡片调整。':'自动采集已关闭 · 可手动采集，或在账号卡片开启。';
+ return `${accountNeedsAttention(u)&&u.attention?`<div class="account-attention"><strong>上次采集：${escape(u.attention.label)}</strong><p>${escape(u.attention.suggestion)}</p>${u.last_finished?`<small>记录于 ${escape(date(u.last_finished,true))}</small>`:''}</div>`:''}<p class="account-menu-help">${escape(help)}</p>${needsCheck?`<p class="account-menu-help">重新检查会加入一次手动采集任务，不开启自动采集；仍遵守限流与身份校验。${u.user_id?`原账号数字 ID：${escape(u.user_id)}。`:""}</p><a class="account-task-link" href="https://x.com/${encodeURIComponent(handle(u))}" target="_blank" rel="noopener noreferrer">${u.attention?.code==='identity_conflict'?'查看当前用户名主页（可能属于其他账号）':'在 X 核实账号状态'} ↗</a>${u.attention?.code==='identity_conflict'&&u.user_id?`<a class="account-task-link" href="https://x.com/i/user/${encodeURIComponent(u.user_id)}" target="_blank" rel="noopener noreferrer">按原数字 ID 查看账号 ↗</a>`:""}`:""}${operations}${detail}`;
 }
 function renderAccountMenu(){
  const dialog=$('account-menu-dialog');if(!dialog.open)return;
@@ -80,13 +88,13 @@ function renderAccountMenu(){
  $('account-menu-name').textContent=u.name||handle(u);$('account-menu-name').href=userURL(u.username);$('account-menu-handle').textContent='@'+handle(u);$('account-menu-handle').href='https://x.com/'+encodeURIComponent(handle(u));
  const root=$('account-menu-content'),html=accountManagementHTML(u);
  if(root._accountHTML===html)return;
- const focused=root.contains(document.activeElement)?document.activeElement:null,op=focused?.dataset.op,summary=focused?.tagName==='SUMMARY';
+ const focused=root.contains(document.activeElement)?document.activeElement:null,op=focused?.dataset.op,focusID=focused?.id,summary=focused?.tagName==='SUMMARY';
  root.innerHTML=html;root._accountHTML=html;
- if(focused)(op?[...root.querySelectorAll('[data-op]')].find(b=>b.dataset.op===op):summary?root.querySelector('summary'):root.querySelector('a'))?.focus({preventScroll:true});
+ if(focused)(focusID?$(focusID):op?[...root.querySelectorAll('[data-op]')].find(b=>b.dataset.op===op):summary?root.querySelector('summary'):root.querySelector('a'))?.focus({preventScroll:true});
 }
 function openAccountMenu(username){
  if(state.view!=='archive'||!accountRows().some(u=>u.username===username))return;
- accountMenuTarget=username;archiveOverview.hidePopover();
+ accountMenuTarget=username;accountIntervalDraft=null;archiveOverview.hidePopover();
  const opener=[...$('user-list').children].find(el=>el.dataset.account===username);
  opener?.focus({preventScroll:true});
  $('account-menu-dialog').showModal();renderAccountMenu();
@@ -120,6 +128,29 @@ function renderAccounts(){
  }
  renderAccountMenu();
 }
+function updateAccountIntervalDraft(){
+ if(!accountIntervalDraft)return;
+ const custom=$('account-interval-mode').value==='custom';
+ accountIntervalDraft.mode=custom?'custom':'global';accountIntervalDraft.minutes=$('account-interval-minutes').value;
+ $('account-interval-field').hidden=!custom;$('account-interval-minutes').disabled=!custom;$('account-interval-minutes').required=custom;
+}
+$('account-menu-content').addEventListener('input',event=>{if(event.target.closest('#account-interval-form'))updateAccountIntervalDraft();});
+$('account-menu-content').addEventListener('change',event=>{if(event.target.closest('#account-interval-form'))updateAccountIntervalDraft();});
+$('account-menu-content').addEventListener('submit',async event=>{
+ if(event.target.id!=='account-interval-form')return;
+ event.preventDefault();
+ const target=accountMenuTarget;if(!target||accountPending.has(target))return;
+ updateAccountIntervalDraft();
+ const seconds=accountIntervalDraft.mode==='custom'?Math.round(Number(accountIntervalDraft.minutes)*60):0;
+ accountPending.add(target);renderAccountMenu();
+ try{
+  await api('/monitors/'+encodeURIComponent(target),'PUT',{interval_override_seconds:seconds});
+  await refreshAccountsAfterChange();
+  if(accountMenuTarget===target)accountIntervalDraft=null;
+  toast('采集周期已保存');
+ }catch(err){toast(err.message,true);}
+ finally{accountPending.delete(target);renderUsers();}
+});
 $('account-menu-content').addEventListener('toggle',event=>{
  if(!event.target.isConnected)return;
  const detail=event.target.dataset?.detail;if(!detail)return;
@@ -144,7 +175,7 @@ $('account-menu-dialog').addEventListener('click',event=>{
 });
 $('account-menu-dialog').addEventListener('close',()=>{
  if($('account-menu-dialog').open)return;
- const target=accountMenuTarget;accountMenuTarget=null;
+ const target=accountMenuTarget;accountMenuTarget=null;accountIntervalDraft=null;
  if(state.authenticated&&state.view==='archive'&&!document.querySelector('dialog[open]')){
   [...$('user-list').children].find(el=>el.dataset.account===target)?.focus({preventScroll:true});
  }
@@ -163,7 +194,7 @@ async function handleAccountAction(event){
  if(b.dataset.op==='manage'){openAccountMenu(u.username);return;}
  if(b.closest('#account-menu-dialog')&&b.dataset.op!=='replies')$('account-menu-dialog').close();
  if(b.dataset.op==='identity'){openIdentityRefresh(u);return;}
- if(['readd','edit'].includes(b.dataset.op)){await action(b,()=>openMonitor(u));return;}
+ if(b.dataset.op==='readd'){await action(b,()=>openMonitor(u));return;}
  if(b.dataset.op==='archive-only'&&!window.confirm('取消 @'+handle(u)+' 的监控？自动采集及排队任务将取消，未完成的分页断点会清除。已归档推文、媒体、收藏与首页显示偏好保留；以后可重新添加监控。'))return;
  if(b.dataset.op==='rescan'&&!window.confirm('重新扫描将清除未完成的分页断点，并从最新内容重新扫描。已归档内容不会删除。是否继续？'))return;
  accountPending.add(u.username);renderUsers();
