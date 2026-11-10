@@ -30,7 +30,9 @@
 .thread-current{border-top:0!important;border-bottom:8px solid var(--surface-raised)!important}
 .thread-current .post-body{padding-top:18px!important;padding-bottom:20px!important}
 .thread-current .post-text{font-size:18px!important;line-height:1.5!important}
-.thread-reply.has-replies .post-body::after{content:'';position:absolute;z-index:1;left:35px;top:58px;bottom:-1px;width:2px;border-radius:2px;background:var(--line)}
+.thread-reply.thread-continues .post-body::after{content:'';position:absolute;z-index:1;left:35px;top:58px;bottom:-1px;width:2px;border-radius:2px;background:var(--line)}
+.thread-reply-target{color:var(--muted);font-size:12px;line-height:1.5;margin:2px 0 6px}
+.thread-reply-target button{color:var(--accent);font-size:inherit;padding:0;min-height:24px}
 .thread-post .post-avatar{position:relative;z-index:2}
 .thread-replies-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid var(--line);background:var(--paper)}
 .thread-replies-heading h2{font-size:17px;margin:0}.thread-replies-heading span{font-size:11px;color:var(--muted)}
@@ -40,7 +42,7 @@
 .thread-load-more[hidden]{display:none}
 @media(prefers-reduced-motion:reduce){.post-detail-active .profile-feed.swipe-returning{transition:none}}
 @media(max-width:600px){
- .thread-ancestor .post-body::after,.thread-reply.has-replies .post-body::after{left:31px;top:54px}
+ .thread-ancestor .post-body::after,.thread-reply.thread-continues .post-body::after{left:31px;top:54px}
  .thread-current .post-text{font-size:17px!important}
  .thread-replies-heading{padding:14px 12px}
 }

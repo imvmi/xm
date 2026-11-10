@@ -147,8 +147,8 @@ func (a *App) replyContext(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, result)
 }
 
-// Replies contains only immediate children; siblings are never presented as a
-// single chain. Further levels are fetched explicitly, keeping each page bounded.
+// Replies includes every archived descendant, ordered by numeric tweet ID
+// (oldest first). ReplyTo identifies each branch; mentions and quotes are not edges.
 type ReplyList struct {
 	Items      []PostView `json:"items"`
 	NextCursor string     `json:"next_cursor,omitempty"`
@@ -171,7 +171,15 @@ func (a *App) postReplies(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "读取回复失败")
 		return
 	}
-	query := "SELECT " + postColumns + " FROM posts p WHERE p.reply_to=? AND p.id<>?"
+	// Keep only IDs in the recursive set: UNION deduplicates shared archive
+	// entries and terminates even if corrupt reply links contain a cycle.
+	// Apply the page cursor outside the traversal so parents on earlier pages
+	// still lead to their descendants on later pages.
+	query := `WITH RECURSIVE reply_tree(id) AS (
+		SELECT id FROM posts WHERE id=?
+		UNION
+		SELECT child.id FROM posts child JOIN reply_tree parent ON child.reply_to=parent.id
+	) SELECT ` + postColumns + ` FROM posts p JOIN reply_tree tree ON tree.id=p.id WHERE p.id<>?`
 	args := []any{id, id}
 	if after != "" {
 		query += " AND (length(p.id)>? OR (length(p.id)=? AND p.id>?))"

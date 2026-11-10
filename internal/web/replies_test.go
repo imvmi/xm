@@ -191,24 +191,27 @@ func TestArchivedRepliesAcrossAuthors(t *testing.T) {
 		return result
 	}
 	first := read("")
-	if len(first.Items) != 20 || first.Items[0].ID != "101" || first.Items[1].ID != "200" || first.Items[1].Username != "bob" || !first.Items[1].HasReplies || len(first.Items[1].Media) != 1 || first.Items[1].Media[0].ID != "reply-photo" || !first.HasMore || first.NextCursor != "1017" {
+	if len(first.Items) != 20 || first.Items[0].ID != "101" || first.Items[1].ID != "200" || first.Items[1].Username != "bob" || !first.Items[1].HasReplies || len(first.Items[1].Media) != 1 || first.Items[1].Media[0].ID != "reply-photo" || !first.HasMore || first.NextCursor != "1016" {
 		t.Fatal(first)
 	}
 	second := read(first.NextCursor)
-	if len(second.Items) != 7 || second.Items[0].ID != "1018" || second.HasMore || second.NextCursor != "" {
+	if len(second.Items) != 8 || second.Items[0].ID != "1017" || second.HasMore || second.NextCursor != "" {
 		t.Fatal(second)
 	}
 	seen := map[string]bool{}
 	for _, p := range append(first.Items, second.Items...) {
-		if seen[p.ID] || p.ReplyTo != "100" {
+		if seen[p.ID] || (p.ReplyTo != "100" && p.ReplyTo != "200") {
 			t.Fatal("duplicate or unrelated reply", p)
 		}
 		seen[p.ID] = true
 	}
-	for _, id := range []string{"201", "202", "203", "204", "900"} {
+	for _, id := range []string{"202", "203", "204", "900"} {
 		if seen[id] {
 			t.Fatal("included unrelated post", id)
 		}
+	}
+	if !seen["201"] || first.Items[2].ReplyPreview == nil || first.Items[2].ReplyPreview.ID != "200" {
+		t.Fatal("nested reply or parent context missing", first.Items)
 	}
 	var chain ReplyContext
 	w := b.request("GET", "/api/posts/201/context", nil, "", false)
@@ -232,5 +235,55 @@ func TestArchivedRepliesAcrossAuthors(t *testing.T) {
 	ok(t, w, 200)
 	if err := json.Unmarshal(w.Body.Bytes(), &empty); err != nil || len(empty.Items) != 0 {
 		t.Fatal(empty, err)
+	}
+}
+
+// Deep descendants must remain reachable when their parents are on earlier
+// pages. Cycles terminate, and unrelated conversations never enter the result.
+func TestArchivedReplyDescendantsPaginationAndCycles(t *testing.T) {
+	a := testApp(t)
+	b := login(t, a)
+	posts := []archive.Post{{ID: "100", AuthorID: "42", Username: "alice"}}
+	for i := 101; i <= 145; i++ {
+		posts = append(posts, archive.Post{ID: fmt.Sprint(i), AuthorID: "42", Username: "alice", ReplyTo: fmt.Sprint(i - 1)})
+	}
+	posts = append(posts,
+		archive.Post{ID: "200", AuthorID: "42", Username: "alice", ReplyTo: "201"},
+		archive.Post{ID: "201", AuthorID: "42", Username: "alice", ReplyTo: "200"},
+		archive.Post{ID: "202", AuthorID: "42", Username: "alice", ReplyTo: "201"},
+	)
+	if err := a.store.SavePosts("alice", posts); err != nil {
+		t.Fatal(err)
+	}
+	read := func(id, after string) ReplyList {
+		t.Helper()
+		w := b.request("GET", "/api/posts/"+id+"/replies?after="+after, nil, "", false)
+		ok(t, w, 200)
+		var result ReplyList
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	var all []PostView
+	cursor := ""
+	for page := 0; page < 3; page++ {
+		result := read("100", cursor)
+		if (page < 2 && (!result.HasMore || len(result.Items) != 20)) || (page == 2 && (result.HasMore || len(result.Items) != 5)) {
+			t.Fatal("incorrect descendant page", page, result)
+		}
+		all = append(all, result.Items...)
+		cursor = result.NextCursor
+	}
+	for i, p := range all {
+		if p.ID != fmt.Sprint(101+i) || p.ReplyTo != fmt.Sprint(100+i) {
+			t.Fatal("lost or duplicated descendant", p)
+		}
+	}
+	if got := read("200", ""); !reflect.DeepEqual(replyIDs(got.Items), []string{"201", "202"}) || got.HasMore {
+		t.Fatal("cycle was not deduplicated", got)
+	}
+	if got := read("100", "9999"); len(got.Items) != 0 || got.HasMore {
+		t.Fatal(got)
 	}
 }

@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -71,12 +73,29 @@ func TestReplyThreadPageAndSwipeBackBrowser(t *testing.T) {
 		t.Fatal("replies leaked into the home timeline or reply affordance is missing")
 	}
 	eval(`(()=>{$('posts').style.paddingBottom='1200px';window.scrollTo(0,120);window.homeThreadScroll=scrollY;document.querySelector('[data-post-id="100"] .post-text').click();return true})()`)
-	wait(`state.focusPost==='100'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.size===2`)
-	if !eval(`location.hash==='#post/100'&&$('home-feed-title').textContent==='推文详情'&&document.querySelector('.thread-current').dataset.postId==='100'&&!!document.querySelector('.thread-reply[data-post-id="101"]')&&!!document.querySelector('.thread-reply[data-post-id="200"]')&&!document.querySelector('[data-post-id="201"]')&&!window.replyXSS`) {
-		t.Fatal("root thread page did not show only its direct archived replies")
+	wait(`state.focusPost==='100'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.size===3`)
+	if !eval(`location.hash==='#post/100'&&$('home-feed-title').textContent==='推文详情'&&document.querySelector('.thread-current').dataset.postId==='100'&&!!document.querySelector('.thread-reply[data-post-id="101"]')&&!!document.querySelector('.thread-reply[data-post-id="200"]')&&!!document.querySelector('.thread-reply[data-post-id="201"]')&&!window.replyXSS`) {
+		t.Fatal("root thread page did not include all archived descendants")
 	}
-	if !eval(`document.querySelector('.thread-reply[data-post-id="200"] [data-open-post="200"]').textContent.includes('查看回复')`) {
-		t.Fatal("nested reply affordance missing")
+	if !eval(`!document.querySelector('.thread-reply .reply-preview-actions')&&document.querySelector('[data-post-id="201"] [data-thread-parent="200"]').textContent==='@bob'&&document.querySelector('[data-post-id="200"]').classList.contains('thread-continues')&&!document.querySelector('[data-post-id="101"]').classList.contains('thread-continues')&&$('thread-replies-status').textContent.includes('3 条回复')`) {
+		t.Fatal("reply relationships or continuous thread layout incorrect")
+	}
+	eval(`(()=>{document.querySelector('[data-post-id="201"] [data-thread-parent="200"]').click();return true})()`)
+	if !eval(`state.focusPost==='100'&&document.activeElement.dataset.postId==='200'`) {
+		t.Fatal("reply target did not locate the parent on the same page")
+	}
+	if dir := os.Getenv("XM_UI_SCREENSHOT_DIR"); dir != "" {
+		eval(`(()=>{window.scrollTo(0,0);return true})()`)
+		shot, err := chromedp.Run(browser, chromedp.CaptureScreenshot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "reply-descendants-mobile.png"), shot, 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	eval(`(()=>{window.scrollTo(0,80);document.querySelector('.thread-reply[data-post-id="200"] .post-text').click();return true})()`)
 	wait(`state.focusPost==='200'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.has('201')`)
@@ -128,5 +147,22 @@ func TestReplyThreadPageAndSwipeBackBrowser(t *testing.T) {
 	// post click handler must still ignore clicks anywhere inside this link.
 	if !eval(`(()=>{const row=document.querySelector('[data-post-id="500"] .reply-preview-missing');row.focus();const focused=document.activeElement===row;row.addEventListener('click',event=>{window.replyLinkClicked=event.target.closest('a').href;event.preventDefault();},{once:true});row.querySelector('.reply-preview-text').click();return focused&&window.replyLinkClicked==='https://x.com/i/status/999'&&location.hash==='#user/alice'&&!state.focusPost;})()`) {
 		t.Fatal("reply placeholder click was hijacked by the containing post")
+	}
+	var deep []archive.Post
+	for i := 401; i <= 423; i++ {
+		deep = append(deep, archive.Post{ID: fmt.Sprint(i), AuthorID: "42", Username: "alice", ReplyTo: fmt.Sprint(i - 1), Text: fmt.Sprintf("第 %d 层回复", i-400)})
+	}
+	if err := a.store.SavePosts("alice", deep); err != nil {
+		t.Fatal(err)
+	}
+	eval(`(()=>{openPostDetail('400');return true})()`)
+	wait(`state.focusPost==='400'&&!threadContextLoading&&!threadRepliesLoading&&threadReplySeen.size===20`)
+	if !eval(`!$('thread-replies-more').hidden&&document.querySelector('[data-post-id="420"]')&&!document.querySelector('[data-post-id="421"]')`) {
+		t.Fatal("first reply page was not bounded")
+	}
+	eval(`(()=>{$('thread-replies-more').click();return true})()`)
+	wait(`!threadRepliesLoading&&threadReplySeen.size===23`)
+	if !eval(`location.hash==='#post/400'&&$('thread-replies-more').hidden&&document.querySelectorAll('.thread-reply').length===23&&document.querySelector('[data-post-id="420"]').classList.contains('thread-continues')&&document.querySelector('[data-post-id="421"] [data-thread-parent="420"]')`) {
+		t.Fatal("next page lost descendants, duplicated cards, or broke the parent/child connector")
 	}
 }
