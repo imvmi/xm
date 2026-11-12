@@ -337,6 +337,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/activity/jobs/{id}", a.cancelCollectionJob)
 	mux.HandleFunc("GET /media/{post}/{asset}", a.media)
 	mux.HandleFunc("GET /avatars/{user}", a.avatar)
+	registerPWA(mux)
 	assets, _ := fs.Sub(static, "static")
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

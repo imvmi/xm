@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "XM · 私人动态档案",
+  "short_name": "XM",
+  "description": "浏览、搜索和收藏你的私人 X 动态档案。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {"src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "账号归档", "url": "/#accounts"},
+    {"name": "采集任务", "url": "/#activity"}
+  ]
+}

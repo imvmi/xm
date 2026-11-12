@@ -6,6 +6,7 @@ function applyArchiveTheme(preference=archiveThemePreference){
   archiveThemePreference=['system','light','dark'].includes(preference)?preference:'system';
   const theme=archiveThemePreference==='dark'||(archiveThemePreference==='system'&&systemTheme?.matches)?'dark':'light';
   document.documentElement.dataset.theme=theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#000000':'#ffffff');
   document.documentElement.dataset.themePreference=archiveThemePreference;
   document.querySelector('meta[name="color-scheme"]')?.setAttribute('content',theme);
 }

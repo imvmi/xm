@@ -119,6 +119,18 @@ go build -o xm ./cmd/xm
 
 `serve`、`collect`、`retry-media`、`import-cookie` 对同一数据目录互斥。服务运行期间请通过页面导入 Cookie 和采集；使用命令行采集/修复前先停止服务。`list`、`status` 可同时读取。
 
+### PWA 安装与更新
+
+登录页和 **设置 → 时间线** 提供“安装应用”入口。支持安装提示的浏览器可点击“安装 XM”；其他浏览器会显示操作指引。iPhone / iPad 在 Safari 中选择 **分享 → 添加到主屏幕**。安装后可使用独立窗口，并适配设备安全区域、日夜主题和移动端底部导航。
+
+安装与 Service Worker 需要 HTTPS 或本机 `localhost` / `127.0.0.1`；普通局域网 IP 的 HTTP 地址不满足条件。远程部署请让反向代理转发完整根路径，包括 `/sw.js`、`/manifest.webmanifest`、`/offline.html` 和 `/assets/`，不要为 `/sw.js` 强制设置长期缓存。[浏览器安装条件说明](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable)
+
+首次联网打开并准备好离线页面后，断网或 XM 服务不可用时重新打开应用会显示连接恢复页。点击“重新连接”会检查服务状态，并在恢复后返回原页面；已打开的页面断网时会显示提示。推文、媒体、头像、登录页面和 API 响应均不写入 PWA 缓存，因此安装应用不等于离线归档，浏览和管理仍需要运行中的 XM 服务。
+
+升级 XM 后，应用会提示“新版本已准备好”。保存编辑中的设置后，点击“刷新并更新”；不会主动刷新正在编辑的页面。离线资源版本随内置静态文件自动生成，更新后会清理旧的 XM 离线缓存，不影响其他应用缓存。
+
+开发验证：`XM_BROWSER_TEST=1 go test ./internal/web -run 'TestPWA|TestThemeAndHomeBrowser' -count=1`，覆盖安装入口、移动端布局、版本切换、离线恢复和缓存边界。`python3 scripts/generate-pwa-icons.py` 可从与 favicon 相同的几何标记重新生成 PNG 图标，无需额外依赖。
+
 ### 服务器部署
 
 默认仅监听本机。可通过 SSH 转发访问，或放在 HTTPS 反向代理后面：

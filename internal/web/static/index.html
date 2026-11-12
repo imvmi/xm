@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN" data-theme-preference="system" data-theme="light">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><script src="/assets/theme.js"></script><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><script defer src="/assets/media-prefetch.js"></script><script defer src="/assets/gallery.js"></script><script defer src="/assets/image-layout.js"></script><script defer src="/assets/video.js"></script><script defer src="/assets/accounts.js"></script><script defer src="/assets/following.js"></script><link rel="stylesheet" href="/assets/accounts.css"><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"><link rel="stylesheet" href="/assets/home.css"><link rel="stylesheet" href="/assets/theme.css"><link rel="stylesheet" href="/assets/media.css"><link rel="stylesheet" href="/assets/replies.css"><script defer src="/assets/replies.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="XM"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"><meta name="color-scheme" content="light dark"><script src="/assets/theme.js"></script><title>XM · 私人动态档案</title><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/profile.css"><link rel="stylesheet" href="/assets/storage.css"><script defer src="/assets/app.js"></script><script defer src="/assets/media-prefetch.js"></script><script defer src="/assets/gallery.js"></script><script defer src="/assets/image-layout.js"></script><script defer src="/assets/video.js"></script><script defer src="/assets/accounts.js"></script><script defer src="/assets/following.js"></script><link rel="stylesheet" href="/assets/accounts.css"><link rel="stylesheet" href="/assets/notifications.css"><script defer src="/assets/storage.js"></script><script defer src="/assets/notifications.js"></script><link rel="stylesheet" href="/assets/layout.css"><link rel="stylesheet" href="/assets/home.css"><link rel="stylesheet" href="/assets/theme.css"><link rel="stylesheet" href="/assets/media.css"><link rel="stylesheet" href="/assets/replies.css"><script defer src="/assets/replies.js"></script><link rel="stylesheet" href="/assets/pwa.css"><script defer src="/assets/pwa.js"></script></head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
 <svg class="svg-defs" aria-hidden="true"><defs>
@@ -30,6 +30,7 @@
       <button class="button primary wide" type="submit">登录 <span aria-hidden="true">→</span></button>
       <p class="login-tip">使用首次设置时创建的账号。</p>
     </form>
+    <div class="pwa-entry"><button type="button" class="button secondary" data-pwa-open>安装应用</button></div>
   </div>
   <footer class="login-foot">自部署 · 私有存储 · 由你掌控</footer>
 </section>
@@ -240,6 +241,7 @@
           </section>
         </section>
         <section id="settings-display" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-display" hidden>
+          <section class="pwa-card" aria-labelledby="pwa-card-title"><img src="/assets/icon-192.png" alt="" width="48" height="48"><div><h3 id="pwa-card-title">把档案室放在手边</h3><p>添加到主屏幕，用独立窗口随时访问。</p></div><button type="button" class="button secondary" data-pwa-open>安装应用</button></section>
           <div class="display-intro"><h2>阅读与播放偏好</h2><p>调整首页、账号时间线和媒体查看体验。以下设置统一保存。</p></div>
           <form id="archive-display-form">
             <section class="panel display-card" aria-labelledby="display-appearance-title"><div class="panel-heading"><div><h3 id="display-appearance-title">外观与内容</h3><p>决定时间线的样式和每次显示多少内容。</p></div></div><div class="panel-body">
@@ -422,4 +424,15 @@
 <link rel="stylesheet" href="/assets/run-errors.css"><script defer src="/assets/run-errors.js"></script>
 <link rel="stylesheet" href="/assets/migrations.css"><script defer src="/assets/migrations.js"></script><script defer src="/assets/data-cleanup.js"></script>
 <link rel="stylesheet" href="/assets/credentials.css"><script defer src="/assets/credentials.js"></script>
+<div class="pwa-notices">
+  <section id="pwa-offline" class="pwa-notice" role="status" hidden><strong>网络已断开</strong><p>当前内容暂时保留，刷新、搜索和保存需要恢复连接。</p></section>
+  <section id="pwa-update" class="pwa-notice" role="status" hidden><strong>新版本已准备好</strong><p>请先保存正在编辑的设置，再刷新应用。</p><div class="pwa-notice-actions"><button id="pwa-update-button" type="button" class="button primary">刷新并更新</button><button id="pwa-update-later" type="button" class="button secondary">稍后再说</button></div></section>
+</div>
+<dialog id="pwa-dialog" class="pwa-dialog" aria-labelledby="pwa-title" aria-describedby="pwa-install-help">
+  <img src="/assets/icon-192.png" alt="" width="64" height="64">
+  <h2 id="pwa-title">随时打开你的档案室</h2>
+  <p id="pwa-install-help"></p>
+  <p id="pwa-cache-note" class="pwa-cache-note">安装后仍需连接 XM 服务。离线时会显示连接提示，推文和媒体不会保存在应用离线缓存中。</p>
+  <div class="dialog-actions"><button id="pwa-close" type="button" class="button secondary" autofocus>关闭</button><button id="pwa-install" type="button" class="button primary" hidden>安装 XM</button></div>
+</dialog>
 </body></html>

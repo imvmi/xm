@@ -304,6 +304,7 @@ func (s *setupWizard) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/setup/complete", s.complete)
 	mux.HandleFunc("POST /api/setup/connect", s.connect)
+	registerPWA(mux)
 	assets, _ := fs.Sub(static, "static")
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
