@@ -87,7 +87,11 @@ async function refreshOverview(force=false) {
   if(warning){banner.hidden=false;banner.append(document.createTextNode(warning+' '));const link=document.createElement('a');link.href='#settings';link.textContent='前往设置 →';banner.append(link);}
 }
 const titles={home:'首页',archive:'账号',user:'用户动态',activity:'任务',settings:'设置',notifications:'通知设置'};
-function avatar(username, extra='', source='') { const initials=escape(username.slice(0,2).toUpperCase()),alt=[...username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;return `<span class="avatar alt${alt} ${extra}"><span class="avatar-fallback">${initials}</span>${source?`<img class="avatar-image" src="${escape(source)}" alt="" loading="lazy">`:''}</span>`; }
+function avatar(username, extra='', source='', target='') {
+ const initials=escape(username.slice(0,2).toUpperCase()),alt=[...username].reduce((sum,c)=>sum+c.charCodeAt(0),0)%4;
+ const tag=target?'a':'span',link=target?` href="${userURL(target)}" aria-label="查看 @${escape(username)} 的时间线"`:'';
+ return `<${tag} class="avatar alt${alt} ${extra}"${link}><span class="avatar-fallback">${initials}</span>${source?`<img class="avatar-image" src="${escape(source)}" alt="" loading="lazy">`:''}</${tag}>`;
+}
 document.addEventListener('error',event=>{if(event.target instanceof HTMLImageElement&&event.target.classList.contains('avatar-image'))event.target.remove();},true);
 function handle(u){return u.current_username||u.username;}
 function userAvatar(username){
@@ -233,7 +237,7 @@ for(const home of [false,true])for(const name of home?homeTimelineTabs:timelineT
 function defaultVideoMuted(){return state.settings?.video_default_muted!==false;}
 function mediaHTML(post) {
   const done=post.media.filter(m=>m.status==='done');let html='';
-  if(done.length){const photosOnly=done.every(m=>m.kind==='photo');html+=`<div class="media-grid ${done.length===1?'single':''}${photosOnly?' photo-grid':''}"${photosOnly?` data-photo-count="${done.length}"`:''}>`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`+(m.version?'?v='+encodeURIComponent(m.version):'');if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=videoHTML(post,src);}html+='</div>';}
+  if(done.length){const photosOnly=done.every(m=>m.kind==='photo');html+=`<div class="media-grid ${done.length===1?'single':'media-mosaic'}${photosOnly?' photo-grid':''}" data-media-count="${done.length}"${photosOnly?` data-photo-count="${done.length}"`:''}>`;for(const m of done){const src=`/media/${encodeURIComponent(post.id)}/${encodeURIComponent(m.id)}`+(m.version?'?v='+encodeURIComponent(m.version):'');if(m.kind==='photo')html+=`<button type="button" class="media-button" data-image="${escape(src)}" aria-label="放大 @${escape(post.username)} 的归档图片"><img src="${escape(src)}" loading="lazy" alt="@${escape(post.username)} 的归档图片"></button>`;else html+=videoHTML(post,src);}html+='</div>';}
   for(const m of post.media.filter(m=>m.status!=='done'))html+=`<div class="media-pending">${icon('image')}<span>${m.kind==='photo'?'图片':'视频'}${m.status==='ignored'?'已忽略（未下载，可在任务详情恢复重试）':m.status==='permanent'?'永久失败（不会自动重试）':m.status==='failed'?'下载失败（等待重试）':'等待下载'}${m.error?' · '+escape(m.error):''}</span></div>`;
   return html;
 }
@@ -304,7 +308,7 @@ function postHTML(p,options={}){
  const action=p.has_replies&&!thread?`<div class="reply-preview-actions"><button type="button" class="text-button" data-open-post="${escape(p.id)}">查看回复 <span aria-hidden="true">→</span></button></div>`:'';
  const relation=role==='reply'&&p.reply_to?`<div class="thread-reply-target">回复 <button type="button" class="text-button" data-thread-parent="${escape(p.reply_to)}" aria-label="定位被回复的推文">${p.reply_preview?.username?'@'+escape(p.reply_preview.username):'这条推文'}</button></div>`:'';
  const open=role==='current'?'':` data-open-post="${escape(p.id)}" tabindex="0" aria-label="查看 @${escape(p.username)} 的推文详情"`;
- return `<article class="${classes.join(' ')}" data-post-id="${escape(p.id)}"${open}>${thread?'':replyHTML(p)}<div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username))}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div>${relation}<div class="post-main"><div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}${action}</div></div></div></article>`;
+ return `<article class="${classes.join(' ')}" data-post-id="${escape(p.id)}"${open}>${thread?'':replyHTML(p)}<div class="post-body">${avatar(p.username,'post-avatar',p.avatar_url||userAvatar(p.username),p.archive_target||p.username)}<div class="post-content"><div class="post-header"><div class="timeline-author"><strong>${author}</strong><span class="timeline-meta"><a class="timeline-handle" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="在 X 查看 @${escape(p.username)} 的这条推文">@${escape(p.username)}</a><span class="timeline-date"> · ${escape(date(p.created_at))}</span></span></div>${p.repost_id?'<span class="badge neutral">转推</span>':''}${bookmarkButton(p)}</div>${relation}<div class="post-main"><div class="post-text">${escape(text)}</div>${text.length>260?'<button class="expand-text" type="button">展开全文</button>':''}${mediaHTML(p)}${quoteHTML(p)}${action}</div></div></div></article>`;
 }
 let timelinePrefetchTarget=null;
 const timelineObserver='IntersectionObserver' in window?new IntersectionObserver(entries=>{

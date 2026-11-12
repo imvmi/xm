@@ -66,6 +66,7 @@ html[data-theme=dark] #app.app :is(.timeline-tabs,.timeline-result,.timeline-pos
 html[data-theme=dark] #app.app :is(.media-grid,.quote-unavailable,.storage-note,th,.job-row.current) {
   background:var(--surface-raised); color:var(--muted); border-color:var(--line);
 }
+html[data-theme=dark] #app.app .media-grid.media-mosaic { background:var(--line); }
 html[data-theme=dark] #app.app :is(.timeline-tabs button.selected,.timeline-author strong,.quote-author strong) { color:var(--ink); }
 html[data-theme=dark] #app.app :is(#view-home,#view-user) .timeline-tabs button.selected { color:var(--ink); }
 html[data-theme=dark] #app.app :is(.expand-text,.quote-unavailable a,.timeline-handle:hover,.quote-handle:hover,.profile-x-link:hover) { color:var(--accent); }

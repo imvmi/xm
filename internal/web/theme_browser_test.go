@@ -88,6 +88,15 @@ func TestThemeAndHomeBrowser(t *testing.T) {
 		if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 844)); err != nil {
 			t.Fatal(err)
 		}
+		eval(`(()=>{location.hash='home';return true})()`)
+		wait(`state.view==='home' && !state.postsLoading && !!document.querySelector('#posts article[data-post-id="200"] .post-avatar')`)
+		if err := chromedp.Do(browser, chromedp.Click(`#posts article[data-post-id="200"] .post-avatar`)); err != nil {
+			t.Fatal(err)
+		}
+		wait(`state.view==='user' && state.target==='bob' && !state.postsLoading && state.postIDs.size===1 && state.postIDs.has('200')`)
+		if !eval(`location.hash==='#user/bob' && !state.focusPost && state.postIDs.size===1`) {
+			t.Fatal("avatar opened post detail instead of the author's timeline", width)
+		}
 		for _, view := range []string{"home", "user/alice", "archive", "monitors", "activity", "notifications", "settings"} {
 			eval(`(()=>{location.hash=` + fmt.Sprintf("%q", view) + `;return true})()`)
 			name := view
