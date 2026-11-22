@@ -1,0 +1,31 @@
+/* Only the list moves; the profile, sticky heading and tabs stay in place. */
+/* Nested overflow containers need the same gesture policy as the panel. */
+:is(#view-home:not(.post-detail-active),#view-user) #timeline-panel,
+:is(#view-home:not(.post-detail-active),#view-user) #timeline-panel :is(.post,.post-text,.quote-card,.media-grid) {
+  touch-action:pan-y pinch-zoom;
+}
+:is(#view-home:not(.post-detail-active),#view-user) #timeline-panel {
+  min-height:50vh;
+}
+.profile-feed.timeline-sliding { overflow-x:clip; }
+.timeline-sliding #timeline-panel { will-change:transform; }
+.timeline-dragging #timeline-panel { user-select:none; }
+.timeline-tabs.swipe-tabs { position:relative; }
+.timeline-tabs.swipe-tabs>button.selected::after { display:none; }
+.timeline-tabs.swipe-tabs::before {
+  content:"";
+  position:absolute;
+  z-index:1;
+  pointer-events:none;
+  bottom:0;
+  left:calc((var(--tab-index) + .5) * 100% / var(--tab-count) - 25px);
+  width:50px;
+  height:4px;
+  border-radius:4px;
+  background:var(--accent,#1d9bf0);
+  transition:left .24s cubic-bezier(.2,.7,.2,1);
+}
+.timeline-dragging .swipe-tabs::before { transition:none; }
+@media(prefers-reduced-motion:reduce) {
+  .timeline-tabs.swipe-tabs::before { transition:none!important; }
+}

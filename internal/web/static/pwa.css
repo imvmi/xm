@@ -36,6 +36,14 @@
   .pwa-notices { bottom:calc(88px + env(safe-area-inset-bottom,0px)); }
   body:has(#app[hidden]) .pwa-notices { bottom:calc(16px + env(safe-area-inset-bottom,0px)); }
   .pwa-dialog { max-height:calc(100dvh - 32px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)); }
+  .pwa-nav-auto-hide .sidebar nav {
+    transition:transform .22s ease,visibility .22s;
+  }
+  .pwa-nav-auto-hide.pwa-nav-hidden .sidebar nav {
+    transform:translateY(calc(100% + 8px));
+    visibility:hidden;
+    pointer-events:none;
+  }
 }
 @media(prefers-reduced-motion:reduce) {
   html { scroll-behavior:auto; }

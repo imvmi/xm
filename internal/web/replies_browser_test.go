@@ -136,7 +136,7 @@ func TestReplyThreadPageAndSwipeBackBrowser(t *testing.T) {
 		t.Fatal("account posts tab still contains replies")
 	}
 	eval(`(()=>{$('tab-replies').click();return true})()`)
-	wait(`state.timelineTab==='replies'&&!state.postsLoading&&!!document.querySelector('[data-post-id="101"]')`)
+	wait(`state.timelineTab==='replies'&&!state.postsLoading&&!$('timeline-panel').inert&&!!document.querySelector('[data-post-id="101"]')`)
 	if !eval(`!!document.querySelector('[data-post-id="101"]')&&!!document.querySelector('[data-post-id="500"]')`) {
 		t.Fatal("account replies tab no longer exposes archived replies")
 	}

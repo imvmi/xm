@@ -40,6 +40,7 @@ async function api(path, method='GET', data, request={}) {
 
 async function action(button, work) { if(button?.disabled)return; if(button)button.disabled=true;try{await work();}catch(err){toast(err.message,true);}finally{if(button)button.disabled=false;} }
 function showLogin() {
+  if(typeof cancelTimelineSwipe==='function')cancelTimelineSwipe();
   cancelPostReads();
   if(typeof cancelIdentityRefresh==='function')cancelIdentityRefresh();
   cancelBrowserDiagnostic();
@@ -101,6 +102,7 @@ function userAvatar(username){
 }
 function userURL(username) { return '#user/'+encodeURIComponent(username); }
 async function navigate() {
+  if(typeof cancelTimelineSwipe==='function')cancelTimelineSwipe();
   cancelPostReads();
   if(typeof resetPostThread==='function')resetPostThread();
   if(!state.authenticated)return;
@@ -220,6 +222,8 @@ const homeTimelineTabs=['','following','bookmarks'];
 function timelineTabID(name,home=false){return home?(name?'home-tab-'+name:'home-tab-all'):'tab-'+name;}
 function syncTabs(){
  const home=state.view==='home';
+ const names=home?homeTimelineTabs:timelineTabs,tabs=$(timelineTabID(names[0],home)).parentElement;
+ tabs.classList.add('swipe-tabs');tabs.style.setProperty('--tab-count',names.length);tabs.style.setProperty('--tab-index',names.indexOf(state.timelineTab));
  for(const name of home?homeTimelineTabs:timelineTabs){const selected=state.timelineTab===name;const tab=$(timelineTabID(name,home));tab.classList.toggle('selected',selected);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;}
  $('timeline-panel').setAttribute('role','tabpanel');$('timeline-panel').removeAttribute('aria-label');
  $('timeline-panel').setAttribute('aria-labelledby',state.focusPost?'home-feed-title':timelineTabID(state.timelineTab,home));
@@ -229,9 +233,14 @@ function syncTabs(){
  $('search').placeholder=state.timelineTab==='bookmarks'?'搜索收藏及引用内容':'搜索推文及引用内容';
  $('kind-filter').querySelector('option[value="text"]').disabled=state.timelineTab==='media';
 }
+function selectTimelineTab(name,home=state.view==='home'){
+ if(state.focusPost||state.view!==(home?'home':'user'))return;
+ const apply=()=>{if(state.timelineTab===name)return;state.timelineTab=name;if(home)state.homeTimelineTab=name;$('kind-filter').value='';syncTabs();refreshPosts();};
+ if(typeof animateTimelineTab==='function')animateTimelineTab(name,home,apply);else apply();
+}
 for(const home of [false,true])for(const name of home?homeTimelineTabs:timelineTabs){
  const names=home?homeTimelineTabs:timelineTabs,tab=$(timelineTabID(name,home));
- tab.addEventListener('click',()=>{if(state.timelineTab===name)return;state.timelineTab=name;if(home)state.homeTimelineTab=name;$('kind-filter').value='';syncTabs();refreshPosts();});
+ tab.addEventListener('click',()=>selectTimelineTab(name,home));
  tab.addEventListener('keydown',event=>{if(event.ctrlKey||event.metaKey||event.altKey)return;let i=names.indexOf(name);if(event.key==='ArrowRight')i=(i+1)%names.length;else if(event.key==='ArrowLeft')i=(i+names.length-1)%names.length;else if(event.key==='Home')i=0;else if(event.key==='End')i=names.length-1;else return;event.preventDefault();const next=$(timelineTabID(names[i],home));next.focus();next.click();});
 }
 function defaultVideoMuted(){return state.settings?.video_default_muted!==false;}

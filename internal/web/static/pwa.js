@@ -12,6 +12,64 @@
   let installing = false;
   let installed = false;
 
+  // Installed mobile apps manage their own bottom bar; browser chrome cannot
+  // collapse this navigation for us. Keep desktop and normal browser behavior.
+  const mobile = window.matchMedia('(max-width: 760px)');
+  const nav = document.querySelector('.sidebar nav');
+  const app = document.getElementById('app');
+  const root = document.documentElement;
+  let lastScroll = 0, travel = 0, scrollFrame = 0;
+  function scrollPosition() {
+    const max = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+    return Math.max(0, Math.min(scrollY, max)); // Ignore iOS rubber-band overscroll.
+  }
+  function autoHideNavigation() {
+    return mobile.matches && (standalone.matches || navigator.standalone === true) && !app.hidden;
+  }
+  function showNavigation() {
+    root.classList.remove('pwa-nav-hidden');
+    nav.inert = false;
+    lastScroll = scrollPosition();
+    travel = 0;
+  }
+  function resetNavigation() {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    root.classList.toggle('pwa-nav-auto-hide', autoHideNavigation());
+    showNavigation();
+  }
+  function updateNavigation() {
+    scrollFrame = 0;
+    const y = scrollPosition(), delta = y - lastScroll;
+    lastScroll = y;
+    if (!autoHideNavigation() || y < 64 || document.querySelector('dialog[open],.video-expanded') ||
+        (nav.contains(document.activeElement) && document.activeElement.matches(':focus-visible'))) {
+      showNavigation();
+      return;
+    }
+    if (!delta) return;
+    travel = Math.sign(delta) === Math.sign(travel) ? travel + delta : delta;
+    if (travel <= -16) showNavigation();
+    else if (travel >= 32 && y > 96) {
+      root.classList.add('pwa-nav-hidden');
+      nav.inert = true;
+      travel = 0;
+    }
+  }
+  window.addEventListener('scroll', () => {
+    if (!scrollFrame) scrollFrame = requestAnimationFrame(updateNavigation);
+  }, {passive:true});
+  window.addEventListener('hashchange', resetNavigation);
+  window.addEventListener('resize', resetNavigation);
+  window.addEventListener('pageshow', resetNavigation);
+  mobile.addEventListener('change', resetNavigation);
+  standalone.addEventListener('change', resetNavigation);
+  document.addEventListener('keydown', event => { if (event.key === 'Tab') showNavigation(); });
+  nav.addEventListener('focusin', showNavigation);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resetNavigation(); });
+  new MutationObserver(resetNavigation).observe(app, {attributes:true, attributeFilter:['hidden']});
+  resetNavigation();
+
   function renderInstall() {
     const running = installed || standalone.matches || navigator.standalone === true;
     document.querySelectorAll('[data-pwa-open]').forEach(button => {

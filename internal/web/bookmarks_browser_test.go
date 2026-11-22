@@ -93,7 +93,7 @@ func TestBookmarksBrowser(t *testing.T) {
 	click("#post-detail-back")
 	wait(`!state.focusPost && !state.postsLoading && state.postIDs.size===2 && !document.querySelector('#home-feed .timeline-tabs').hidden`)
 	click("#home-tab-bookmarks")
-	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && state.postIDs.size===2`)
+	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && !$('timeline-panel').inert && state.postIDs.size===2`)
 	if !eval(`$('posts').firstElementChild.dataset.postId==='50' && [...document.querySelectorAll('[data-bookmark-id="50"]')].every(b=>b.getAttribute('aria-pressed')==='true')`) {
 		t.Fatal("bookmark ordering or shared quote state wrong")
 	}
@@ -109,7 +109,7 @@ func TestBookmarksBrowser(t *testing.T) {
 	}
 	// Keyboard navigation from Media must reach Bookmarks, then wrap to Posts.
 	eval(`(()=>{$('tab-media').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));return true})()`)
-	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && state.postIDs.size===2`)
+	wait(`state.timelineTab==='bookmarks' && !state.postsLoading && !$('timeline-panel').inert && state.postIDs.size===2`)
 	for _, theme := range []string{"light", "dark"} {
 		for _, width := range []int64{1280, 390} {
 			if err := chromedp.Do(browser, chromedp.EmulateViewport(width, 844)); err != nil {

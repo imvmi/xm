@@ -13,8 +13,119 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
+
+func TestPWABottomNavigationBrowser(t *testing.T) {
+	if os.Getenv("XM_BROWSER_TEST") != "1" {
+		t.Skip("offline Chrome PWA navigation fixture")
+	}
+	a := testApp(t)
+	server := httptest.NewServer(a.Handler())
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	alloc, stopAlloc := chromedp.NewExecAllocator(ctx, chromedp.DefaultExecAllocatorOptions[:]...)
+	defer stopAlloc()
+	browser, stop := chromedp.NewContext(alloc)
+	defer stop()
+	eval := func(js string) bool {
+		t.Helper()
+		v, err := chromedp.Run(browser, chromedp.Evaluate[bool](js, chromedp.EvalAwaitPromise))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	wait := func(js string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !eval(js) {
+			if time.Now().After(deadline) {
+				t.Fatal("navigation timeout", js)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	mode := func(value string) {
+		t.Helper()
+		eval(fmt.Sprintf(`(()=>{window.pwaDisplayMode.matches=%t;window.pwaDisplayMode.dispatchEvent(new Event('change'));return true})()`, value == "standalone"))
+	}
+	scroll := func(y int) {
+		t.Helper()
+		eval(fmt.Sprintf(`new Promise(resolve=>{window.scrollTo({top:%d,behavior:'instant'});requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)))})`, y))
+	}
+	const hidden = `document.querySelector('.sidebar nav').inert`
+	// Chrome's headless media emulation does not override display-mode. Supply
+	// that environment signal while exercising actual scrolling, layout and focus.
+	if err := chromedp.Do(browser, chromedp.EmulateViewport(390, 844), chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+		_, err := cdp.Call(ctx, target, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: `const nativeMatchMedia=window.matchMedia.bind(window);window.pwaDisplayMode=new EventTarget();window.pwaDisplayMode.matches=false;window.matchMedia=query=>query==='(display-mode: standalone)'?window.pwaDisplayMode:nativeMatchMedia(query);`})
+		return err
+	}), chromedp.Navigate(server.URL)); err != nil {
+		t.Fatal(err)
+	}
+	wait(`typeof state!=='undefined' && !!$('username')`)
+	password, _ := json.Marshal(testPassword)
+	eval(`(()=>{$('username').value='admin';$('password').value=` + string(password) + `;document.querySelector('#login-form button[type=submit]').click();return true})()`)
+	wait(`state.authenticated && !state.postsLoading`)
+	// Give the empty fixture a genuinely scrollable document, with no network
+	// dependencies or automatic pagination changing its height during the test.
+	eval(`(()=>{$('home-feed').style.minHeight='4000px';return true})()`)
+	scroll(250)
+	if eval(hidden) {
+		t.Fatal("normal browser navigation was hidden")
+	}
+	mode("standalone")
+	wait(`document.documentElement.classList.contains('pwa-nav-auto-hide')`)
+	scroll(0)
+	scroll(180)
+	wait(hidden)
+	wait(`document.querySelector('.sidebar nav').getBoundingClientRect().top>=innerHeight`)
+	scroll(176) // Small reversals should not flicker the menu.
+	if !eval(hidden) {
+		t.Fatal("minor scroll jitter revealed the navigation")
+	}
+	scroll(150)
+	wait("!" + hidden)
+	wait(`getComputedStyle(document.querySelector('.sidebar nav')).visibility==='visible'`)
+	scroll(300)
+	wait(hidden)
+	scroll(0)
+	wait("!" + hidden)
+	scroll(400)
+	wait(hidden)
+	eval(`(()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));return true})()`)
+	wait("!" + hidden)
+	scroll(500)
+	wait(hidden)
+	eval(`(()=>{location.hash='settings';return true})()`)
+	wait(`state.view==='settings' && !document.querySelector('.sidebar nav').inert`)
+	eval(`(()=>{location.hash='home';return true})()`)
+	wait(`state.view==='home' && !state.postsLoading`)
+	scroll(300)
+	wait(hidden)
+	if err := chromedp.Do(browser, chromedp.EmulateViewport(1280, 844)); err != nil {
+		t.Fatal(err)
+	}
+	wait("!" + hidden)
+	scroll(600)
+	if eval(hidden) {
+		t.Fatal("desktop sidebar was hidden")
+	}
+	if err := chromedp.Do(browser, chromedp.EmulateViewport(390, 844)); err != nil {
+		t.Fatal(err)
+	}
+	mode("browser")
+	// iOS home-screen apps use navigator.standalone as the fallback signal.
+	eval(`(()=>{Object.defineProperty(navigator,'standalone',{value:true,configurable:true});dispatchEvent(new Event('resize'));return true})()`)
+	scroll(0)
+	scroll(250)
+	wait(hidden)
+	eval(`(()=>{$('logout').click();return true})()`)
+	wait(`!state.authenticated && !document.querySelector('.sidebar nav').inert && !document.documentElement.classList.contains('pwa-nav-auto-hide')`)
+}
 
 func TestPWABrowser(t *testing.T) {
 	if os.Getenv("XM_BROWSER_TEST") != "1" {
